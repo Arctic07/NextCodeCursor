@@ -118,43 +118,94 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const rules = (requestContext?.rules as Array<Record<string, unknown>> | undefined) ?? []
   const tools = (requestContext?.tools as Array<Record<string, unknown>> | undefined) ?? []
 
+  // 诊断打点:每条 rule 的 keys + type 子对象 keys + source, 看清客户端下发形态。
+  // User Rules (设置里填的) vs Project Rules (.cursor/rules/*.mdc) 在 type.oneof
+  // 上应当分别是 { global: {} } / { fileGlobbed: { globs: [...] } } 等。
+  if (rules.length > 0) {
+    logger.debug({
+      count: rules.length,
+      samples: rules.slice(0, 5).map(r => ({
+        keys: Object.keys(r),
+        typeKeys: r.type && typeof r.type === 'object' ? Object.keys(r.type as Record<string, unknown>) : typeof r.type,
+        source: r.source,
+        fullPath: r.fullPath,
+        contentPreview: typeof r.content === 'string' ? r.content.slice(0, 60) : typeof r.content,
+      })),
+    }, '[AGENT] rules diagnosis')
+  }
+
   // 分类 rules
   const userRules: string[] = []
   const projectRules: Array<{ fullPath: string, content: string, glob?: string }> = []
   const agentSkillsFromRules: Array<{ fullPath: string, description: string }> = []
+
+  // 判断 oneof 分支是否"命中":
+  // - toJson 展平形态: 字段存在即选中 (value 可能是 {}、对象、或非 null)
+  // - protobuf-es 原生 oneof 形态: ruleType.type === { case: 'global', value: ... }
+  const isOneofCase = (ruleType: Record<string, unknown> | undefined, name: string): boolean => {
+    if (!ruleType)
+      return false
+    // 展平形态: 字段存在 且 非 null/undefined
+    if (name in ruleType && ruleType[name] != null)
+      return true
+    // 原生 oneof: ruleType.type = { case, value }
+    const inner = ruleType.type as { case?: string } | undefined
+    if (inner?.case === name)
+      return true
+    return false
+  }
+
+  const getOneofValue = (ruleType: Record<string, unknown> | undefined, name: string): Record<string, unknown> | undefined => {
+    if (!ruleType)
+      return undefined
+    if (name in ruleType && ruleType[name] && typeof ruleType[name] === 'object')
+      return ruleType[name] as Record<string, unknown>
+    const inner = ruleType.type as { case?: string, value?: unknown } | undefined
+    if (inner?.case === name && inner.value && typeof inner.value === 'object')
+      return inner.value as Record<string, unknown>
+    return undefined
+  }
 
   for (const r of rules) {
     const ruleType = r.type as Record<string, unknown> | undefined
     const content = (r.content as string) ?? ''
     const fullPath = (r.fullPath as string) ?? ''
 
-    if (ruleType?.global !== undefined) {
-      // 用户全局规则
-      userRules.push(content)
+    if (isOneofCase(ruleType, 'global')) {
+      // 用户全局规则 (包括设置页填写的 User Rules)
+      if (content)
+        userRules.push(content)
     }
-    else if (ruleType?.agentFetched !== undefined) {
+    else if (isOneofCase(ruleType, 'agentFetched')) {
       // Agent Skills (通过 rules 通道传递)
-      const af = ruleType.agentFetched as Record<string, unknown>
+      const af = getOneofValue(ruleType, 'agentFetched')
       agentSkillsFromRules.push({
         fullPath,
-        description: (af.description as string) ?? '',
+        description: (af?.description as string) ?? '',
       })
     }
-    else if (ruleType?.fileGlobbed !== undefined || ruleType?.manuallyAttached !== undefined) {
-      // 文件/项目级别规则
-      const fg = ruleType.fileGlobbed as Record<string, unknown> | undefined
+    else if (isOneofCase(ruleType, 'fileGlobbed') || isOneofCase(ruleType, 'manuallyAttached')) {
+      // 文件/项目级别规则 (proto field 为 repeated string, 兼容单值 glob)
+      const fg = getOneofValue(ruleType, 'fileGlobbed')
+      const globs = fg?.globs as string[] | string | undefined
       projectRules.push({
         fullPath,
         content,
-        glob: fg?.glob as string | undefined,
+        glob: Array.isArray(globs) ? globs.join(', ') : globs,
       })
     }
     else {
-      // 未知类型作为用户规则处理
+      // 未知类型作为用户规则兜底,内容不空才入
       if (content)
         userRules.push(content)
     }
   }
+
+  logger.debug({
+    userRulesCount: userRules.length,
+    projectRulesCount: projectRules.length,
+    agentSkillsCount: agentSkillsFromRules.length,
+  }, '[AGENT] rules classified')
 
   // agentSkills 字段 (可能和 rules 中的 agentFetched 重复,取并集)
   const agentSkillsField = (requestContext?.agentSkills as Array<Record<string, unknown>> | undefined) ?? []

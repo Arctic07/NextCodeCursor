@@ -176,6 +176,46 @@ describe('parseRunRequest — Step 1 field coverage', () => {
     ])
   })
 
+  it('classifies rules across flattened oneof and native oneof shapes', () => {
+    const parsed = parseRunRequest({
+      runRequest: {
+        conversationId: 'c-rules',
+        action: {
+          userMessageAction: {
+            userMessage: { text: 'hi' },
+            requestContext: {
+              rules: [
+                // flattened oneof — the @bufbuild/protobuf toJson output
+                { fullPath: '/settings/user-rule-1', content: 'Always reply in Chinese', type: { global: {} } },
+                // native protobuf-es oneof — type: { case, value }
+                { fullPath: '/settings/user-rule-2', content: 'CLAUDE', type: { type: { case: 'global', value: {} } } },
+                // file-globbed project rule (flattened form with globs array)
+                { fullPath: '/proj/.cursor/rules/a.mdc', content: 'TS rule', type: { fileGlobbed: { globs: ['**/*.ts'] } } },
+                // agentFetched skill via rules channel
+                { fullPath: '/skill.mdc', content: '', type: { agentFetched: { description: 'helper' } } },
+                // no type at all — content-only user rule
+                { fullPath: '', content: 'bare rule' },
+              ],
+            },
+          },
+        },
+        modelDetails: { modelId: 'm' },
+      },
+    })
+    expect(parsed.userRules).toEqual([
+      'Always reply in Chinese',
+      'CLAUDE',
+      'bare rule',
+    ])
+    expect(parsed.projectRules).toHaveLength(1)
+    expect(parsed.projectRules[0]).toMatchObject({
+      fullPath: '/proj/.cursor/rules/a.mdc',
+      content: 'TS rule',
+      glob: '**/*.ts',
+    })
+    expect(parsed.agentSkills.some(s => s.fullPath === '/skill.mdc' && s.description === 'helper')).toBe(true)
+  })
+
   it('honors requestContext on resume_action (multi-round rules/mcp re-push)', () => {
     const parsed = parseRunRequest({
       runRequest: {
