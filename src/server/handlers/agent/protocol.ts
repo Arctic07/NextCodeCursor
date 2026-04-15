@@ -31,6 +31,7 @@
  */
 
 export type { ParsedRunRequest } from './protocol/types'
+export { collectExtraContextBlobIds, resolveExtraContextBlobs } from './protocol/blobResolve'
 export { buildMessages } from './protocol/messageBuilder'
 export { parseRunRequest } from './protocol/parseRunRequest'
 export { workspaceUris } from './protocol/shared'

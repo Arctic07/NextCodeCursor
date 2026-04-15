@@ -322,7 +322,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     mcpTools: mergedMcpTools.map(t => ({
       name: (t.name as string) ?? '',
       description: (t.description as string) ?? '',
-      inputSchema: (t.inputSchema as Record<string, unknown>) ?? {},
+      inputSchema: normalizeMcpInputSchema(t.inputSchema),
       providerIdentifier: (t.providerIdentifier as string) ?? '',
       toolName: (t.toolName as string) ?? '',
     })),
@@ -398,4 +398,64 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     conversationNotesListing: (requestContext?.conversationNotesListing as string) ?? '',
     sharedNotesListing: (requestContext?.sharedNotesListing as string) ?? '',
   }
+}
+
+/**
+ * 把 McpToolDefinition.inputSchema 规范成标准 JSON Schema object。
+ *
+ * 客户端 (@bufbuild/protobuf) 在 toJson 后 google.protobuf.Value 常见为普通 JSON,
+ * 但偶尔仍会以 Value-wrapped 形态下发 (如 { structValue: { fields: {...} } }),
+ * 这时 LLM 的 tools schema 会报无效 JSON Schema。
+ *
+ * 防御性地 unwrap 一层,并确保输出至少是 object 形态以通过 provider 侧校验。
+ */
+function normalizeMcpInputSchema(raw: unknown): Record<string, unknown> {
+  if (raw == null || typeof raw !== 'object')
+    return { type: 'object' }
+  const obj = raw as Record<string, unknown>
+
+  // 已是标准 JSON Schema: { type, properties?, ... }
+  if (typeof obj.type === 'string' || obj.properties || obj.$schema)
+    return obj
+
+  // google.protobuf.Value 形态: { structValue: { fields: { ... } } }
+  const structValue = obj.structValue as Record<string, unknown> | undefined
+  if (structValue) {
+    const fields = (structValue.fields as Record<string, unknown> | undefined) ?? structValue
+    return { type: 'object', properties: unwrapProtoValueFields(fields) }
+  }
+
+  // google.protobuf.Struct 形态: { fields: { ... } }
+  if (obj.fields && typeof obj.fields === 'object')
+    return { type: 'object', properties: unwrapProtoValueFields(obj.fields as Record<string, unknown>) }
+
+  // 其他未知形态直接返回,让 provider 报错 (比伪造 schema 更可诊断)
+  return obj
+}
+
+/** 把 google.protobuf.Struct.fields 中每个 Value 递归 unwrap 为裸值 */
+function unwrapProtoValueFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(fields))
+    out[k] = unwrapProtoValue(v)
+  return out
+}
+
+function unwrapProtoValue(v: unknown): unknown {
+  if (v == null || typeof v !== 'object')
+    return v
+  const obj = v as Record<string, unknown>
+  if ('stringValue' in obj) return obj.stringValue
+  if ('numberValue' in obj) return obj.numberValue
+  if ('boolValue' in obj) return obj.boolValue
+  if ('nullValue' in obj) return null
+  if (obj.listValue && typeof obj.listValue === 'object') {
+    const values = (obj.listValue as Record<string, unknown>).values as unknown[] | undefined
+    return Array.isArray(values) ? values.map(unwrapProtoValue) : []
+  }
+  if (obj.structValue && typeof obj.structValue === 'object') {
+    const fields = (obj.structValue as Record<string, unknown>).fields as Record<string, unknown> | undefined
+    return fields ? unwrapProtoValueFields(fields) : {}
+  }
+  return v
 }

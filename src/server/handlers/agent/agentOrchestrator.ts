@@ -1,5 +1,5 @@
 import type { AgentServerMessage } from '../../gen/agent_v1_pb';
-import { parseRunRequest } from './protocol';
+import { collectExtraContextBlobIds, parseRunRequest, resolveExtraContextBlobs } from './protocol';
 import type { AgentSession } from './session';
 import { handleSummarizeAction } from './summarizeRuntime';
 import { handleConversationRun } from './conversationRuntime';
@@ -56,9 +56,20 @@ export async function* handleRunRequest(
             }
         }
 
-        // 预热: 将历史 blobs 从 DB 加载到内存缓存, 确保后续 generator 中 getCachedBlob 同步命中
-        if (parsed.historyBlobIds.length > 0) {
-            await warmupBlobsAsync(parsed.historyBlobIds);
+        // 预热: 将历史 blobs 从 DB 加载到内存缓存, 确保后续 generator 中 getCachedBlob 同步命中。
+        // 合并 historyBlobIds + extraContextEntries 的 blob 引用, 一次 warmup 避免多轮磁盘 IO。
+        const extraContextBlobIds = collectExtraContextBlobIds(parsed);
+        const blobsToWarmup = parsed.historyBlobIds.length > 0 || extraContextBlobIds.length > 0
+            ? [...parsed.historyBlobIds, ...extraContextBlobIds]
+            : [];
+        if (blobsToWarmup.length > 0) {
+            await warmupBlobsAsync(blobsToWarmup);
+        }
+
+        // Warmup 后做一次同步 resolve, 把 extraContextEntries 的 blobId → data 就地替换。
+        // 未命中的条目会保留 blobId, 后续 preamble 用 <extra_context_pending> 占位透出。
+        if (extraContextBlobIds.length > 0) {
+            resolveExtraContextBlobs(parsed);
         }
 
         if (parsed.isSummarize) {
