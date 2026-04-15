@@ -319,13 +319,27 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     isGitRepo: gitRepos.length > 0,
     mcpServers,
     mcpBasePath: mcpBasePath ? `${mcpBasePath}/mcps` : '',
-    mcpTools: mergedMcpTools.map(t => ({
-      name: (t.name as string) ?? '',
-      description: (t.description as string) ?? '',
-      inputSchema: normalizeMcpInputSchema(t.inputSchema),
-      providerIdentifier: (t.providerIdentifier as string) ?? '',
-      toolName: (t.toolName as string) ?? '',
-    })),
+    mcpTools: (() => {
+      const seenNames = new Set<string>()
+      return mergedMcpTools.map((t) => {
+        const rawName = (t.name as string) ?? ''
+        const normalizedName = normalizeMcpToolName(rawName, seenNames)
+        seenNames.add(normalizedName)
+        if (normalizedName !== rawName) {
+          logger.debug(
+            { raw: rawName, normalized: normalizedName },
+            '[PROTOCOL] MCP tool name sanitized to match Anthropic pattern',
+          )
+        }
+        return {
+          name: normalizedName,
+          description: (t.description as string) ?? '',
+          inputSchema: normalizeMcpInputSchema(t.inputSchema),
+          providerIdentifier: (t.providerIdentifier as string) ?? '',
+          toolName: (t.toolName as string) ?? '',
+        }
+      })
+    })(),
     mcpInstructions,
     ideState,
     documentations,
@@ -398,6 +412,31 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     conversationNotesListing: (requestContext?.conversationNotesListing as string) ?? '',
     sharedNotesListing: (requestContext?.sharedNotesListing as string) ?? '',
   }
+}
+
+/**
+ * 规范化 MCP 工具名以匹配 Anthropic tools 的 name pattern: ^[a-zA-Z0-9_-]+$
+ *
+ * MCP server 下发的工具名经常带 `.` / `:` / `/` / 空格 / 非 ASCII,会触发
+ * provider 400 "tools[N].name: string does not match pattern"。
+ *
+ * 这里把所有非法字符替换为 `_`,合并连续下划线、修剪首尾下划线;空或首字符被
+ * 修没的回退到 `mcp_tool`;冲突时追加 _2 / _3 / ... 保证一批工具内唯一。
+ *
+ * 注意:只 normalize 用作 LLM tools schema 的 name;providerIdentifier 与
+ * toolName 保持原样,因为那两个字段用来把 tool_call 回路回客户端 mcpService
+ * 做真实路由。
+ */
+function normalizeMcpToolName(raw: string, seen: Set<string>): string {
+  let base = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '')
+  if (!base)
+    base = 'mcp_tool'
+  if (!seen.has(base))
+    return base
+  let i = 2
+  while (seen.has(`${base}_${i}`))
+    i++
+  return `${base}_${i}`
 }
 
 /**
