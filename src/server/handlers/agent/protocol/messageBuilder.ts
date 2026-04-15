@@ -63,8 +63,17 @@ function buildSystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderProm
 /**
  * 组装 preamble user message。
  *
- * 这一段承载官方前置 user scaffold:
- * <user_info> + <agent_transcripts> + <rules> + <agent_skills>
+ * 承载官方前置 user scaffold。块顺序:
+ *   <user_info>
+ *   <agent_transcripts>
+ *   <ide_state>              ← Step 2
+ *   <rules>
+ *   <agent_skills>           全量可用 skill
+ *   <attached_skills>        ← Step 2 用户手动 @ 的 skill 子集
+ *   <attached_docs>          ← Step 2
+ *   <cursor_commands>        ← Step 2 用户触发的 /command
+ *   <mcp_instructions>       ← Step 2
+ *   <extra_context>          ← Step 2 (blob 分支待 Step 4)
  */
 function buildPreambleUserMessage(parsed: ParsedRunRequest): string {
   const parts: string[] = []
@@ -93,6 +102,11 @@ function buildPreambleUserMessage(parsed: ParsedRunRequest): string {
 Agent transcripts (past chats) live in ${parsed.env.agentTranscriptsFolder}. They have names like <uuid>.jsonl, cite them to the user as [<title for chat <=6 words>](<uuid excluding .jsonl>). NEVER cite subagent transcripts/IDs; you can only cite parent uuids. Don't discuss the folder structure.
 </agent_transcripts>`)
   }
+
+  // ── <ide_state> ── (来自 selectedContext.invocation_context.ide_state)
+  const ideSection = buildIdeStateSection(parsed)
+  if (ideSection)
+    parts.push(ideSection)
 
   // ── <rules> ──
   if (parsed.userRules.length > 0 || parsed.projectRules.length > 0) {
@@ -136,7 +150,119 @@ When users ask you to perform tasks, check if any of the available skills below 
     parts.push(skillsSection)
   }
 
+  // ── <attached_skills> ── (用户手动 @ 的 skill,对 LLM 是"现在立刻用")
+  if (parsed.selectedSkills.length > 0) {
+    let attachedSkills = `<attached_skills description="Skills the user explicitly attached to this message. Follow them immediately before other work.">\n`
+    for (const skill of parsed.selectedSkills) {
+      attachedSkills += `<attached_skill fullPath="${escapeXml(skill.fullPath)}">${escapeXml(skill.description)}</attached_skill>\n`
+    }
+    attachedSkills += `</attached_skills>`
+    parts.push(attachedSkills)
+  }
+
+  // ── <attached_docs> ── (用户 @ 的 @Docs 引用,只含 docId + name)
+  if (parsed.documentations.length > 0) {
+    let docsSection = `<attached_docs description="Documentation references the user attached. Fetch their content with the appropriate doc tool before relying on them.">\n`
+    for (const doc of parsed.documentations) {
+      docsSection += `<attached_doc docId="${escapeXml(doc.docId)}" name="${escapeXml(doc.name)}" />\n`
+    }
+    docsSection += `</attached_docs>`
+    parts.push(docsSection)
+  }
+
+  // ── <cursor_commands> ── (用户触发的 /command 定义)
+  if (parsed.cursorCommands.length > 0) {
+    let cmdSection = `<cursor_commands description="Commands the user invoked via /<name>. Follow each command's content as an instruction for this turn.">\n`
+    for (const cmd of parsed.cursorCommands) {
+      cmdSection += `<cursor_command name="${escapeXml(cmd.name)}">${escapeXml(cmd.content)}</cursor_command>\n`
+    }
+    cmdSection += `</cursor_commands>`
+    parts.push(cmdSection)
+  }
+
+  // ── <mcp_instructions> ── (每个 MCP server 的 use instructions)
+  // 合并 requestContext.mcp_instructions 与 mcp_file_system_options.mcpDescriptors.serverUseInstructions,
+  // 按 serverName 去重,前者优先。
+  const mcpInstrMap = new Map<string, string>()
+  for (const ins of parsed.mcpInstructions) {
+    if (ins.serverName && ins.instructions)
+      mcpInstrMap.set(ins.serverName, ins.instructions)
+  }
+  for (const srv of parsed.mcpServers) {
+    if (srv.serverName && srv.serverUseInstructions && !mcpInstrMap.has(srv.serverName))
+      mcpInstrMap.set(srv.serverName, srv.serverUseInstructions)
+  }
+  if (mcpInstrMap.size > 0) {
+    let mcpSection = `<mcp_instructions description="Usage notes provided by the MCP servers connected to this workspace. Follow them when calling the corresponding tools.">\n`
+    for (const [serverName, instructions] of mcpInstrMap) {
+      mcpSection += `<mcp_instruction server="${escapeXml(serverName)}">\n${escapeXml(instructions)}\n</mcp_instruction>\n`
+    }
+    mcpSection += `</mcp_instructions>`
+    parts.push(mcpSection)
+  }
+
+  // ── <extra_context> ── (inline data 条目;blob 分支等 Step 4 通过 blob store 取回)
+  const extraInlineEntries = parsed.extraContextEntries.filter(e => typeof e.data === 'string' && e.data.length > 0)
+  const extraBlobCount = parsed.extraContextEntries.filter(e => e.blobId).length
+  if (extraInlineEntries.length > 0 || extraBlobCount > 0) {
+    let extraSection = `<extra_context description="Additional context the client attached alongside the user message.">\n`
+    for (const entry of extraInlineEntries) {
+      extraSection += `<extra_context_entry>${escapeXml(entry.data!)}</extra_context_entry>\n`
+    }
+    if (extraBlobCount > 0) {
+      // 暂以占位的形式保留痕迹,真正取回数据待 Step 4
+      extraSection += `<extra_context_pending blob_count="${extraBlobCount}" />\n`
+    }
+    extraSection += `</extra_context>`
+    parts.push(extraSection)
+  }
+
   return parts.join('\n\n')
+}
+
+/** 组装 <ide_state> XML 块;当 ideState 为空或无文件时返回 null */
+function buildIdeStateSection(parsed: ParsedRunRequest): string | null {
+  const ide = parsed.ideState
+  if (!ide)
+    return null
+  if (ide.visibleFiles.length === 0 && ide.recentlyViewedFiles.length === 0)
+    return null
+
+  let section = `<ide_state description="A snapshot of the user's IDE at the moment this message was sent. The first visible file is typically what they are looking at right now.">\n`
+
+  if (ide.visibleFiles.length > 0) {
+    section += `<visible_files>\n`
+    for (const f of ide.visibleFiles) {
+      const attrs = [`path="${escapeXml(f.path)}"`]
+      if (f.relativePath)
+        attrs.push(`relativePath="${escapeXml(f.relativePath)}"`)
+      if (f.totalLines > 0)
+        attrs.push(`totalLines="${f.totalLines}"`)
+      if (f.cursorLine !== undefined)
+        attrs.push(`cursorLine="${f.cursorLine}"`)
+      if (f.activeCommand)
+        attrs.push(`activeCommand="${escapeXml(f.activeCommand)}"`)
+      const inner = f.cursorText ? escapeXml(f.cursorText) : ''
+      section += `<file ${attrs.join(' ')}>${inner}</file>\n`
+    }
+    section += `</visible_files>\n`
+  }
+
+  if (ide.recentlyViewedFiles.length > 0) {
+    section += `<recently_viewed_files>\n`
+    for (const f of ide.recentlyViewedFiles) {
+      const attrs = [`path="${escapeXml(f.path)}"`]
+      if (f.relativePath)
+        attrs.push(`relativePath="${escapeXml(f.relativePath)}"`)
+      if (f.totalLines > 0)
+        attrs.push(`totalLines="${f.totalLines}"`)
+      section += `<file ${attrs.join(' ')} />\n`
+    }
+    section += `</recently_viewed_files>\n`
+  }
+
+  section += `</ide_state>`
+  return section
 }
 
 function buildCurrentUserTurn(parsed: ParsedRunRequest): string {
