@@ -1,4 +1,4 @@
-import type { ParsedRunRequest } from './types'
+import type { IdeFile, ParsedRunRequest } from './types'
 import { logger } from '../../../logger'
 import { emptyParsed } from './shared'
 
@@ -10,12 +10,16 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   }
 
   const action = runRequest.action as Record<string, unknown> | undefined
-  const isResume = !!action?.resumeAction
+  const resumeAction = action?.resumeAction as Record<string, unknown> | undefined
+  const isResume = !!resumeAction
   const isSummarize = !!action?.summarizeAction
 
   const userAction = action?.userMessageAction as Record<string, unknown> | undefined
   const userMessage = userAction?.userMessage as Record<string, unknown> | undefined
-  const requestContext = userAction?.requestContext as Record<string, unknown> | undefined
+  // requestContext:userMessageAction 带一份,resumeAction 也带一份 (agent.v1.ResumeAction field 2)。
+  // 多轮对话中每一轮都会重新推送,不能假设首轮装载一次就够。
+  const requestContext = (userAction?.requestContext
+    ?? resumeAction?.requestContext) as Record<string, unknown> | undefined
   const modelDetails = runRequest.modelDetails as Record<string, unknown> | undefined
   const requestedModel = runRequest.requestedModel as Record<string, unknown> | undefined
 
@@ -166,7 +170,10 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   }
 
   // MCP 服务器配置
-  const mcpFsOpts = requestContext?.mcpFileSystemOptions as Record<string, unknown> | undefined
+  // 官方客户端双写:AgentRunRequest.mcp_file_system_options (proto field 6) 和
+  // requestContext.mcp_file_system_options (field 23) 内容等价,后者优先,前者兜底。
+  const mcpFsOpts = (requestContext?.mcpFileSystemOptions
+    ?? runRequest.mcpFileSystemOptions) as Record<string, unknown> | undefined
   const mcpDescriptors = (mcpFsOpts?.mcpDescriptors as Array<Record<string, unknown>> | undefined) ?? []
   const mcpBasePath = (mcpFsOpts?.workspaceProjectDir as string) ?? ''
 
@@ -175,6 +182,108 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     folderPath: (d.folderPath as string) ?? '',
     serverUseInstructions: (d.serverUseInstructions as string) ?? '',
   }))
+
+  // MCP 工具 — 官方双写:AgentRunRequest.mcp_tools.mcp_tools[] (field 4) 和
+  // requestContext.tools[] (field 7) 内容一致;合并去重 (按 name)。
+  const topLevelMcpToolsBag = runRequest.mcpTools as Record<string, unknown> | undefined
+  const topLevelMcpTools = (topLevelMcpToolsBag?.mcpTools as Array<Record<string, unknown>> | undefined) ?? []
+  const mergedToolsByName = new Map<string, Record<string, unknown>>()
+  for (const t of tools) {
+    const name = (t.name as string) ?? ''
+    if (name)
+      mergedToolsByName.set(name, t)
+  }
+  for (const t of topLevelMcpTools) {
+    const name = (t.name as string) ?? ''
+    if (name && !mergedToolsByName.has(name))
+      mergedToolsByName.set(name, t)
+  }
+  const mergedMcpTools = Array.from(mergedToolsByName.values())
+
+  // MCP 使用说明 (requestContext.mcp_instructions, proto field 14)
+  const mcpInstructionsRaw = (requestContext?.mcpInstructions as Array<Record<string, unknown>> | undefined) ?? []
+  const mcpInstructions = mcpInstructionsRaw.map(m => ({
+    serverName: (m.serverName as string) ?? '',
+    instructions: (m.instructions as string) ?? '',
+    serverIdentifier: (m.serverIdentifier as string) ?? '',
+  }))
+
+  // IDE 状态 (selectedContext.invocation_context.ide_state)
+  const invocationContext = selectedContext?.invocationContext as Record<string, unknown> | undefined
+  const ideStateRaw = invocationContext?.ideState as Record<string, unknown> | undefined
+  const mapIdeFiles = (raw: Array<Record<string, unknown>> | undefined): IdeFile[] => {
+    if (!raw)
+      return []
+    return raw.map((f) => {
+      const cursor = f.cursorPosition as Record<string, unknown> | undefined
+      return {
+        path: (f.path as string) ?? '',
+        relativePath: f.relativePath as string | undefined,
+        totalLines: Number(f.totalLines) || 0,
+        activeCommand: f.activeCommand as string | undefined,
+        cursorLine: cursor?.line !== undefined ? Number(cursor.line) : undefined,
+        cursorText: cursor?.text as string | undefined,
+      }
+    })
+  }
+  const ideState = ideStateRaw
+    ? {
+        visibleFiles: mapIdeFiles(ideStateRaw.visibleFiles as Array<Record<string, unknown>> | undefined),
+        recentlyViewedFiles: mapIdeFiles(ideStateRaw.recentlyViewedFiles as Array<Record<string, unknown>> | undefined),
+      }
+    : undefined
+
+  // Documentations (selectedContext.documentations) — 只含 docId + name,正文需客户端之后补
+  const documentationsRaw = (selectedContext?.documentations as Array<Record<string, unknown>> | undefined) ?? []
+  const documentations = documentationsRaw.map(d => ({
+    docId: (d.docId as string) ?? '',
+    name: (d.name as string) ?? '',
+  }))
+
+  // Cursor Commands (selectedContext.cursor_commands) — 用户触发的 /command
+  const cursorCommandsRaw = (selectedContext?.cursorCommands as Array<Record<string, unknown>> | undefined) ?? []
+  const cursorCommands = cursorCommandsRaw.map(c => ({
+    name: (c.name as string) ?? '',
+    content: (c.content as string) ?? '',
+  }))
+
+  // Selected Skills (selectedContext.selected_skills) — 手动 @ 的 skill,区别于 requestContext.agent_skills 的全量
+  const selectedSkillsRaw = (selectedContext?.selectedSkills as Array<Record<string, unknown>> | undefined) ?? []
+  const selectedSkills = selectedSkillsRaw.map(s => ({
+    fullPath: (s.fullPath as string) ?? '',
+    description: (s.description as string) ?? (s.content as string) ?? '',
+  }))
+
+  // Extra Context Entries — oneof { data, blob_id }。本步只记录原始形态,
+  // blobId 形态的取回留给 Step 4 (通过 blob store 解包)。
+  const extraContextEntriesRaw = (selectedContext?.extraContextEntries as Array<Record<string, unknown>> | undefined) ?? []
+  const extraContextEntries = extraContextEntriesRaw.map((e) => {
+    // JSON 展平形态:{ data: "..." } 或 { blobId: "base64-bytes" }
+    if (typeof e.data === 'string') {
+      return { data: e.data }
+    }
+    if (e.blobId) {
+      const raw = e.blobId
+      const blobId = raw instanceof Uint8Array
+        ? Buffer.from(raw).toString('utf-8')
+        : typeof raw === 'string'
+          ? (() => { try { return Buffer.from(raw, 'base64').toString('utf-8') } catch { return raw } })()
+          : ''
+      return { blobId }
+    }
+    // protobuf-es oneof 形态:{ dataOrBlobId: { case, value } }
+    const dob = e.dataOrBlobId as { case?: string, value?: unknown } | undefined
+    if (dob?.case === 'data' && typeof dob.value === 'string') {
+      return { data: dob.value }
+    }
+    if (dob?.case === 'blobId' && dob.value) {
+      const blobId = dob.value instanceof Uint8Array
+        ? Buffer.from(dob.value).toString('utf-8')
+        : String(dob.value)
+      return { blobId }
+    }
+    return {}
+  }).filter(e => e.data || e.blobId)
 
   // Git 仓库信息 — requestContext.git_repos (proto field 11),不在 env 下
   const gitReposRaw = (requestContext?.gitRepos as Array<Record<string, unknown>> | undefined) ?? []
@@ -210,13 +319,19 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     isGitRepo: gitRepos.length > 0,
     mcpServers,
     mcpBasePath: mcpBasePath ? `${mcpBasePath}/mcps` : '',
-    mcpTools: tools.map(t => ({
+    mcpTools: mergedMcpTools.map(t => ({
       name: (t.name as string) ?? '',
       description: (t.description as string) ?? '',
       inputSchema: (t.inputSchema as Record<string, unknown>) ?? {},
       providerIdentifier: (t.providerIdentifier as string) ?? '',
       toolName: (t.toolName as string) ?? '',
     })),
+    mcpInstructions,
+    ideState,
+    documentations,
+    cursorCommands,
+    selectedSkills,
+    extraContextEntries,
     webSearchEnabled: (requestContext?.webSearchEnabled as boolean) ?? false,
     webFetchEnabled: (requestContext?.webFetchEnabled as boolean) ?? false,
     readLintsEnabled: (requestContext?.readLintsEnabled as boolean) ?? false,

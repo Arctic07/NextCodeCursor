@@ -5,6 +5,16 @@
  * 下游翻译器(LLM 消息构造、preamble 构造、工具注册表)统一消费此结构。
  */
 
+/** IDE 状态中的单个文件记录 (agent.v1.InvocationContext.IdeState.File) */
+export interface IdeFile {
+  path: string
+  relativePath?: string
+  totalLines: number
+  activeCommand?: string
+  cursorLine?: number
+  cursorText?: string
+}
+
 /** 从 runRequest 中提取的关键信息 */
 export interface ParsedRunRequest {
   userText: string
@@ -48,6 +58,28 @@ export interface ParsedRunRequest {
     providerIdentifier: string
     toolName: string
   }>
+  /** MCP server 使用说明 (来自 requestContext.mcp_instructions, proto field 14) */
+  mcpInstructions: Array<{
+    serverName: string
+    instructions: string
+    serverIdentifier: string
+  }>
+  /** IDE 状态快照 (来自 selectedContext.invocation_context.ide_state) */
+  ideState?: {
+    visibleFiles: Array<IdeFile>
+    recentlyViewedFiles: Array<IdeFile>
+  }
+  /** 用户 @ 的文档引用 (来自 selectedContext.documentations) */
+  documentations: Array<{ docId: string, name: string }>
+  /** 用户触发的 cursor command (来自 selectedContext.cursor_commands) */
+  cursorCommands: Array<{ name: string, content: string }>
+  /** 用户手动 @ 的 skill (来自 selectedContext.selected_skills),区别于 agentSkills 的"全部可用" */
+  selectedSkills: Array<{ fullPath: string, description: string }>
+  /**
+   * 额外上下文条目 (来自 selectedContext.extra_context_entries)。
+   * 每条是 { data } 或 { blobId } 之一,blobId 形态需经 blob store 解包 (Step 4)。
+   */
+  extraContextEntries: Array<{ data?: string, blobId?: string }>
   /** 功能开关 */
   webSearchEnabled: boolean
   webFetchEnabled: boolean
