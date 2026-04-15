@@ -1,0 +1,340 @@
+import type { AgentServerMessage } from '../../gen/agent_v1_pb';
+import { logger } from '../../logger';
+import type { ProviderRoundContext } from '../llm/providerRuntime';
+import type { LLMMessage } from '../llm/types';
+import { finalizeEditToolCall } from './editRuntime';
+import { finalizeExecTool } from './execRuntime';
+import { finalizeInteractionTool } from './interactionRuntime';
+import { execMessage, toolCallCompleted, toolCallStarted } from './stream';
+import { buildToolArgs } from './toolBuilders';
+import {
+    buildAskQuestionResultFromInteractionResponse,
+    buildLocalToolResult,
+    buildWebFetchApprovalResultFromInteractionResponse,
+    buildWebFetchResult,
+    buildWebSearchApprovalResultFromInteractionResponse,
+    buildWebSearchResult,
+} from './toolResults';
+import { finalizeToolCall } from './toolLifecycle';
+import { buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
+import type { AgentSession } from './session';
+
+export async function* runToolCall(params: {
+    toolCall: ToolCallInfo;
+    availableMcpTools: AvailableMcpTool[];
+    conversationId: string;
+    currentModelId: string;
+    workspacePath?: string;
+    round: number;
+    session: AgentSession | null;
+    roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>;
+    messages: LLMMessage[];
+    allocateExecMessageId: () => number;
+    allocateInteractionId: () => number;
+}): AsyncGenerator<AgentServerMessage, void, void> {
+    const tc = params.toolCall;
+    const resolvedTool = resolveToolCall(tc.name, tc.input, params.availableMcpTools);
+    const cursorToolType = resolvedTool.cursorToolType;
+    const execArgsType = mapToolToExecArgs(cursorToolType);
+    const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-8)}`;
+
+    // sanitizedInput 兜底补全:
+    //
+    //   - taskToolCall: BYOK 模式下 SubAgent 必须继承主对话模型 (方案 A)。
+    //     即便 taskTool.ts 的 schema 已经移除 model 字段, 这里仍然无条件强制
+    //     覆盖 model / modelId —— 防御 LLM 记忆里残留的 "composer-2-fast" 等
+    //     官方 fallback 路由名通过 schema 之外的途径溜进来 (例如 LLM 在
+    //     arguments 里塞了非 schema 字段)。客户端侧 SubAgent 靠这个字段决定
+    //     走哪个模型, 错了就直接挂。
+    //
+    //   - shellToolCall: LLM 没指定 cwd 时补上当前 workspace 路径。
+    let sanitizedInput = resolvedTool.sanitizedInput;
+    if (cursorToolType === 'taskToolCall') {
+        const originalModel = sanitizedInput.model ?? sanitizedInput.modelId;
+        if (originalModel && originalModel !== params.currentModelId) {
+            logger.warn(
+                { requested: originalModel, forced: params.currentModelId, callId: tc.callId },
+                '[TOOL] subagent model override — BYOK mode always inherits parent conversation model',
+            );
+        }
+        sanitizedInput = { ...sanitizedInput, model: params.currentModelId, modelId: params.currentModelId };
+    }
+    else if (
+        cursorToolType === 'shellToolCall'
+        && typeof sanitizedInput.workingDirectory !== 'string'
+        && typeof sanitizedInput.cwd !== 'string'
+        && params.workspacePath
+    ) {
+        sanitizedInput = { ...sanitizedInput, workingDirectory: params.workspacePath };
+    }
+    let startedArgs: Record<string, unknown>;
+    try {
+        startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId);
+    } catch (e) {
+        // server 端 buildArgs 失败（如文件读取/解析错误）→ 发送 proto error result，不发 exec
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] buildStartedArgs failed');
+        const errorArgs = { path: String(sanitizedInput.path ?? sanitizedInput.target_notebook ?? '') };
+        yield toolCallStarted(tc.callId, cursorToolType, errorArgs, modelCallId);
+        const errorResult = { result: { case: 'error', value: { message: errorMsg } } };
+        yield toolCallCompleted(tc.callId, cursorToolType, errorArgs, errorResult, modelCallId);
+        params.roundContext.recordToolResult(params.messages, params.roundContext.createToolResult({
+            toolCallId: tc.callId,
+            toolName: tc.name,
+            content: `Error: ${errorMsg}`,
+            isError: true,
+        }));
+        return;
+    }
+
+    // editToolCall (StrReplace/Write/ApplyPatch/EditNotebook):
+    // 官方流程: editToolCallDelta → toolCallStarted → readArgs exec → writeArgs exec → toolCallCompleted (含 diff)
+    if (cursorToolType === 'editToolCall' && params.session) {
+        let execArgs: Record<string, unknown>;
+        try {
+            execArgs = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
+                conversationId: params.conversationId,
+                currentModelId: params.currentModelId,
+            });
+        } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] editToolCall buildExecArgs failed');
+            yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
+            const errorResult = { result: { case: 'error', value: { message: errorMsg } } };
+            yield toolCallCompleted(tc.callId, cursorToolType, startedArgs, errorResult, modelCallId);
+            params.roundContext.recordToolResult(params.messages, params.roundContext.createToolResult({
+                toolCallId: tc.callId,
+                toolName: tc.name,
+                content: `Error: ${errorMsg}`,
+                isError: true,
+            }));
+            return;
+        }
+
+        const filePath = typeof execArgs.path === 'string' ? execArgs.path : '';
+        const fileText = typeof execArgs.fileText === 'string' ? execArgs.fileText : '';
+        // streamContent: StrReplace 返回仅被修改的内容 (newStr); Write 返回全文
+        const streamContent = typeof execArgs.streamContent === 'string'
+            ? execArgs.streamContent as string
+            : fileText;
+        // beforeContent: server 端读取的原文件内容
+        const beforeContent = typeof execArgs.beforeContent === 'string'
+            ? execArgs.beforeContent as string
+            : '';
+
+        yield* finalizeEditToolCall({
+            session: params.session,
+            toolName: tc.name,
+            callId: tc.callId,
+            modelCallId,
+            startedArgs,
+            input: sanitizedInput,
+            streamContent,
+            fileText,
+            beforeContent,
+            path: filePath,
+            roundContext: params.roundContext,
+            messages: params.messages,
+            allocateExecMessageId: params.allocateExecMessageId,
+        });
+        return;
+    }
+
+    yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
+
+    if (execArgsType && params.session) {
+        let args: Record<string, unknown>;
+        try {
+            args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
+                conversationId: params.conversationId,
+                currentModelId: params.currentModelId,
+            });
+        } catch (e) {
+            // server 端 buildExecArgs 失败 → 发送 error result
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] buildExecArgs failed');
+            const errorResult = { result: { case: 'error', value: { message: errorMsg } } };
+            yield toolCallCompleted(tc.callId, cursorToolType, startedArgs, errorResult, modelCallId);
+            params.roundContext.recordToolResult(params.messages, params.roundContext.createToolResult({
+                toolCallId: tc.callId,
+                toolName: tc.name,
+                content: `Error: ${errorMsg}`,
+                isError: true,
+            }));
+            return;
+        }
+        const execId = `${tc.callId}-exec`;
+        const execMessageId = params.allocateExecMessageId();
+        yield execMessage(execMessageId, execId, execArgsType, args);
+        yield* finalizeExecTool({
+            session: params.session,
+            toolName: tc.name,
+            callId: tc.callId,
+            cursorToolType,
+            execMessageId,
+            modelCallId,
+            startedArgs,
+            input: sanitizedInput,
+            roundContext: params.roundContext,
+            messages: params.messages,
+                    });
+        return;
+    }
+
+    if (cursorToolType === 'askQuestionToolCall' && params.session) {
+        yield* finalizeInteractionTool({
+            session: params.session,
+            interactionId: params.allocateInteractionId(),
+            queryCase: 'askQuestionInteractionQuery',
+            queryValue: {
+                args: startedArgs,
+                toolCallId: tc.callId,
+            },
+            expectedResponseCase: 'askQuestionInteractionResponse',
+            buildRawToolResult: (interactionResponse) => buildAskQuestionResultFromInteractionResponse(interactionResponse),
+            roundContext: params.roundContext,
+            messages: params.messages,
+                        cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        return;
+    }
+
+    if (cursorToolType === 'webSearchToolCall' && params.session) {
+        yield* finalizeInteractionTool({
+            session: params.session,
+            interactionId: params.allocateInteractionId(),
+            queryCase: 'webSearchRequestQuery',
+            queryValue: {
+                args: startedArgs,
+            },
+            expectedResponseCase: 'webSearchRequestResponse',
+            buildRawToolResult: (interactionResponse) => {
+                const approval = buildWebSearchApprovalResultFromInteractionResponse(interactionResponse);
+                return approval.approved
+                    ? buildWebSearchResult(sanitizedInput)
+                    : (approval.result ?? buildLocalToolResult(cursorToolType, sanitizedInput));
+            },
+            roundContext: params.roundContext,
+            messages: params.messages,
+                        cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        return;
+    }
+
+    if (cursorToolType === 'webFetchToolCall') {
+        yield* finalizeInteractionTool({
+            session: params.session,
+            ...(params.session ? {
+                interactionId: params.allocateInteractionId(),
+                queryCase: 'webFetchRequestQuery',
+                queryValue: {
+                    args: startedArgs,
+                    skipApproval: true,
+                },
+                expectedResponseCase: 'webFetchRequestResponse',
+            } : {}),
+            buildRawToolResult: (interactionResponse) => {
+                if (!params.session) return buildWebFetchResult(sanitizedInput);
+                if (!interactionResponse) {
+                    logger.warn({ callId: tc.callId, tool: tc.name }, '[TOOL] webFetch approval response missing, falling back to mock success');
+                    return buildWebFetchResult(sanitizedInput);
+                }
+                const approval = buildWebFetchApprovalResultFromInteractionResponse(interactionResponse);
+                return approval.approved
+                    ? buildWebFetchResult(sanitizedInput)
+                    : (approval.result ?? buildLocalToolResult(cursorToolType, sanitizedInput));
+            },
+            roundContext: params.roundContext,
+            messages: params.messages,
+                        cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        return;
+    }
+
+    // createPlanToolCall: 交互握手 (CreatePlanRequestQuery → CreatePlanRequestResponse)
+    if (cursorToolType === 'createPlanToolCall' && params.session) {
+        yield* finalizeInteractionTool({
+            session: params.session,
+            interactionId: params.allocateInteractionId(),
+            queryCase: 'createPlanRequestQuery',
+            queryValue: {
+                args: startedArgs,
+                toolCallId: tc.callId,
+            },
+            expectedResponseCase: 'createPlanRequestResponse',
+            buildRawToolResult: (interactionResponse) => {
+                const resp = interactionResponse as Record<string, unknown> | undefined;
+                const result = resp?.result as Record<string, unknown> | undefined;
+                if (result?.success !== undefined) {
+                    return {
+                        result: { case: 'success', value: {} },
+                        ...(typeof result.planUri === 'string' ? { planUri: result.planUri } : {}),
+                    };
+                }
+                return { result: { case: 'error', value: { error: 'CreatePlan failed' } } };
+            },
+            roundContext: params.roundContext,
+            messages: params.messages,
+            cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        return;
+    }
+
+    // switchModeToolCall: 直接返回 success → { toModeId }
+    if (cursorToolType === 'switchModeToolCall') {
+        const targetModeId = typeof sanitizedInput.target_mode_id === 'string'
+            ? sanitizedInput.target_mode_id
+            : typeof sanitizedInput.targetModeId === 'string'
+                ? sanitizedInput.targetModeId
+                : 'agent';
+        const switchResult = {
+            result: { case: 'success', value: { toModeId: targetModeId } },
+        };
+        const finalized = finalizeToolCall({
+            roundContext: params.roundContext,
+            messages: params.messages,
+            cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            rawToolResult: switchResult,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        yield finalized.frame;
+        return;
+    }
+
+    const finalized = finalizeToolCall({
+        roundContext: params.roundContext,
+        messages: params.messages,
+                cursorToolType,
+        toolName: tc.name,
+        callId: tc.callId,
+        startedArgs,
+        rawToolResult: buildLocalToolResult(cursorToolType, sanitizedInput),
+        input: sanitizedInput,
+        modelCallId,
+    });
+    yield finalized.frame;
+}

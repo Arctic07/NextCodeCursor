@@ -1,0 +1,491 @@
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
+import * as http from 'node:http'
+import * as vscode from 'vscode'
+import { gateCheck, promptLogin, startPeriodicReCheck } from './hub/gate'
+import { loginCommand, logoutCommand, openDeviceManagerCommand } from './hub/login'
+import { bumpRefreshSignal, pushRoutesUpdate, startServer, stopServer } from './server'
+import { getServerConfig } from './server/config'
+import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
+import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
+import { ensureRoutesFile, onRoutesChange, startRoutesWatcher, stopRoutesWatcher, toggleByokMode } from './server/config/routesStore'
+import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntime'
+import { initLogger } from './server/logger'
+import { getRoutesFilePath } from './server/routes'
+import { PanelProvider } from './ui/panel-provider'
+import { getState, onStateChange, refreshState, setFileLogState } from './ui/state'
+
+let outputChannel: vscode.LogOutputChannel
+let statusBarItem: vscode.StatusBarItem
+
+// 窗口标识 — 从 VSCODE_PROCESS_TITLE 的 [N-M] 提取, 提前声明供 initLogFilePath 读取
+let myWindowId: number | null = null
+
+type SseLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
+interface SseLogEntry { level: SseLogLevel, msg: string }
+
+// ── File Logger ──────────────────────────────────────────────────
+//
+// Per-window 日志文件: 每个 Cursor 窗口实例写自己独立的文件,
+// 避免多实例并发写冲突。开关状态存 globalState (per-instance debug 偏好,
+// 不应跨实例同步)。
+//
+// 文件路径: ~/.ccursor/logs/${windowId}-${workspace}.log
+// 懒初始化: 只在首次写入时创建 writeStream 和 logs 目录
+//
+const GLOBAL_STATE_FILE_LOG_KEY = 'cursor2plus.fileLogEnabled'
+
+let fileLogEnabled = false
+let logFilePath = ''
+let logFileStream: NodeJS.WritableStream | null = null
+
+function initLogFilePath(context: vscode.ExtensionContext): void {
+  const wid = myWindowId ?? 0
+  const workspace = vscode.workspace.name || 'no-workspace'
+  logFilePath = getSessionLogFilePath(wid, workspace)
+  fileLogEnabled = context.globalState.get<boolean>(GLOBAL_STATE_FILE_LOG_KEY, false)
+}
+
+function ensureLogFileStream(): NodeJS.WritableStream | null {
+  if (logFileStream)
+    return logFileStream
+  try {
+    const dir = getLogsDir()
+    if (!existsSync(dir))
+      mkdirSync(dir, { recursive: true })
+    logFileStream = createWriteStream(logFilePath, { flags: 'a' })
+    return logFileStream
+  }
+  catch (err) {
+    outputChannel.error(`[SRV] file log init failed: ${(err as Error).message}`)
+    return null
+  }
+}
+
+function closeLogFileStream(): void {
+  if (logFileStream) {
+    try {
+      logFileStream.end()
+    }
+    catch {}
+    logFileStream = null
+  }
+}
+
+function formatFileLogLine(entry: SseLogEntry): string {
+  const ts = new Date().toISOString()
+  return `${ts} [${entry.level}] ${entry.msg}\n`
+}
+
+/** 单一写入入口 — 所有 log 都走这里, 保证 Output Channel 和文件同步 */
+function writeToChannel(entry: SseLogEntry) {
+  switch (entry.level) {
+    case 'trace':
+      outputChannel.trace(entry.msg)
+      break
+    case 'debug':
+      outputChannel.debug(entry.msg)
+      break
+    case 'info':
+      outputChannel.info(entry.msg)
+      break
+    case 'warn':
+      outputChannel.warn(entry.msg)
+      break
+    case 'error':
+      outputChannel.error(entry.msg)
+      break
+  }
+
+  if (fileLogEnabled) {
+    const stream = ensureLogFileStream()
+    if (stream) {
+      try {
+        stream.write(formatFileLogLine(entry))
+      }
+      catch {}
+    }
+  }
+}
+
+/** 语义化包装: 替代直接 outputChannel.info/warn/error 调用, 走统一文件写入 */
+function log(level: SseLogLevel, msg: string): void {
+  writeToChannel({ level, msg })
+}
+
+/** 切换文件日志开关, 落盘到 globalState, 同步到 state (UI 显示) */
+async function toggleFileLog(context: vscode.ExtensionContext): Promise<void> {
+  fileLogEnabled = !fileLogEnabled
+  await context.globalState.update(GLOBAL_STATE_FILE_LOG_KEY, fileLogEnabled)
+
+  if (fileLogEnabled) {
+    const stream = ensureLogFileStream()
+    if (stream) {
+      log('info', `[SRV] file logging ENABLED → ${logFilePath}`)
+      vscode.window.showInformationMessage(`Cursor++ file logging enabled → ${logFilePath}`)
+    }
+  }
+  else {
+    log('info', '[SRV] file logging DISABLED')
+    closeLogFileStream()
+  }
+
+  setFileLogState(fileLogEnabled, logFilePath)
+}
+
+/** 在 VS Code 里打开当前实例的日志文件 */
+async function openLogFile(): Promise<void> {
+  if (!logFilePath || !existsSync(logFilePath)) {
+    vscode.window.showWarningMessage('Cursor++ log file does not exist yet. Enable file logging first.')
+    return
+  }
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(logFilePath))
+  await vscode.window.showTextDocument(doc)
+}
+
+// ── 窗口标识 (从 VSCODE_PROCESS_TITLE 解析) —— myWindowId 声明在文件头部 ──
+const RE_WINDOW_ID = /\[(\d+)-\d+\]/
+const RE_SSE_DATA = /^data: /
+
+function parseWindowId(): number | null {
+  const title = process.env.VSCODE_PROCESS_TITLE || ''
+  const m = title.match(RE_WINDOW_ID)
+  return m ? Number.parseInt(m[1], 10) : null
+}
+
+// ── SSE 日志订阅 ──
+let sseRequest: http.ClientRequest | null = null
+
+function connectLogStream(port: number, windowId: number) {
+  disconnectLogStream()
+
+  const req = http.get(`http://127.0.0.1:${port}/byok/log-stream?windowId=${windowId}`, (res) => {
+    let buf = ''
+    res.on('data', (chunk: Buffer) => {
+      buf += chunk.toString()
+      // SSE 格式: "data: ...\n\n"
+      const parts = buf.split('\n\n')
+      buf = parts.pop() || ''
+      for (const part of parts) {
+        const line = part.replace(RE_SSE_DATA, '')
+        if (!line)
+          continue
+        try {
+          const entry = JSON.parse(line) as SseLogEntry
+          writeToChannel(entry)
+        }
+        catch {
+          log('info', line)
+        }
+      }
+    })
+    res.on('end', () => {
+      // 连接断开, 3 秒后重连
+      sseRequest = null
+      setTimeout(() => {
+        if (myWindowId !== null)
+          connectLogStream(port, myWindowId)
+      }, 3000)
+    })
+  })
+
+  req.on('error', () => {
+    sseRequest = null
+    // server 可能还没启动, 静默重试
+    setTimeout(() => {
+      if (myWindowId !== null)
+        connectLogStream(port, myWindowId)
+    }, 5000)
+  })
+
+  sseRequest = req
+}
+
+function disconnectLogStream() {
+  if (sseRequest) {
+    sseRequest.destroy()
+    sseRequest = null
+  }
+}
+
+// ── 状态栏渲染 ──
+//
+// 复合状态: 同时显示 server 进程状态 + BYOK Mode 开关
+//   - 前缀 codicon (✓ / ○) → server 进程状态 (复用旧的语义)
+//   - 后缀 ◉ / ○ → BYOK Mode 开/关
+//   - 整体颜色: BYOK off 时给警告色提示
+//
+// 点击 → toggle BYOK Mode (非 server)。Server 启停走命令面板/侧边栏。
+
+// ── Hub 登录状态 (gate) ──
+//
+// 仅在 activate 时做一次 check, 之后靠 periodic re-check 更新。
+// 未登录 → 状态栏显示 $(account) × + 警告背景, 点击触发 login 命令。
+let hubSignedIn = false
+let hubUsername: string | undefined
+
+function renderStatusBar() {
+  const s = getState()
+
+  // 未登录优先显示登录提示
+  if (!hubSignedIn) {
+    statusBarItem.text = '$(account) Sign in to Cursor++'
+    statusBarItem.tooltip = 'Cursor++ Hub 未登录。点击进行设备授权。'
+    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground')
+    statusBarItem.command = 'cursor2plus.hub.login'
+    return
+  }
+
+  // server 状态前缀 codicon: ✓ on / ✗ offline (close 是 × 不是字母 x)
+  const serverIcon = s.server === 'offline' ? '$(close)' : '$(check)'
+
+  // 主 tooltip 行 — 保留旧 Server 描述形态
+  const src = s.server === 'local' ? 'this instance' : 'another instance'
+  const serverTip = s.server === 'offline'
+    ? 'Cursor++ — Server offline'
+    : `Cursor++ — Server :${s.port} (${src})`
+
+  // BYOK mode 后缀 + tooltip 行
+  const byokGlyph = s.byokMode ? '◉' : '○'
+  const byokTip = s.byokMode
+    ? 'BYOK ON — using local providers.json'
+    : 'BYOK OFF — passing through to official Cursor'
+
+  const userTip = hubUsername ? `\nSigned in as ${hubUsername}` : ''
+
+  statusBarItem.text = `${serverIcon} BYOK ${byokGlyph}`
+  statusBarItem.tooltip = `${serverTip}\n${byokTip}${userTip}\n\nClick: toggle BYOK Mode`
+  statusBarItem.backgroundColor = s.byokMode
+    ? undefined
+    : new vscode.ThemeColor('statusBarItem.warningBackground')
+  statusBarItem.command = 'cursor2plus.toggleByok'
+}
+
+// ── Server 操作 ──
+
+async function toggleServer() {
+  const s = getState()
+
+  if (s.server === 'local') {
+    await stopServer()
+    log('info', '[SRV] stopped')
+    vscode.window.showInformationMessage('Cursor++ BYOK Server stopped')
+  }
+  else if (s.server === 'remote') {
+    vscode.window.showInformationMessage('Server is running in another Cursor instance')
+    return
+  }
+  else {
+    await doStartServer()
+  }
+  await refreshState()
+}
+
+async function doStartServer() {
+  const cfg = getServerConfig()
+
+  const s = getState()
+  if (s.server !== 'offline') {
+    log('warn', `[SRV] port ${cfg.port} already in use`)
+    return
+  }
+
+  try {
+    const { host, port } = await startServer({
+      host: cfg.host,
+      port: cfg.port,
+    })
+    log('info', `[SRV] listening at http://${host}:${port}`)
+  }
+  catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // EADDRINUSE = 另一个窗口实例先赢得了端口，不是真的错误
+    if (msg.includes('EADDRINUSE')) {
+      log('info', `[SRV] port ${cfg.port} claimed by another instance, running as remote`)
+    }
+    else {
+      log('error', `[SRV] failed to start: ${msg}`)
+      vscode.window.showErrorMessage(`Cursor++ Server failed: ${msg}`)
+    }
+  }
+}
+
+// ── 激活 ──
+
+export async function activate(context: vscode.ExtensionContext) {
+  outputChannel = vscode.window.createOutputChannel('Cursor++', { log: true })
+  initLogger((level, msg) => writeToChannel({ level, msg }))
+  log('info', 'Cursor++ activating...')
+
+  // 状态栏 (BYOK Mode 切换按钮)
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
+  statusBarItem.command = 'cursor2plus.toggleByok'
+  statusBarItem.show()
+  context.subscriptions.push(statusBarItem)
+
+  // 状态变化 → 刷新状态栏
+  context.subscriptions.push(onStateChange(() => renderStatusBar()))
+
+  // 侧边栏面板
+  const panelProvider = new PanelProvider(context)
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider),
+  )
+
+  // ── Hub 登录命令 (无论 gate 结果都要注册,失败用户才能点"立即登录") ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cursor2plus.hub.login', async () => {
+      await loginCommand(context)
+      // 登录后重新 gate + 刷新
+      const g = await gateCheck(context, msg => log('info', msg))
+      hubSignedIn = g.allowed
+      hubUsername = g.username
+      renderStatusBar()
+      if (g.allowed && getState().server === 'offline') {
+        const { autoStart } = getServerConfig()
+        if (autoStart)
+          await doStartServer()
+      }
+      await refreshState()
+    }),
+    vscode.commands.registerCommand('cursor2plus.hub.logout', async () => {
+      await logoutCommand(context)
+      await stopServer()
+      hubSignedIn = false
+      hubUsername = undefined
+      renderStatusBar()
+      await refreshState()
+    }),
+    vscode.commands.registerCommand('cursor2plus.hub.openDeviceManager', () => openDeviceManagerCommand()),
+  )
+
+  // ── Gate check: 门控写在 server 启动最前面 ──
+  const gate = await gateCheck(context, msg => log('info', msg))
+  hubSignedIn = gate.allowed
+  hubUsername = gate.username
+
+  if (!gate.allowed) {
+    log('warn', `[HUB] denied (reason=${gate.reason}), BYOK server will NOT start`)
+    renderStatusBar()
+    // 只注册登录/登出命令,其他命令仍注册但 server 不启
+    context.subscriptions.push(
+      vscode.commands.registerCommand('cursor2plus.serverToggle', () => {
+        vscode.window.showWarningMessage('Cursor++ Hub: 未登录,无法启动 Server。')
+        promptLogin()
+      }),
+      vscode.commands.registerCommand('cursor2plus.toggleByok', () => promptLogin()),
+      vscode.commands.registerCommand('cursor2plus.editRoutes', () => promptLogin()),
+      vscode.commands.registerCommand('cursor2plus.editProviders', () => promptLogin()),
+      vscode.commands.registerCommand('cursor2plus.openSettings', () => {
+        vscode.commands.executeCommand('cursor2plus.panel.focus')
+      }),
+    )
+    promptLogin()
+    log('info', 'Cursor++ activated (login-only mode)')
+    return
+  }
+
+  // ── 正常命令注册 ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand('cursor2plus.serverToggle', () => toggleServer()),
+    vscode.commands.registerCommand('cursor2plus.toggleByok', async () => {
+      const next = await toggleByokMode()
+      await refreshState()
+      // 1. 推送 REST redirect 列表变更到 renderer — inject-patch 的 fetch wrapper
+      //    安装时写死了 _restPaths, 切 OFF 后 /auth/poll 仍被拦截导致登录中断,
+      //    必须通过 SSE 推送新列表让 renderer 热更新。
+      const restPaths = next.redirect
+        .filter((r: string) => r.startsWith('REST:'))
+        .map((r: string) => r.slice(5))
+      pushRoutesUpdate(restPaths)
+      // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用)
+      bumpRefreshSignal()
+      const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
+      vscode.window.showInformationMessage(`${label}. Model list will refresh automatically.`)
+    }),
+    vscode.commands.registerCommand('cursor2plus.editRoutes', () => {
+      vscode.window.showTextDocument(vscode.Uri.file(getRoutesFilePath()))
+    }),
+    vscode.commands.registerCommand('cursor2plus.editProviders', () => {
+      vscode.window.showTextDocument(vscode.Uri.file(getProvidersFilePath()))
+    }),
+    vscode.commands.registerCommand('cursor2plus.openSettings', () => {
+      vscode.commands.executeCommand('cursor2plus.panel.focus')
+    }),
+    vscode.commands.registerCommand('cursor2plus.toggleFileLog', () => toggleFileLog(context)),
+    vscode.commands.registerCommand('cursor2plus.openLogFile', () => openLogFile()),
+  )
+
+  // ── 周期 re-check: 1 小时轮询一次, 发现 revoke 立即停 server ──
+  context.subscriptions.push(
+    startPeriodicReCheck(
+      context,
+      async () => {
+        hubSignedIn = false
+        hubUsername = undefined
+        await stopServer()
+        renderStatusBar()
+        await refreshState()
+      },
+      msg => log('info', msg),
+    ),
+  )
+
+  // 确保配置文件存在 —— 即使 server 未启动,面板也能读写
+  await ensureRoutesFile()
+  await ensureProvidersFile()
+
+  // 文件监听: 其他实例修改配置时自动同步状态 + UI
+  startRoutesWatcher()
+  startProvidersWatcher()
+  const disposeRoutesWatch = onRoutesChange(async () => {
+    await refreshState()
+    renderStatusBar()
+    bumpRefreshSignal()
+  })
+  const disposeProvidersWatch = onProvidersChange(async () => {
+    resetProviderInstanceCache() // 清除缓存的 SDK client, 下次请求用新 baseUrl/apiKey
+    await refreshState()
+    bumpRefreshSignal()
+  })
+  context.subscriptions.push({ dispose: disposeRoutesWatch }, { dispose: disposeProvidersWatch })
+
+  // 初始化状态
+  await refreshState()
+  renderStatusBar()
+
+  // Auto-start server
+  const { autoStart } = getServerConfig()
+  if (autoStart) {
+    await doStartServer()
+    await refreshState()
+  }
+
+  // 解析窗口 ID 并连接 SSE 日志流
+  myWindowId = parseWindowId()
+  // 初始化 file log 路径 (依赖 myWindowId 和 vscode.workspace.name)
+  initLogFilePath(context)
+  setFileLogState(fileLogEnabled, logFilePath)
+  if (myWindowId !== null) {
+    const cfg = getServerConfig()
+    log('info', `[SRV] windowId=${myWindowId}, connecting to :${cfg.port}`)
+    connectLogStream(cfg.port, myWindowId)
+  }
+  else {
+    log('warn', '[SRV] could not parse windowId from VSCODE_PROCESS_TITLE')
+  }
+
+  if (fileLogEnabled)
+    log('info', `[SRV] file logging restored from globalState → ${logFilePath}`)
+
+  log('info', 'Cursor++ activated')
+}
+
+export async function deactivate() {
+  disconnectLogStream()
+  closeLogFileStream()
+  stopRoutesWatcher()
+  stopProvidersWatcher()
+  await stopServer()
+  if (outputChannel)
+    outputChannel.dispose()
+}

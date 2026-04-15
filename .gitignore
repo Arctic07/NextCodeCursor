@@ -1,0 +1,29 @@
+# Build output
+out
+dist
+.vscode-test/
+
+# Packages
+node_modules
+*.vsix
+
+# macOS
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime logs
+logs/
+*.log
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Editor
+.idea/
+*.swp
+*.swo

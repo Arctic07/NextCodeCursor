@@ -1,0 +1,171 @@
+/**
+ * Anthropic Claude Provider
+ *
+ * 实现 LLMProvider 接口，封装 @anthropic-ai/sdk。
+ *
+ * 思考模式分支 (Claude 4.x / 4.5 / 4.6):
+ *   1. 用户配了 thinkingLevel →
+ *        thinking: { type: 'adaptive' } + output_config: { effort }
+ *        适用于 Claude Opus 4.5 / Opus 4.6 / Sonnet 4.6 (官方 "adaptive thinking + effort" 姿势)
+ *   2. 用户配了 thinkingBudgetTokens →
+ *        thinking: { type: 'enabled', budget_tokens: N }
+ *        适用于老 4.x (没有 effort 参数) 或手动控制 budget 的场景
+ *   3. 都没配但 thinking:true →
+ *        fallback: thinking: { type: 'enabled', budget_tokens: min(maxTokens-1, 32768) }
+ *        保留旧行为,兼容未升级配置
+ *
+ * Level → effort 映射:
+ *   minimal → low (Anthropic 没有 minimal 档)
+ *   low / medium / high → 同名
+ *   xhigh → max  (只在 4.6 可用)
+ */
+import Anthropic from '@anthropic-ai/sdk';
+import type { ProviderEntry } from '../../data/defaults';
+import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
+import { assertValidAnthropicToolUseContract } from './anthropicContract';
+import { encodeAnthropicRequestMessages, encodeAnthropicTools } from './conversationCodec';
+import { createProxiedFetch } from './proxyFetch';
+
+type AnthropicEffort = 'low' | 'medium' | 'high' | 'max';
+
+function mapThinkingLevelToAnthropicEffort(level: NonNullable<LLMStreamRequest['thinkingLevel']>): AnthropicEffort {
+    switch (level) {
+        case 'minimal': return 'low';   // Anthropic 无 minimal,降级
+        case 'low': return 'low';
+        case 'medium': return 'medium';
+        case 'high': return 'high';
+        case 'xhigh': return 'max';     // 仅 4.6 支持
+    }
+}
+
+export class AnthropicProvider implements LLMProvider {
+    readonly name = 'anthropic';
+    private client: Anthropic;
+
+    constructor(entry: ProviderEntry) {
+        const opts: ConstructorParameters<typeof Anthropic>[0] = {};
+        if (entry.baseUrl) {
+            opts.baseURL = entry.baseUrl;
+        }
+
+        if (entry.auth.kind === 'token') {
+            opts.authToken = entry.auth.value;
+        } else {
+            opts.apiKey = entry.auth.value;
+        }
+
+        const proxiedFetch = createProxiedFetch(entry.proxyUrl);
+        if (proxiedFetch) {
+            opts.fetch = proxiedFetch;
+        }
+
+        this.client = new Anthropic(opts);
+    }
+
+    async *stream(request: LLMStreamRequest): AsyncIterable<LLMStreamEvent> {
+        const encoded = encodeAnthropicRequestMessages(request.messages);
+        assertValidAnthropicToolUseContract(encoded.messages);
+
+        const params: Anthropic.MessageCreateParamsStreaming = {
+            model: request.model,
+            max_tokens: request.maxTokens ?? 8192,
+            messages: encoded.messages,
+            stream: true,
+        };
+
+        if (encoded.system) {
+            params.system = encoded.system;
+        }
+
+        const tools = encodeAnthropicTools(request.tools);
+        if (tools) {
+            params.tools = tools;
+        }
+
+        // effort 参数官方允许独立于 thinking 使用 (控制整体 token 消耗 + tool 调用详略),
+        // 因此 thinkingLevel 不受 request.thinking 的 gate 限制 —— 只要配了就发。
+        if (request.thinkingLevel) {
+            params.output_config = {
+                effort: mapThinkingLevelToAnthropicEffort(request.thinkingLevel),
+            };
+        }
+
+        if (request.thinking) {
+            const maxTok = request.maxTokens ?? 8192;
+            if (request.thinkingLevel) {
+                // 4.5-opus / 4.6+ 的 adaptive thinking + effort 组合 (effort 上面已发)
+                params.thinking = { type: 'adaptive' };
+            }
+            else if (request.thinkingBudgetTokens !== undefined) {
+                // 老路径: 显式 budget_tokens (clamp 到 [1024, maxTokens-1])
+                const clamped = Math.max(1024, Math.min(request.thinkingBudgetTokens, maxTok - 1));
+                params.thinking = { type: 'enabled', budget_tokens: clamped };
+            }
+            else {
+                // 默认 fallback —— 保持旧行为 (legacy budget)
+                params.thinking = {
+                    type: 'enabled',
+                    budget_tokens: Math.min(maxTok - 1, 32768),
+                };
+            }
+        }
+
+        const stream = this.client.messages.stream(params);
+        const contentBlocks = new Map<number, { type: string; id?: string; name?: string }>();
+
+        for await (const event of stream) {
+            switch (event.type) {
+                case 'content_block_start': {
+                    const block = event.content_block;
+                    if (block.type === 'tool_use') {
+                        contentBlocks.set(event.index, { type: block.type, id: block.id, name: block.name });
+                        yield { type: 'tool_use_start', id: block.id, name: block.name };
+                    } else {
+                        contentBlocks.set(event.index, { type: block.type });
+                    }
+                    break;
+                }
+                case 'content_block_delta': {
+                    const blockMeta = contentBlocks.get(event.index);
+                    const delta = event.delta;
+                    if (delta.type === 'text_delta') {
+                        yield { type: 'text_delta', text: delta.text };
+                    } else if (delta.type === 'thinking_delta') {
+                        yield { type: 'thinking_delta', text: delta.thinking };
+                    } else if (delta.type === 'input_json_delta') {
+                        yield {
+                            type: 'tool_use_delta',
+                            id: blockMeta?.id ?? '',
+                            input: delta.partial_json,
+                        };
+                    }
+                    break;
+                }
+                case 'content_block_stop': {
+                    const blockMeta = contentBlocks.get(event.index);
+                    if (blockMeta?.type === 'thinking') {
+                        yield { type: 'thinking_done' };
+                    } else if (blockMeta?.type === 'tool_use' && blockMeta.id) {
+                        yield { type: 'tool_use_done', id: blockMeta.id };
+                    }
+                    contentBlocks.delete(event.index);
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        const finalMessage = await stream.finalMessage();
+        yield {
+            type: 'done',
+            stopReason: finalMessage.stop_reason ?? 'end_turn',
+            usage: {
+                inputTokens: finalMessage.usage.input_tokens,
+                outputTokens: finalMessage.usage.output_tokens,
+                cacheReadTokens: finalMessage.usage.cache_read_input_tokens ?? undefined,
+                cacheWriteTokens: finalMessage.usage.cache_creation_input_tokens ?? undefined,
+            },
+        };
+    }
+}
