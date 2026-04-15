@@ -1,0 +1,42 @@
+{
+  "name": "@cometix/ccursor",
+  "version": "0.0.6",
+  "description": "Cursor++ BYOK Installer — Bring Your Own Key for Cursor IDE",
+  "type": "module",
+  "bin": {
+    "ccursor": "./dist/cli.cjs"
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "build:production": "node esbuild.js --production",
+    "build:vsix": "node src/build-vsix.js",
+    "build:vsix:obf": "node src/build-vsix.js --obf",
+    "build:all": "npm run build:vsix:obf && npm run build:production"
+  },
+  "files": [
+    "dist/",
+    "vsix/"
+  ],
+  "keywords": [
+    "cursor",
+    "byok",
+    "llm",
+    "ai"
+  ],
+  "author": "CometixSpace",
+  "license": "UNLICENSED",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "acorn": "^8.14.0",
+    "adm-zip": "^0.5.17"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}
