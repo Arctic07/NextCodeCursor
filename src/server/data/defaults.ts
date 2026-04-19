@@ -9,6 +9,7 @@ export const CCURSOR_DIR_NAME = '.ccursor'
 export const ROUTES_FILE_NAME = 'routes.json'
 export const PROVIDERS_FILE_NAME = 'providers.json'
 export const DB_FILE_NAME = 'cursor.db'
+export const KNOWLEDGE_BASE_FILE_NAME = 'knowledge-base.json'
 
 export const DEFAULT_HOST = '127.0.0.1'
 export const DEFAULT_PORT = 9960
@@ -41,11 +42,18 @@ export const BYOK_REDIRECT: readonly string[] = [
   // ── BYOK 核心 ──
   'aiserver.v1.AiService/AvailableModels',
   'agent.v1.AgentService/RunSSE',
+  'agent.v1.AgentService/UploadConversationBlobs',
   'aiserver.v1.BidiService/BidiAppend',
 
   // ── 本地摘要持久化(BYOK Agent 配套) ──
   'aiserver.v1.ChatService/GetConversationSummary',
   'aiserver.v1.ChatService/StreamSpeculativeSummaries',
+
+  // ── Rules / Knowledge Base (本地持久化) ──
+  'aiserver.v1.AiService/KnowledgeBaseList',
+  'aiserver.v1.AiService/KnowledgeBaseAdd',
+  'aiserver.v1.AiService/KnowledgeBaseUpdate',
+  'aiserver.v1.AiService/KnowledgeBaseRemove',
 
   // ── BYOK 流程下需要 stub 的服务 ──
   'aiserver.v1.AuthService',

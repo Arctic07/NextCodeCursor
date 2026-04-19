@@ -80,6 +80,99 @@ export interface ParsedRunRequest {
    * 每条是 { data } 或 { blobId } 之一,blobId 形态需经 blob store 解包 (Step 4)。
    */
   extraContextEntries: Array<{ data?: string, blobId?: string }>
+
+  // ── SelectedContext 扩展字段 (客户端已 gather,逐一注入 LLM) ──
+
+  /**
+   * 用户框选代码 (来自 selectedContext.code_selections, proto field 5)
+   * content = 选中的代码;range = 起止行列;path 为绝对路径
+   */
+  codeSelections: Array<{
+    content: string
+    path: string
+    relativePath?: string
+    range?: { startLine: number, startCol: number, endLine: number, endCol: number }
+  }>
+  /**
+   * 用户框选终端输出 (来自 selectedContext.terminal_selections, proto field 7)
+   * 客户端异步 gather,content 为多行拼接,title/path 可空
+   */
+  terminalSelections: Array<{
+    content: string
+    title?: string
+    path?: string
+    range?: { startLine: number, startCol: number, endLine: number, endCol: number }
+  }>
+  /**
+   * 用户 @ 的文件内容 (来自 requestContext.file_contents, proto field 20)
+   *
+   * **注意:不在 selectedContext 下,在 requestContext 下**。Cursor 客户端对
+   * "@ 整个文件"的处理是填 requestContext.file_contents (map<path, content>),
+   * 不走 selectedContext.files。同理 @ Folder 走 requestContext.project_layouts。
+   *
+   * 数据形态: { "/abs/path/file.ts": "<file content>", ... }
+   */
+  fileContents: Record<string, string>
+  /**
+   * 用户 @ 的项目目录树 (来自 requestContext.project_layouts, proto field 13)
+   *
+   * 对应 @ Folder 菜单触发的目录结构快照。每个节点是 LsDirectoryTreeNode
+   * (递归结构, 含 path / files / subfolders)。原样 JSON 压入 XML 供 LLM 理解。
+   */
+  projectLayouts: Array<Record<string, unknown>>
+  /**
+   * 用户 @ 的外部链接 (来自 selectedContext.external_links, proto field 9)
+   * 包含普通 URL 和 PDF (is_pdf + pdf_content / blob_id)。菜单里没有 @Link 入口,
+   * 但客户端 appendDataLink (unminify.js:709435) 仍有写入路径,保留注入。
+   */
+  externalLinks: Array<{
+    url: string
+    uuid: string
+    filename?: string
+    isPdf: boolean
+    pdfContent?: string
+  }>
+  /**
+   * 用户 @ 的 subagent (来自 selectedContext.selected_subagents, proto field 22)
+   * 只有 name,server 需要按 name 查找 subagent 定义
+   *
+   * ── 刻意跳过的 git 相关字段(决策记录) ──
+   * gitDiff / gitCommits / gitPrDiffSelections / selectedPullRequests:
+   *   官方有 StreamDiffReview / SummarizeWithReferences 专用后端 pipeline,
+   *   BYOK 脱离后直接注入原始 diff/commit 会爆 context 或成为无效数据。依赖
+   *   LLM 通过 Shell tool 主动运行 git diff/log/show 获取更精确的信息。
+   *
+   * gitDiffFromBranchToMain (field 11) **已核实客户端真的会发**(@ Branch 实测):
+   *   proto 结构为 { content: string, full_content_length_char_count: int32 },
+   *   客户端跑 git diff origin/main...HEAD 截断到 ~500KB。本可实装(带硬截断
+   *   到 80KB 以内注入 <git_diff_from_branch_to_main> XML 块),但:
+   *     (1) @ Branch 菜单使用率预期低(大部分场景 LLM 自己跑 git 命令更准)
+   *     (2) 实装要多维护一段带阈值分支的 XML 渲染逻辑
+   *   权衡后**暂不实装激活**。parseRunRequest 里的诊断打点已经在持续观察
+   *   客户端是否填充此字段,日后使用率上来再启用。
+   *
+   * 以上所有 git 字段若要激活,同步改: types.ts(加字段) + shared.ts(默认值)
+   *   + parseRunRequest.ts(解析) + messageBuilder.ts(XML 块 + 硬截断)。
+   */
+  selectedSubagents: Array<{ name: string }>
+  /**
+   * 用户 @ 的浏览器页面 (来自 selectedContext.selected_browsers, proto field 24)
+   * 来自 Cursor 浏览器集成,含 url + 页面标题
+   */
+  selectedBrowsers: Array<{
+    browserId: string
+    url: string
+    pageTitle?: string
+  }>
+  /**
+   * 最近的 agent 对话 (来自 selectedContext.recent_agents_context, proto field 27)
+   * 取代 past_chats;客户端从最近对话列表取前 N 个 transcript 摘要
+   */
+  recentAgentsContext: Array<{
+    name: string
+    path: string
+    overview?: string
+  }>
   /** 功能开关 */
   webSearchEnabled: boolean
   webFetchEnabled: boolean
@@ -96,6 +189,16 @@ export interface ParsedRunRequest {
   /** replay / mid-conversation resend 时客户端额外附带的前序用户消息 */
   prependUserMessages: Array<{ text: string, messageId?: string }>
   isResume: boolean
+  /** Build 按钮触发的 Plan 执行 (来自 action.executePlanAction) */
+  isExecutePlan: boolean
+  executePlanContent?: string
+  executePlanFileUri?: string
+  /** Debug 模式配置 (来自 requestContext.debug_mode_config, proto field 15) */
+  debugModeConfig?: {
+    logPath: string
+    serverEndpoint: string
+    sessionId: string
+  }
   /** 备注列表 */
   conversationNotesListing: string
   sharedNotesListing: string

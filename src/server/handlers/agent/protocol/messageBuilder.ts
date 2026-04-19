@@ -4,6 +4,7 @@ import type { ParsedRunRequest } from './types'
 import { resolvePromptProfile } from '../../llm/promptProfile'
 import { buildAnthropicSystemPrompt } from './prompts/anthropicSystem'
 import { buildComposerFallbackSystemPrompt } from './prompts/composerFallback'
+import { buildModeReminder } from './prompts/modeReminders'
 import { buildOpenAISystemPrompt } from './prompts/openaiSystem'
 import { escapeXml } from './shared'
 
@@ -51,13 +52,23 @@ export function buildMessages(
  * - 其他 (Anthropic / Gemini) → 主模板
  */
 function buildSystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderPromptProfile): string {
+  let base: string
   if (promptProfile.systemPromptStyle === 'composer-fallback') {
-    return buildComposerFallbackSystemPrompt()
+    base = buildComposerFallbackSystemPrompt()
   }
-  if (promptProfile.provider === 'openai-chat' || promptProfile.provider === 'openai-responses') {
-    return buildOpenAISystemPrompt(parsed, promptProfile)
+  else if (promptProfile.provider === 'openai-chat' || promptProfile.provider === 'openai-responses') {
+    base = buildOpenAISystemPrompt(parsed, promptProfile)
   }
-  return buildAnthropicSystemPrompt(parsed, promptProfile)
+  else {
+    base = buildAnthropicSystemPrompt(parsed, promptProfile)
+  }
+
+  const mode = parsed.mode.replace('AGENT_MODE_', '').toLowerCase()
+  if (mode === 'plan') {
+    base += `\n\n<plan_mode_guardrails>\n- In plan mode, only edit markdown files.\n- If the user is refining the plan, stay in plan mode and keep edits in markdown.\n- If the user explicitly asks you to build, implement, or write the code now, switch to agent mode before making non-markdown edits.\n</plan_mode_guardrails>`
+  }
+
+  return base
 }
 
 /**
@@ -74,6 +85,19 @@ function buildSystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderProm
  *   <cursor_commands>        ← Step 2 用户触发的 /command
  *   <mcp_instructions>       ← Step 2
  *   <extra_context>          ← Step 2 (blob 分支待 Step 4)
+ *   <code_selections>        ← 用户框选代码 (Past Chats 除外) — selectedContext 通道
+ *   <past_chats>             ← @ 历史对话 (拆自 codeSelections) — selectedContext 通道
+ *   <terminal_selections>    ← 用户框选终端输出 — selectedContext 通道
+ *   <attached_files>         ← @ 整个文件 — requestContext.file_contents 通道 (map)
+ *   <attached_folders>       ← @ Folder 目录树 — requestContext.project_layouts 通道
+ *   <external_links>         ← @ 链接/PDF — selectedContext 通道
+ *   <attached_subagents>     ← @ subagent — selectedContext 通道
+ *   <attached_browsers>      ← @ 浏览器页面 — selectedContext 通道
+ *   <recent_agents>          ← 最近对话摘要 — selectedContext 通道
+ *
+ * 已刻意跳过的 git 字段 (gitDiff / gitDiffFromBranchToMain / gitCommits /
+ *   gitPrDiffSelections / selectedPullRequests): 见 types.ts 里的说明,
+ *   改由 LLM 主动用 Shell tool 跑 git 命令获取。
  */
 function buildPreambleUserMessage(parsed: ParsedRunRequest): string {
   const parts: string[] = []
@@ -217,6 +241,135 @@ When users ask you to perform tasks, check if any of the available skills below 
     parts.push(extraSection)
   }
 
+  // ── <code_selections> ── (编辑器框选 + ⌘+L 产生的代码片段)
+  // Past Chats 不走 codeSelections 通道 (实测:Past Chats 是 @ agent-transcripts/*.jsonl 文件,
+  // 走 requestContext.fileContents map,下方 <attached_files> 块里按 path 识别拆分)
+  if (parsed.codeSelections.length > 0) {
+    let section = `<code_selections description="Code the user framed as relevant to this request. Treat each selection as the exact region the user wants you to focus on.">\n`
+    for (const sel of parsed.codeSelections) {
+      const attrs = [`path="${escapeXml(sel.path)}"`]
+      if (sel.relativePath)
+        attrs.push(`relativePath="${escapeXml(sel.relativePath)}"`)
+      if (sel.range) {
+        // 注: proto 的 line/column 通常是 0-based,注入时 +1 换算为人类可读
+        attrs.push(`lines="${sel.range.startLine + 1}-${sel.range.endLine + 1}"`)
+      }
+      section += `<code_selection ${attrs.join(' ')}>${escapeXml(sel.content)}</code_selection>\n`
+    }
+    section += `</code_selections>`
+    parts.push(section)
+  }
+
+  // ── <terminal_selections> ── (用户框选的终端输出片段)
+  if (parsed.terminalSelections.length > 0) {
+    let section = `<terminal_selections description="Terminal output the user highlighted. The content is literal shell output; do not reinterpret as source code.">\n`
+    for (const sel of parsed.terminalSelections) {
+      const attrs: string[] = []
+      if (sel.title)
+        attrs.push(`title="${escapeXml(sel.title)}"`)
+      if (sel.path)
+        attrs.push(`path="${escapeXml(sel.path)}"`)
+      if (sel.range)
+        attrs.push(`lines="${sel.range.startLine + 1}-${sel.range.endLine + 1}"`)
+      section += `<terminal_selection${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''}>${escapeXml(sel.content)}</terminal_selection>\n`
+    }
+    section += `</terminal_selections>`
+    parts.push(section)
+  }
+
+  // ── <attached_files> + <past_chats> ──
+  // 来自 requestContext.file_contents (map<path,content>)。按 path 分流:
+  //   - path 含 "agent-transcripts" 视为 Past Chat (Cursor 把 @ Past Chat 渲染为 @ transcript 文件)
+  //   - 其他路径为正常 @ 文件
+  // 拆成两个 XML 块让 LLM 区分"当前代码文件"和"历史对话记录"的语义。
+  const fileEntries = Object.entries(parsed.fileContents).filter(([p, c]) => p && c)
+  if (fileEntries.length > 0) {
+    const pastChatEntries = fileEntries.filter(([p]) => p.includes('agent-transcripts'))
+    const normalFileEntries = fileEntries.filter(([p]) => !p.includes('agent-transcripts'))
+
+    if (normalFileEntries.length > 0) {
+      let section = `<attached_files description="Files the user attached via @File. Treat the content as canonical — it reflects the file state at the moment of the message.">\n`
+      for (const [path, content] of normalFileEntries)
+        section += `<attached_file path="${escapeXml(path)}">${escapeXml(content)}</attached_file>\n`
+      section += `</attached_files>`
+      parts.push(section)
+    }
+
+    if (pastChatEntries.length > 0) {
+      let section = `<past_chats description="Prior agent transcripts (JSONL) the user attached. Reference them when the user asks about earlier conversations.">\n`
+      for (const [path, content] of pastChatEntries)
+        section += `<past_chat path="${escapeXml(path)}">${escapeXml(content)}</past_chat>\n`
+      section += `</past_chats>`
+      parts.push(section)
+    }
+  }
+
+  // ── <attached_folders> ── (@ Folder — 来自 requestContext.project_layouts)
+  // repeated LsDirectoryTreeNode,递归目录结构,JSON 化压入 XML 让 LLM 自行理解布局。
+  // 避免 server 端手展开树 (会膨胀 token),LLM 对 JSON 树结构有较好理解能力。
+  if (parsed.projectLayouts.length > 0) {
+    let section = `<attached_folders description="Folders the user attached. Each node is a LsDirectoryTreeNode JSON — use Read / Glob to dive into specific files.">\n`
+    for (const node of parsed.projectLayouts) {
+      const path = typeof (node as { path?: unknown }).path === 'string' ? (node as { path: string }).path : ''
+      const treeJson = JSON.stringify(node)
+      section += `<attached_folder${path ? ` path="${escapeXml(path)}"` : ''}>${escapeXml(treeJson)}</attached_folder>\n`
+    }
+    section += `</attached_folders>`
+    parts.push(section)
+  }
+
+  // ── <external_links> ── (用户 @ 的 URL/PDF;pdfContent 已是解析后的文本)
+  if (parsed.externalLinks.length > 0) {
+    let section = `<external_links description="External resources the user attached. Fetch or consult each as needed for this turn.">\n`
+    for (const link of parsed.externalLinks) {
+      const attrs = [`url="${escapeXml(link.url)}"`]
+      if (link.filename)
+        attrs.push(`filename="${escapeXml(link.filename)}"`)
+      if (link.isPdf)
+        attrs.push(`type="pdf"`)
+      // PDF 已有正文时 inline 内容供 LLM 直接阅读;否则只留链接(LLM 可用 webFetch 取)
+      const inner = link.isPdf && link.pdfContent ? escapeXml(link.pdfContent) : ''
+      section += `<external_link ${attrs.join(' ')}>${inner}</external_link>\n`
+    }
+    section += `</external_links>`
+    parts.push(section)
+  }
+
+  // ── <attached_subagents> ── (用户 @ 的 subagent;只有 name,具体能力注册表由 server 解析)
+  if (parsed.selectedSubagents.length > 0) {
+    let section = `<attached_subagents description="Subagents the user requested for this task. Consider delegating the appropriate work to them via the task tool.">\n`
+    for (const sa of parsed.selectedSubagents)
+      section += `<attached_subagent name="${escapeXml(sa.name)}" />\n`
+    section += `</attached_subagents>`
+    parts.push(section)
+  }
+
+  // ── <attached_browsers> ── (Cursor 浏览器集成中用户 @ 的页面)
+  if (parsed.selectedBrowsers.length > 0) {
+    let section = `<attached_browsers description="Browser pages the user attached. Use webFetch to read full content if relevant.">\n`
+    for (const br of parsed.selectedBrowsers) {
+      const attrs = [`url="${escapeXml(br.url)}"`]
+      if (br.pageTitle)
+        attrs.push(`title="${escapeXml(br.pageTitle)}"`)
+      section += `<attached_browser ${attrs.join(' ')} />\n`
+    }
+    section += `</attached_browsers>`
+    parts.push(section)
+  }
+
+  // ── <recent_agents> ── (最近对话列表,用户可能想引用其中某个历史对话;
+  // 只含元数据, 如需正文 LLM 应用 Read tool 读 agentTranscriptsFolder/<uuid>.jsonl)
+  if (parsed.recentAgentsContext.length > 0) {
+    let section = `<recent_agents description="Recent prior agent conversations in this workspace. Read the transcript file when the user references one.">\n`
+    for (const agent of parsed.recentAgentsContext) {
+      const attrs = [`name="${escapeXml(agent.name)}"`, `path="${escapeXml(agent.path)}"`]
+      const inner = agent.overview ? escapeXml(agent.overview) : ''
+      section += `<recent_agent ${attrs.join(' ')}>${inner}</recent_agent>\n`
+    }
+    section += `</recent_agents>`
+    parts.push(section)
+  }
+
   return parts.join('\n\n')
 }
 
@@ -266,5 +419,7 @@ function buildIdeStateSection(parsed: ParsedRunRequest): string | null {
 }
 
 function buildCurrentUserTurn(parsed: ParsedRunRequest): string {
-  return `<user_query>\n${parsed.userText}\n</user_query>`
+  const reminder = buildModeReminder(parsed)
+  const query = `<user_query>\n${parsed.userText}\n</user_query>`
+  return reminder ? `${reminder}\n${query}` : query
 }

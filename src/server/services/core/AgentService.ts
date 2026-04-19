@@ -26,6 +26,7 @@ import { toJson } from '@bufbuild/protobuf'
 import { ConnectError } from '@connectrpc/connect'
 import { AgentClientMessageSchema, AgentService } from '../../gen/agent_v1_pb'
 import { handleRunRequest } from '../../handlers/agent/agentOrchestrator'
+import { cacheBlob } from '../../handlers/agent/blobStore'
 import { ModelNotFoundError } from '../../handlers/models/mapper'
 import { makeByokConnectError, makeModelNotFoundError, makeProviderError } from '../../handlers/errors'
 import { ErrorDetails_Error } from '../../gen/aiserver_v1_pb'
@@ -167,6 +168,46 @@ export default (router: ConnectRouter) => {
       finally {
         closeSession(requestId)
       }
+    },
+
+    /**
+     * Client → Server blob 上传(单次 unary RPC,支持分片)
+     *
+     * 触发场景:
+     *   - selectedContext.extra_context_entries 里有 blob_id 分支(大段 @ 内容)
+     *   - selectedContext.selected_documents / selected_videos / selected_images 等走 blob 的字段
+     *   - selectedContext.external_links.blob_id (PDF blob)
+     *   - selectedContext.selected_pull_requests.blob_id / git_pr_diff_selections.blob_id
+     *
+     * 客户端在发 RunRequest **之前**会先 chunk(≤100 条/批)上传 blobs,
+     * Server 把每条存进 blobCache,key 为 utf-8 decode 后的 blob id 字符串,
+     * value 为 base64 encoded bytes。下游 parseRunRequest + resolveExtraContextBlobs
+     * 直接从 blobCache 命中。
+     *
+     * 编码对齐 (与 parseRunRequest.ts 里的 extraContextEntries.blob_id 解码一致):
+     *   - blob.id (bytes) → TextDecoder.decode → utf-8 string 作为 cache key
+     *   - blob.value (bytes) → base64 string 作为 cache value
+     *
+     * 分片语义:
+     *   - chunk_index / total_chunks 只用于客户端进度,server 端逐条 cacheBlob 即可。
+     *   - Response 空体只表示 ACK。
+     */
+    async uploadConversationBlobs(req) {
+      const { conversationId, blobs, chunkIndex, totalChunks } = req
+      let cached = 0
+      for (const blob of blobs) {
+        if (!blob.id || blob.id.length === 0)
+          continue
+        const blobId = Buffer.from(blob.id).toString('utf-8')
+        const blobData = Buffer.from(blob.value ?? new Uint8Array()).toString('base64')
+        cacheBlob(blobId, blobData)
+        cached++
+      }
+      logger.debug(
+        { conversationId, chunkIndex, totalChunks, cached, received: blobs.length },
+        '[SVC] UploadConversationBlobs chunk received',
+      )
+      return {}
     },
   })
 }

@@ -36,8 +36,17 @@ function stubParsed(overrides: Record<string, unknown>): Parameters<typeof build
     selectedImages: [],
     prependUserMessages: [],
     isResume: false,
+    isExecutePlan: false,
     conversationNotesListing: '',
     sharedNotesListing: '',
+    codeSelections: [],
+    terminalSelections: [],
+    fileContents: {},
+    projectLayouts: [],
+    externalLinks: [],
+    selectedSubagents: [],
+    selectedBrowsers: [],
+    recentAgentsContext: [],
     ...overrides,
   } as Parameters<typeof buildMessages>[0]
 }

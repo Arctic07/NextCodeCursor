@@ -202,11 +202,16 @@ describe('parseRunRequest — Step 1 field coverage', () => {
         modelDetails: { modelId: 'm' },
       },
     })
-    expect(parsed.userRules).toEqual([
+    // 注: parseRunRequest 会真实读 ~/.ccursor/knowledge-base.json 合入 userRules
+    // (复刻官方服务端 knowledgeBaseService 行为), 所以 userRules 可能还有本地 KB
+    // 条目。断言 fixture 提供的 3 条"必须在"即可,不做精确匹配。
+    // 顺序保证: parseRunRequest 先处理 requestContext.rules (L139-203), 再合入 KB
+    // (L212-227) 且以 content 去重 — fixture 的 3 条永远先入 userRules。
+    expect(parsed.userRules).toEqual(expect.arrayContaining([
       'Always reply in Chinese',
       'CLAUDE',
       'bare rule',
-    ])
+    ]))
     expect(parsed.projectRules).toHaveLength(1)
     expect(parsed.projectRules[0]).toMatchObject({
       fullPath: '/proj/.cursor/rules/a.mdc',
