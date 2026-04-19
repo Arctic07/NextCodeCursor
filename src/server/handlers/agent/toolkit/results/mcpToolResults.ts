@@ -9,6 +9,22 @@ import {
     type ToolResultEnvelope,
 } from './shared';
 
+/**
+ * MCP image data 防御性处理: proto McpImageContent.data 是 bytes,
+ * 如果 MCP server 返回 undefined / base64 string / 非 bytes → proto 序列化 crash:
+ *   "cannot encode field agent.v1.McpImageContent.data to binary: invalid uint32: undefined"
+ * 导致 SSE stream 断开 + 客户端 checkpoint corrupt + 历史消息丢失。
+ */
+export function normalizeImageData(raw: unknown): Uint8Array {
+    if (raw instanceof Uint8Array) return raw;
+    if (Buffer.isBuffer(raw)) return new Uint8Array(raw);
+    if (typeof raw === 'string') {
+        try { return new Uint8Array(Buffer.from(raw, 'base64')); }
+        catch { return new Uint8Array(Buffer.from(raw, 'utf-8')); }
+    }
+    return new Uint8Array(0);
+}
+
 function normalizeMcpContentItem(value: unknown): Record<string, unknown> {
     const item = obj(value);
     const content = obj(item.content);
@@ -32,7 +48,7 @@ function normalizeMcpContentItem(value: unknown): Record<string, unknown> {
                 content: {
                     case: 'image',
                     value: {
-                        data: imageValue.data,
+                        data: normalizeImageData(imageValue.data),
                         mimeType: str(imageValue.mimeType),
                     },
                 },
@@ -58,7 +74,7 @@ function normalizeMcpContentItem(value: unknown): Record<string, unknown> {
             content: {
                 case: 'image',
                 value: {
-                    data: imageValue.data,
+                    data: normalizeImageData(imageValue.data),
                     mimeType: str(imageValue.mimeType),
                 },
             },

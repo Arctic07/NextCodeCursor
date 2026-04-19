@@ -83,17 +83,29 @@ export function findToolByCursorType(cursorToolType: string): ToolRegistryEntry 
 /**
  * 按 LLM 工具名（alias）查找 buildStartedArgs。
  * 不能用 cursorToolType 查找，因为 StrReplace 和 Write 共享 editToolCall。
+ *
+ * MCP 工具: 工具名是动态的 (如 "cursor-ide-browser-browser_navigate"),
+ * 不在任何 entry 的 aliases 里。resolveToolCall 已识别并在 input 中标记了
+ * providerIdentifier,这里据此路由到 CallMcpTool 的 builder。
  */
 export function buildRegisteredToolArgs(
     llmToolName: string,
     input: Record<string, unknown>,
     callId: string,
 ): Record<string, unknown> | null {
-    return findToolByAlias(llmToolName)?.buildStartedArgs?.(input, callId) ?? null;
+    const entry = findToolByAlias(llmToolName);
+    if (entry?.buildStartedArgs) return entry.buildStartedArgs(input, callId);
+
+    if (typeof input.providerIdentifier === 'string' && input.providerIdentifier) {
+        return findToolByCursorType('mcpToolCall')?.buildStartedArgs?.(input, callId) ?? null;
+    }
+
+    return null;
 }
 
 /**
  * 按 LLM 工具名（alias）查找 buildExecArgs。
+ * MCP 工具同上,通过 providerIdentifier 路由到 CallMcpTool。
  */
 export function buildRegisteredExecArgs(
     llmToolName: string,
@@ -101,5 +113,12 @@ export function buildRegisteredExecArgs(
     callId: string,
     options: ToolExecBuildOptions = {},
 ): Record<string, unknown> | null {
-    return findToolByAlias(llmToolName)?.buildExecArgs?.(input, callId, options) ?? null;
+    const entry = findToolByAlias(llmToolName);
+    if (entry?.buildExecArgs) return entry.buildExecArgs(input, callId, options);
+
+    if (typeof input.providerIdentifier === 'string' && input.providerIdentifier) {
+        return findToolByCursorType('mcpToolCall')?.buildExecArgs?.(input, callId, options) ?? null;
+    }
+
+    return null;
 }

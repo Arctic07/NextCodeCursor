@@ -15,7 +15,7 @@ import type { LLMStreamEvent } from '../llm/types'
  * tool_use_done            → interactionUpdate.toolCallStarted
  * done                     → interactionUpdate.stepCompleted + turnEnded
  */
-import { create } from '@bufbuild/protobuf'
+import { create, toBinary } from '@bufbuild/protobuf'
 import {
   AgentMode,
   AgentServerMessageSchema,
@@ -35,6 +35,40 @@ import {
 import { logger, streamLogger } from '../../logger'
 import { AGENT_HEARTBEAT_INTERVAL_MS } from './constants'
 import { mapPartialToolName } from './tools'
+
+/**
+ * Proto 帧毒性检测: yield 前预验证 toBinary 能否成功。
+ *
+ * create() 只构造 JS 对象,不做 proto binary 序列化验证 —
+ * 字段类型不匹配(如 bytes 字段传了 undefined)在 create() 时不报错,
+ * 要到 toBinary() 或客户端 protobuf-es 反序列化时才 crash。
+ *
+ * 毒帧发给客户端会导致:
+ *   1. SSE stream 断开 (客户端 proto 反序列化失败)
+ *   2. 但 Server 可能已 emit checkpoint (带不完整 blobIds)
+ *   3. 客户端存了 corrupt checkpoint → 历史消息丢失
+ *
+ * 这个函数在 Server 侧预先 toBinary,失败则 throw,让上层 catch
+ * 降级为 error result (对话继续,历史不 corrupt)。
+ */
+export class ProtoSerializeError extends Error {
+  constructor(message: string, public readonly fieldHint?: string) {
+    super(message)
+    this.name = 'ProtoSerializeError'
+  }
+}
+
+function validateFrame(frame: AgentServerMessage): AgentServerMessage {
+  try {
+    toBinary(AgentServerMessageSchema, frame)
+  }
+  catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.error({ error: msg }, '[STREAM] proto frame validation failed — blocking toxic frame')
+    throw new ProtoSerializeError(msg, msg)
+  }
+  return frame
+}
 
 /** 构造 AgentServerMessage with interactionUpdate */
 function iu(msg: Record<string, unknown>): AgentServerMessage {
@@ -161,9 +195,9 @@ export function partialToolCall(callId: string, toolType: string, modelCallId: s
   })
 }
 
-/** 构造 toolCallStarted 帧 (参数完整，正式开始) */
+/** 构造 toolCallStarted 帧 (参数完整，正式开始) — 含 proto 预验证 */
 export function toolCallStarted(callId: string, toolType: string, args: Record<string, unknown>, modelCallId: string): AgentServerMessage {
-  return create(AgentServerMessageSchema, {
+  return validateFrame(create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
       value: create(InteractionUpdateSchema, {
@@ -177,12 +211,12 @@ export function toolCallStarted(callId: string, toolType: string, args: Record<s
         } as any,
       }),
     },
-  })
+  }))
 }
 
-/** 构造 toolCallCompleted 帧 */
+/** 构造 toolCallCompleted 帧 — 含 proto 预验证 */
 export function toolCallCompleted(callId: string, toolType: string, args: Record<string, unknown>, result: unknown, modelCallId: string): AgentServerMessage {
-  return create(AgentServerMessageSchema, {
+  return validateFrame(create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
       value: create(InteractionUpdateSchema, {
@@ -196,7 +230,7 @@ export function toolCallCompleted(callId: string, toolType: string, args: Record
         } as any,
       }),
     },
-  })
+  }))
 }
 
 /** 构造 toolCallDelta 帧 */
@@ -263,9 +297,9 @@ export function interactionQuery(id: number, queryCase: string, queryValue: Reco
   })
 }
 
-/** 构造 execServerMessage 帧 — 发送执行指令给 Client */
+/** 构造 execServerMessage 帧 — 发送执行指令给 Client — 含 proto 预验证 */
 export function execMessage(id: number, execId: string, argsType: string, args: Record<string, unknown>): AgentServerMessage {
-  return create(AgentServerMessageSchema, {
+  return validateFrame(create(AgentServerMessageSchema, {
     message: {
       case: 'execServerMessage',
       value: create(ExecServerMessageSchema, {
@@ -277,7 +311,7 @@ export function execMessage(id: number, execId: string, argsType: string, args: 
         } as any,
       }),
     },
-  })
+  }))
 }
 
 /** 构造 kvServerMessage.getBlobArgs 帧 — 向 Client 请求取回 blob */
