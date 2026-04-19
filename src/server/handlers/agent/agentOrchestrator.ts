@@ -77,8 +77,8 @@ export async function* handleRunRequest(
             return;
         }
 
-        if (!parsed.userText && !parsed.isResume) {
-            logger.warn({ keys: Object.keys(msg) }, '[AGENT] runRequest without userText, resume, or summarizeAction');
+        if (!parsed.userText && !parsed.isResume && !parsed.isExecutePlan) {
+            logger.warn({ keys: Object.keys(msg) }, '[AGENT] runRequest without userText, resume, executePlan, or summarizeAction');
             return;
         }
 

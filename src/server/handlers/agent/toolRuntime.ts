@@ -5,7 +5,7 @@ import type { LLMMessage } from '../llm/types';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
 import { finalizeInteractionTool } from './interactionRuntime';
-import { execMessage, toolCallCompleted, toolCallStarted } from './stream';
+import { execMessage, ProtoSerializeError, toolCallCompleted, toolCallStarted } from './stream';
 import { buildToolArgs } from './toolBuilders';
 import {
     buildAskQuestionResultFromInteractionResponse,
@@ -32,6 +32,39 @@ export async function* runToolCall(params: {
     allocateExecMessageId: () => number;
     allocateInteractionId: () => number;
 }): AsyncGenerator<AgentServerMessage, void, void> {
+    const tc = params.toolCall;
+
+    try {
+        yield* runToolCallInner(params);
+    }
+    catch (err) {
+        if (err instanceof ProtoSerializeError) {
+            // 层 2 熔断: proto 帧序列化失败 → 降级为 error result, 不 crash stream。
+            // 不 emit checkpoint → 客户端保留上一轮 checkpoint → 历史不 corrupt。
+            logger.error(
+                { tool: tc.name, callId: tc.callId, error: err.message },
+                '[TOOL] proto serialize failed — returning error result to LLM (stream preserved)',
+            );
+            const safeErrorResult = { result: { case: 'error', value: { error: `Tool frame serialize error: ${err.message}` } } };
+            const finalized = finalizeToolCall({
+                roundContext: params.roundContext,
+                messages: params.messages,
+                cursorToolType: 'readToolCall',
+                toolName: tc.name,
+                callId: tc.callId,
+                startedArgs: {},
+                rawToolResult: safeErrorResult,
+                input: tc.input,
+                modelCallId: `${params.conversationId}-${params.round}-${tc.callId.slice(-8)}`,
+            });
+            yield finalized.frame;
+            return;
+        }
+        throw err;
+    }
+}
+
+async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): AsyncGenerator<AgentServerMessage, void, void> {
     const tc = params.toolCall;
     const resolvedTool = resolveToolCall(tc.name, tc.input, params.availableMcpTools);
     const cursorToolType = resolvedTool.cursorToolType;
@@ -279,7 +312,9 @@ export async function* runToolCall(params: {
             expectedResponseCase: 'createPlanRequestResponse',
             buildRawToolResult: (interactionResponse) => {
                 const resp = interactionResponse as Record<string, unknown> | undefined;
-                const result = resp?.result as Record<string, unknown> | undefined;
+                // interactionResponse 结构: { id, createPlanRequestResponse: { result: { success:{}, planUri } } }
+                const inner = resp?.createPlanRequestResponse as Record<string, unknown> | undefined;
+                const result = inner?.result as Record<string, unknown> | undefined;
                 if (result?.success !== undefined) {
                     return {
                         result: { case: 'success', value: {} },
@@ -300,28 +335,44 @@ export async function* runToolCall(params: {
         return;
     }
 
-    // switchModeToolCall: 直接返回 success → { toModeId }
-    if (cursorToolType === 'switchModeToolCall') {
-        const targetModeId = typeof sanitizedInput.target_mode_id === 'string'
-            ? sanitizedInput.target_mode_id
-            : typeof sanitizedInput.targetModeId === 'string'
-                ? sanitizedInput.targetModeId
-                : 'agent';
-        const switchResult = {
-            result: { case: 'success', value: { toModeId: targetModeId } },
-        };
-        const finalized = finalizeToolCall({
+    // switchModeToolCall: 交互握手 (switchModeRequestQuery → switchModeRequestResponse)
+    // 抓包实证 (GPT.jsonl idx=27/6):
+    //   Server → Client: interactionQuery { switchModeRequestQuery { args { targetModeId, explanation, toolCallId } } }
+    //   Client → Server: interactionResponse { switchModeRequestResponse { approved {} } }
+    // 用户批准后才真正切换模式。
+    if (cursorToolType === 'switchModeToolCall' && params.session) {
+        yield* finalizeInteractionTool({
+            session: params.session,
+            interactionId: params.allocateInteractionId(),
+            queryCase: 'switchModeRequestQuery',
+            queryValue: {
+                args: startedArgs,
+                toolCallId: tc.callId,
+            },
+            expectedResponseCase: 'switchModeRequestResponse',
+            buildRawToolResult: (interactionResponse) => {
+                const resp = interactionResponse as Record<string, unknown> | undefined;
+                // interactionResponse 结构: { id, switchModeRequestResponse: { approved:{} } }
+                const inner = resp?.switchModeRequestResponse as Record<string, unknown> | undefined;
+                if (inner?.approved) {
+                    const targetModeId = typeof sanitizedInput.target_mode_id === 'string'
+                        ? sanitizedInput.target_mode_id
+                        : typeof sanitizedInput.targetModeId === 'string'
+                            ? sanitizedInput.targetModeId
+                            : 'agent';
+                    return { result: { case: 'success', value: { toModeId: targetModeId } } };
+                }
+                return { result: { case: 'error', value: { error: 'Mode switch rejected by user' } } };
+            },
             roundContext: params.roundContext,
             messages: params.messages,
             cursorToolType,
             toolName: tc.name,
             callId: tc.callId,
             startedArgs,
-            rawToolResult: switchResult,
             input: sanitizedInput,
             modelCallId,
         });
-        yield finalized.frame;
         return;
     }
 

@@ -29,27 +29,34 @@ export function toProviderFamily(pt: ProviderType): ProviderFamily {
 export type CursorAgentMode = 'agent' | 'ask' | 'plan' | 'debug';
 
 /**
- * 模式过滤规则:
- *   - agent/debug: 完整工具集
- *   - ask: 只读子集 (移除写入/删除/子任务工具)
- *   - plan: 类似 agent，可扩展 CreatePlan 等规划工具
+ * 模式工具集差异规则:
+ *
+ *   Agent (基准): 完整工具集
+ *   Ask:          移除写入工具 + SwitchMode (双重保障: 工具层面 + system_reminder)
+ *   Plan:         Agent + CreatePlan
+ *   Debug:        Agent - SwitchMode
+ *
+ * 交叉核对 (cursor_prompt/ OAI + analysis/prompts/ Anthropic 提取):
+ *   官方 Ask 保留了写入工具(只靠 system_reminder 约束),但 BYOK 选择
+ *   更严格的设计: 工具层面也移除,防止 LLM 无视指令。
  */
 const ASK_MODE_EXCLUDED_TOOLS = new Set([
-    'StrReplace', 'Write', 'Delete', 'Task', 'Subagent',
-    'EditNotebook', 'GenerateImage',
+    'StrReplace', 'Write', 'Delete', 'Task',
+    'EditNotebook', 'GenerateImage', 'SwitchMode',
 ]);
 
 export function filterToolsForMode(tools: LLMTool[], mode: string): LLMTool[] {
-    // 客户端传 "AGENT_MODE_ASK" 格式, 归约为 "ask"
     const normalized = mode.replace('AGENT_MODE_', '').toLowerCase() as CursorAgentMode;
     switch (normalized) {
         case 'ask':
-            return tools.filter(t => !ASK_MODE_EXCLUDED_TOOLS.has(t.name));
-        case 'plan':
-        case 'agent':
+            return tools.filter(t => !ASK_MODE_EXCLUDED_TOOLS.has(t.name) && t.name !== 'CreatePlan');
         case 'debug':
+            return tools.filter(t => t.name !== 'SwitchMode' && t.name !== 'CreatePlan');
+        case 'plan':
+            return tools; // 完整工具集含 CreatePlan + SwitchMode
+        case 'agent':
         default:
-            return tools;
+            return tools.filter(t => t.name !== 'CreatePlan'); // Agent 不暴露 CreatePlan
     }
 }
 

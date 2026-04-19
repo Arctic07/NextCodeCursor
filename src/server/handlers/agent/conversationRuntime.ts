@@ -305,7 +305,9 @@ export async function* handleConversationRun(
   yield* sendOrderedBlob({ role: 'user', content: currentUserContentRaw })
   let nextBlobbedMessageIndex = messages.length
 
-  const userPreview = parsed.userText.length > 80 ? `${parsed.userText.slice(0, 80)}...` : parsed.userText
+  const userPreview = parsed.isExecutePlan && parsed.executePlanContent
+    ? `[ExecutePlan] ${parsed.executePlanContent.match(/^---\s*\nname:\s*(.+)/m)?.[1]?.trim() ?? parsed.executePlanFileUri ?? 'plan'}`
+    : parsed.userText.length > 80 ? `${parsed.userText.slice(0, 80)}...` : parsed.userText
   logger.info(`[AGENT] → [${route.provider.name}/${route.model}] "${userPreview}" (${messages.length} msgs)`)
 
   const usageTotals = emptyUsageTotals()
@@ -335,6 +337,7 @@ export async function* handleConversationRun(
         builtinsCount: route.toolCatalog.listBuiltins().length,
         runtimeToolsCount: preparedRequest.request.tools?.length ?? 0,
         mcpToolsCount: parsed.mcpTools.length,
+        mcpToolNames: parsed.mcpTools.map(t => t.name),
       }, '[AGENT] prepared provider conversation')
 
       const llmStream = route.provider.stream(preparedRequest.request)
@@ -441,6 +444,23 @@ export async function* handleConversationRun(
           allocateExecMessageId: () => ++blobCounter,
           allocateInteractionId: () => interactionIdCounter++,
         })
+      }
+
+      // SwitchMode 成功后立即切换 mode,让下一轮 LLM 用新工具集
+      // (例如 Agent→Plan 切换后 CreatePlan 工具才会出现在列表里)
+      for (const tr of roundContext.pendingToolResults) {
+        if (!tr.isError && tr.content.includes('toModeId')) {
+          try {
+            const parsed_result = JSON.parse(tr.content)
+            const toMode = parsed_result?.toModeId as string | undefined
+            if (toMode) {
+              const newMode = `AGENT_MODE_${toMode.toUpperCase()}`
+              logger.info({ from: parsed.mode, to: newMode }, '[AGENT] mode switched mid-session')
+              parsed.mode = newMode
+            }
+          }
+          catch {}
+        }
       }
 
       if (roundContext.pendingToolResults.length > 0) {
