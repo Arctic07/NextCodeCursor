@@ -5,7 +5,7 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { CCURSOR_DIR_NAME, DB_FILE_NAME, MODELS_CATALOG_FILE_NAME, PROVIDERS_FILE_NAME, ROUTES_FILE_NAME } from '../data/defaults'
+import { CCURSOR_DIR_NAME, DB_FILE_NAME, KNOWLEDGE_BASE_FILE_NAME, MODELS_CATALOG_FILE_NAME, PROVIDERS_FILE_NAME, ROUTES_FILE_NAME } from '../data/defaults'
 
 export function getCcursorDir(): string {
   return join(homedir(), CCURSOR_DIR_NAME)
@@ -21,6 +21,15 @@ export function getProvidersFilePath(): string {
 
 export function getDatabaseFilePath(): string {
   return join(getCcursorDir(), DB_FILE_NAME)
+}
+
+/**
+ * KnowledgeBase items 持久化路径.
+ * 对应 Cursor 设置页里的 "User Rules"(客户端 knowledgeBaseService.items)。
+ * BYOK server 充当官方服务端的位置,需要自己存 items 并在 Agent 请求时合入 rules。
+ */
+export function getKnowledgeBaseFilePath(): string {
+  return join(getCcursorDir(), KNOWLEDGE_BASE_FILE_NAME)
 }
 
 /**

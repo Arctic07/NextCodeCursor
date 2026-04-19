@@ -30,6 +30,12 @@ import {
   AvailableModelsResponse_FeatureModelConfigSchema,
   AvailableModelsResponseSchema,
 } from '../../gen/aiserver_v1_pb'
+import {
+  addKnowledgeItem,
+  listKnowledgeItems,
+  removeKnowledgeItem,
+  updateKnowledgeItem,
+} from '../../config/knowledgeBaseStore'
 import { buildByokAvailableModels } from '../../handlers/models/byokModelBuilder'
 import { logger } from '../../logger'
 
@@ -72,8 +78,43 @@ export default (router: ConnectRouter) => {
     }),
     cppEditHistoryStatus: async () => ({ on: true, onlyIfExplicit: true }),
     availableDocs: async () => ({ docs: [] }),
-    knowledgeBaseList: async () => ({ success: true }),
-    knowledgeBaseAdd: async () => ({ success: true, id: '0' }),
+
+    // ── KnowledgeBase (设置页 "User Rules") ──
+    // 官方服务端把 items 存在用户账户云端,BYOK 用本地 knowledge-base.json 替代。
+    // parseRunRequest 侧会在每次 Agent 请求时把这些 items 合入 userRules,
+    // 让客户端设置页填的规则真正作用到 Agent。
+    knowledgeBaseList: async () => {
+      const items = listKnowledgeItems()
+      return {
+        success: true,
+        allResults: items.map(it => ({
+          id: it.id,
+          knowledge: it.knowledge,
+          title: it.title,
+          createdAt: it.createdAt,
+          isGenerated: it.isGenerated,
+        })),
+      }
+    },
+    knowledgeBaseAdd: async (req) => {
+      const item = await addKnowledgeItem({
+        knowledge: req.knowledge ?? '',
+        title: req.title ?? '',
+      })
+      return { success: true, id: item.id }
+    },
+    knowledgeBaseUpdate: async (req) => {
+      const ok = await updateKnowledgeItem(req.id ?? '', {
+        knowledge: req.knowledge ?? undefined,
+        title: req.title ?? undefined,
+      })
+      return { success: ok }
+    },
+    knowledgeBaseRemove: async (req) => {
+      const ok = await removeKnowledgeItem(req.id ?? '')
+      return { success: ok }
+    },
+
     reportClientNumericMetrics: async () => ({}),
     updateVscodeProfile: async () => ({}),
   })
