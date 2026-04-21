@@ -50,13 +50,49 @@ function normalize(loaded: { items?: unknown } | null): KnowledgeBaseFile {
   return { items: out }
 }
 
-/** 读取所有 items;文件不存在 / 损坏返回空数组。 */
+/**
+ * 读取所有 items;文件不存在 / 损坏返回空数组。
+ *
+ * 自愈: 如果检测到内容完全相同的重复条目 (title + knowledge),
+ * 仅保留最早的一份并自动清理文件。这处理了 addKnowledgeItem
+ * 幂等化之前累积的历史重复数据。
+ */
 export function listKnowledgeItems(): KnowledgeItem[] {
-  const loaded = readJsonOrNull<Partial<KnowledgeBaseFile>>(getKnowledgeBaseFilePath())
-  return normalize(loaded).items.slice()
+  const path = getKnowledgeBaseFilePath()
+  const file = normalize(readJsonOrNull<Partial<KnowledgeBaseFile>>(path))
+
+  const seen = new Map<string, KnowledgeItem>()
+  const deduped: KnowledgeItem[] = []
+  let duplicateCount = 0
+
+  for (const item of file.items) {
+    const contentKey = `${item.title}\0${item.knowledge}`
+    if (seen.has(contentKey)) {
+      duplicateCount++
+      continue
+    }
+    seen.set(contentKey, item)
+    deduped.push(item)
+  }
+
+  if (duplicateCount > 0) {
+    file.items = deduped
+    writeJsonAtomic(path, file)
+    logger.info({ removed: duplicateCount, remaining: deduped.length }, '[CFG] knowledge-base self-heal: deduplicated')
+  }
+
+  return deduped.slice()
 }
 
-/** 追加一条 item,返回新生成的 id。 */
+/**
+ * 追加一条 item,返回新生成的 id。
+ *
+ * 幂等性保障: 若已存在内容完全相同 (knowledge + title) 的 item,
+ * 返回已有 item 而不追加。这对齐官方 server 对 maybeAddOldUserRules()
+ * 等重复迁移调用的去重行为 — 客户端在每次启动时都会调用
+ * knowledgeBaseAdd("Migrated User Rules", personalContext),
+ * 官方云端通过账户级唯一约束去重, BYOK 需要在存储层做同样的事。
+ */
 export async function addKnowledgeItem(input: {
   knowledge: string
   title: string
@@ -65,14 +101,25 @@ export async function addKnowledgeItem(input: {
   const path = getKnowledgeBaseFilePath()
   return withSerial(path, () => {
     const file = normalize(readJsonOrNull<Partial<KnowledgeBaseFile>>(path))
+    const titleNorm = input.title.trim() || '[Untitled]'
+    const knowledgeNorm = input.knowledge
+
+    // 幂等: 内容相同的 item 不重复创建
+    const existing = file.items.find(
+      it => it.title === titleNorm && it.knowledge === knowledgeNorm,
+    )
+    if (existing) {
+      logger.info({ id: existing.id, title: existing.title }, '[CFG] knowledge-base item already exists (idempotent)')
+      return existing
+    }
+
     const item: KnowledgeItem = {
       id: randomUUID(),
-      knowledge: input.knowledge,
-      title: input.title.trim() || '[Untitled]',
+      knowledge: knowledgeNorm,
+      title: titleNorm,
       createdAt: new Date().toISOString(),
       isGenerated: !!input.isGenerated,
     }
-    // 新项排到最前,和官方 KnowledgeBaseService.addItem 的 UI 排序一致
     file.items.unshift(item)
     writeJsonAtomic(path, file)
     logger.info({ id: item.id, title: item.title }, '[CFG] knowledge-base item added')
