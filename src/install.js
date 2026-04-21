@@ -6,7 +6,8 @@
  *   1. 安装扩展到 extensions/cursor2plus/
  *   2. 注入 renderer hook (workbench.js)
  *   3. 注入 always-local 拦截 + 签名绕过 + 优先加载 (extensionHostProcess.js)
- *   4. 提示重启
+ *   4. 注入 delete-fix (workbench.js) — 修复非 draft 会话删除不持久的 bug
+ *   5. 提示重启
  */
 import { readFileSync, existsSync } from 'fs';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
@@ -14,6 +15,7 @@ import { installExtension, isExtensionInstalled } from './extension-embed.js';
 import { hasBackup } from './backup.js';
 import { patchInject } from './patch-inject.js';
 import { patchAlwaysLocal } from './patch-always-local.js';
+import { patchDeleteFix, isDeleteFixApplied } from './patch-delete-fix.js';
 import { releaseDefaults } from './release-defaults.js';
 
 const ok = msg => console.log(`\x1b[32m[OK]\x1b[0m ${msg}`);
@@ -39,9 +41,10 @@ export async function install() {
   const extInstalled = isExtensionInstalled(paths);
   const hookInjected = existsSync(paths.workbenchJs) && readFileSync(paths.workbenchJs, 'utf-8').includes('__byokWrapTransport');
   const alPatched = existsSync(paths.alwaysLocalMain) && readFileSync(paths.alwaysLocalMain, 'utf-8').includes('__byokUrlRewrite');
+  const dfPatched = isDeleteFixApplied(paths);
   const hasBackups = hasBackup(paths.workbenchJs) || hasBackup(paths.alwaysLocalMain) || hasBackup(paths.extensionHostJs);
 
-  if (extInstalled && hookInjected && alPatched) {
+  if (extInstalled && hookInjected && alPatched && dfPatched) {
     ok('Already fully installed');
     info('To reinstall, run "ccursor uninstall" first');
     return;
@@ -66,6 +69,9 @@ export async function install() {
 
   // 4. Always-local + sig bypass
   patchAlwaysLocal(paths, info);
+
+  // 5. Delete-fix (workbench.js, 在 inject 之后, 同一文件追加 patch)
+  patchDeleteFix(paths, info);
 
   console.log('');
   ok('Installation complete!');
