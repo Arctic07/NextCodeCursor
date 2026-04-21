@@ -20,6 +20,8 @@ export interface ParsedRunRequest {
   userText: string
   modelId: string
   conversationId: string
+  /** 当前模型的上下文窗口大小 (tokens),用于 skill catalog 预算计算 */
+  contextTokenLimit?: number
   mode: string
   isSummarize: boolean
   /** 用户设置的规则 (type: global,对应 .cursorrules / user settings rules) */

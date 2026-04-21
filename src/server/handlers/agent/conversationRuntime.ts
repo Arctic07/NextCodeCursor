@@ -230,6 +230,9 @@ export async function* handleConversationRun(
   session: AgentSession | null,
 ): AsyncIterable<AgentServerMessage> {
   const route = resolveProviderRuntime(parsed.modelId)
+  if (parsed.contextTokenLimit === undefined) {
+    parsed.contextTokenLimit = route.contextTokenLimit
+  }
   const [systemMessage, preambleUserMessage, currentUserMessage] = buildMessages(parsed, route.promptProfile)
   const systemContent = typeof systemMessage.content === 'string' ? systemMessage.content : ''
   const preambleUserContent = typeof preambleUserMessage.content === 'string' ? preambleUserMessage.content : ''

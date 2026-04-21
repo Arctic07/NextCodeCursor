@@ -8,6 +8,11 @@ import { buildModeReminder } from './prompts/modeReminders'
 import { buildOpenAISystemPrompt } from './prompts/openaiSystem'
 import { escapeXml } from './shared'
 
+function truncateDescription(desc: string, maxLen: number): string {
+  const oneLine = desc.replace(/\s+/g, ' ').trim()
+  return oneLine.length <= maxLen ? oneLine : `${oneLine.slice(0, maxLen - 1)}…`
+}
+
 /**
  * 从 ParsedRunRequest 构造官方风格的首轮 messages 数组。
  *
@@ -157,26 +162,57 @@ The rules section has a number of possible rules/memories/context that you shoul
     parts.push(rulesSection)
   }
 
-  // ── <agent_skills> ──
+  // ── <available_skills> — 渐进式加载 (参照 Claude Code SkillTool/prompt.ts) ──
+  //
+  // 三层架构:
+  //   Tier 1: catalog — name + 截断 description, 受 1% context 预算约束
+  //   Tier 2: 用户 @ 或 LLM Read 触发时才加载完整 SKILL.md body
+  //   Tier 3: skill 内引用的关联资源 (按需)
+  //
+  // 预算机制 (对齐 Claude Code):
+  //   - SKILL_BUDGET_CONTEXT_PERCENT = 0.01 (1% of context window)
+  //   - MAX_LISTING_DESC_CHARS = 250 (per skill)
+  //   - 超预算: 先截短 description → 极端情况只显示 name
   if (parsed.agentSkills.length > 0) {
-    let skillsSection = `<agent_skills>
-When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge. To use a skill, read the skill file at the provided absolute path using the Read tool, then follow the instructions within. When a skill is relevant, read and follow it IMMEDIATELY as your first action. NEVER just announce or mention a skill without actually reading and following it. Only use skills listed below.
+    const charBudget = Math.floor((parsed.contextTokenLimit ?? 200_000) * 4 * 0.01)
+    const maxDescChars = 250
 
+    const entries = parsed.agentSkills.map(s => {
+      const name = s.fullPath.split('/').slice(-2, -1)[0] || s.fullPath
+      const desc = truncateDescription(s.description, maxDescChars)
+      return { name, desc, fullPath: s.fullPath, full: `- ${name}: ${desc}` }
+    })
 
-<available_skills description="Skills the agent can use. Use the Read tool with the provided absolute path to fetch full contents.">\n`
+    const fullTotal = entries.reduce((sum, e) => sum + e.full.length + 1, 0)
+    let listing: string
 
-    for (const skill of parsed.agentSkills) {
-      skillsSection += `<agent_skill fullPath="${escapeXml(skill.fullPath)}">${escapeXml(skill.description)}</agent_skill>\n\n`
+    if (fullTotal <= charBudget) {
+      listing = entries.map(e => e.full).join('\n')
+    } else {
+      // 超预算: 按比例截短 description
+      const nameOverhead = entries.reduce((sum, e) => sum + e.name.length + 4, 0) + entries.length
+      const availableForDescs = charBudget - nameOverhead
+      const maxDescLen = Math.max(20, Math.floor(availableForDescs / entries.length))
+
+      if (maxDescLen < 20) {
+        listing = entries.map(e => `- ${e.name}`).join('\n')
+      } else {
+        listing = entries.map(e => `- ${e.name}: ${truncateDescription(e.desc, maxDescLen)}`).join('\n')
+      }
     }
 
-    skillsSection += `</available_skills>
-</agent_skills>`
+    const skillsSection = `<available_skills>
+The following skills are available. To use a skill, read its file with the Read tool, then follow the instructions within.
+Only use skills listed here. When a skill matches the user's request, read and follow it IMMEDIATELY as your first action.
+
+${listing}
+</available_skills>`
     parts.push(skillsSection)
   }
 
-  // ── <attached_skills> ── (用户手动 @ 的 skill,对 LLM 是"现在立刻用")
+  // ── <attached_skills> — Tier 2: 用户手动 @ 的 skill (立刻执行, 无需 Read) ──
   if (parsed.selectedSkills.length > 0) {
-    let attachedSkills = `<attached_skills description="Skills the user explicitly attached to this message. Follow them immediately before other work.">\n`
+    let attachedSkills = `<attached_skills description="Skills the user explicitly attached. Follow them immediately before other work.">\n`
     for (const skill of parsed.selectedSkills) {
       attachedSkills += `<attached_skill fullPath="${escapeXml(skill.fullPath)}">${escapeXml(skill.description)}</attached_skill>\n`
     }

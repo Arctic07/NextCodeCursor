@@ -335,10 +335,11 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   }))
 
   // Selected Skills (selectedContext.selected_skills) — 手动 @ 的 skill,区别于 requestContext.agent_skills 的全量
+  // description 不 fallback 到 content (全文) — 避免把完整 SKILL.md body 当 description 注入
   const selectedSkillsRaw = (selectedContext?.selectedSkills as Array<Record<string, unknown>> | undefined) ?? []
   const selectedSkills = selectedSkillsRaw.map(s => ({
     fullPath: (s.fullPath as string) ?? '',
-    description: (s.description as string) ?? (s.content as string) ?? '',
+    description: (s.description as string) ?? (s.name as string) ?? '',
   }))
 
   // ── SelectedContext 扩展字段 (客户端已 gather,server 注入 LLM) ──
