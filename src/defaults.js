@@ -45,11 +45,18 @@ export const BYOK_REDIRECT = [
   // ── BYOK 核心 ──
   'aiserver.v1.AiService/AvailableModels',
   'agent.v1.AgentService/RunSSE',
+  'agent.v1.AgentService/UploadConversationBlobs',
   'aiserver.v1.BidiService/BidiAppend',
 
   // ── 本地摘要持久化(BYOK Agent 配套) ──
   'aiserver.v1.ChatService/GetConversationSummary',
   'aiserver.v1.ChatService/StreamSpeculativeSummaries',
+
+  // ── Rules / Knowledge Base (本地持久化) ──
+  'aiserver.v1.AiService/KnowledgeBaseList',
+  'aiserver.v1.AiService/KnowledgeBaseAdd',
+  'aiserver.v1.AiService/KnowledgeBaseUpdate',
+  'aiserver.v1.AiService/KnowledgeBaseRemove',
 
   // ── BYOK 流程下需要 stub 的服务 ──
   'aiserver.v1.AuthService',
