@@ -1,131 +1,374 @@
-import { readFileSync } from 'fs';
-import { str } from '../shared';
-import type { ToolRegistryEntry } from '../types';
+import { readFileSync } from 'fs'
+import { structuredPatch } from 'diff'
+import { str } from '../shared'
+import type { ToolRegistryEntry } from '../types'
 
-// ── Patch 解析器 ──
+// ── Patch 解析器 (移植自 Codex apply-patch crate) ──
 
-interface ParsedPatch {
-    action: 'add' | 'update';
-    path: string;
-    /** Add File: 新文件的全部内容行 */
-    addLines?: string[];
-    /** Update File: 变更 hunks */
-    hunks?: ParsedHunk[];
+interface UpdateFileChunk {
+  changeContext: string | null
+  oldLines: string[]
+  newLines: string[]
+  isEndOfFile: boolean
 }
 
-interface ParsedHunk {
-    header?: string;
-    contextLines: string[];
-    removals: string[];
-    additions: string[];
+interface ParsedPatch {
+  action: 'add' | 'update' | 'delete'
+  path: string
+  movePath?: string
+  addContents?: string
+  chunks?: UpdateFileChunk[]
 }
 
 function parsePatch(patch: string): ParsedPatch | null {
-    const lines = patch.split('\n');
-    let i = 0;
+  const lines = patch.trim().split('\n')
+  let i = 0
 
-    // Skip to *** Begin Patch
-    while (i < lines.length && !lines[i].startsWith('*** Begin Patch')) i++;
-    if (i >= lines.length) return null;
-    i++;
+  while (i < lines.length && !lines[i].startsWith('*** Begin Patch'))
+    i++
+  if (i >= lines.length)
+    return null
+  i++
 
-    // Read file operation header
-    if (i >= lines.length) return null;
-    const headerLine = lines[i];
+  let endIdx = lines.length - 1
+  while (endIdx > i && !lines[endIdx].startsWith('*** End Patch'))
+    endIdx--
 
-    if (headerLine.startsWith('*** Add File: ')) {
-        const path = headerLine.slice('*** Add File: '.length).trim();
-        i++;
-        const addLines: string[] = [];
-        while (i < lines.length && !lines[i].startsWith('*** End Patch')) {
-            const line = lines[i];
-            if (line.startsWith('+')) {
-                addLines.push(line.slice(1));
-            }
-            i++;
-        }
-        return { action: 'add', path, addLines };
+  if (i > endIdx)
+    return null
+
+  const bodyLines = lines.slice(i, endIdx)
+  if (bodyLines.length === 0)
+    return null
+
+  const headerLine = bodyLines[0].trim()
+
+  // *** Add File: <path>
+  if (headerLine.startsWith('*** Add File: ')) {
+    const path = headerLine.slice('*** Add File: '.length).trim()
+    const addLines: string[] = []
+    for (let j = 1; j < bodyLines.length; j++) {
+      const line = bodyLines[j]
+      if (line.startsWith('+'))
+        addLines.push(line.slice(1))
+    }
+    return { action: 'add', path, addContents: addLines.join('\n') + '\n' }
+  }
+
+  // *** Delete File: <path>
+  if (headerLine.startsWith('*** Delete File: ')) {
+    const path = headerLine.slice('*** Delete File: '.length).trim()
+    return { action: 'delete', path }
+  }
+
+  // *** Update File: <path>
+  if (headerLine.startsWith('*** Update File: ')) {
+    const path = headerLine.slice('*** Update File: '.length).trim()
+    let j = 1
+    let movePath: string | undefined
+
+    // Optional: *** Move to: <path>
+    if (j < bodyLines.length && bodyLines[j].startsWith('*** Move to: ')) {
+      movePath = bodyLines[j].slice('*** Move to: '.length).trim()
+      j++
     }
 
-    if (headerLine.startsWith('*** Update File: ')) {
-        const path = headerLine.slice('*** Update File: '.length).trim();
-        i++;
-        const hunks: ParsedHunk[] = [];
-        let currentHunk: ParsedHunk | null = null;
+    const chunks: UpdateFileChunk[] = []
+    while (j < bodyLines.length) {
+      // 跳过空行
+      if (bodyLines[j].trim() === '') {
+        j++
+        continue
+      }
+      // 遇到下一个 *** 标记 → 结束
+      if (bodyLines[j].startsWith('***'))
+        break
 
-        while (i < lines.length && !lines[i].startsWith('*** End Patch')) {
-            const line = lines[i];
-            if (line.startsWith('@@')) {
-                if (currentHunk) hunks.push(currentHunk);
-                const header = line.length > 2 ? line.slice(3).trim() : undefined;
-                currentHunk = { header, contextLines: [], removals: [], additions: [] };
-            } else if (line.startsWith('*** End of File')) {
-                // ignore
-            } else if (currentHunk) {
-                if (line.startsWith('-')) {
-                    currentHunk.removals.push(line.slice(1));
-                } else if (line.startsWith('+')) {
-                    currentHunk.additions.push(line.slice(1));
-                } else if (line.startsWith(' ')) {
-                    currentHunk.contextLines.push(line.slice(1));
-                }
-            }
-            i++;
-        }
-        if (currentHunk) hunks.push(currentHunk);
-        return { action: 'update', path, hunks };
+      const [chunk, consumed] = parseUpdateFileChunk(bodyLines, j, chunks.length === 0)
+      if (!chunk)
+        break
+      chunks.push(chunk)
+      j += consumed
     }
 
-    return null;
+    if (chunks.length === 0)
+      return null
+
+    return { action: 'update', path, movePath, chunks }
+  }
+
+  return null
 }
 
-/**
- * 将 parsed patch 应用到文件，返回新内容。
- * 对于 Add File 直接返回新内容。
- * 对于 Update File 读取当前文件并逐 hunk 替换。
- */
+function parseUpdateFileChunk(
+  lines: string[],
+  start: number,
+  allowMissingContext: boolean,
+): [UpdateFileChunk | null, number] {
+  if (start >= lines.length)
+    return [null, 0]
+
+  let changeContext: string | null = null
+  let startIndex = start
+
+  if (lines[start] === '@@') {
+    startIndex = start + 1
+  }
+  else if (lines[start].startsWith('@@ ')) {
+    changeContext = lines[start].slice(3).trim()
+    startIndex = start + 1
+  }
+  else if (!allowMissingContext) {
+    return [null, 0]
+  }
+
+  const chunk: UpdateFileChunk = {
+    changeContext,
+    oldLines: [],
+    newLines: [],
+    isEndOfFile: false,
+  }
+  let parsed = 0
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i]
+
+    if (line === '*** End of File') {
+      chunk.isEndOfFile = true
+      parsed++
+      break
+    }
+
+    const firstChar = line.length > 0 ? line[0] : null
+    if (firstChar === ' ') {
+      chunk.oldLines.push(line.slice(1))
+      chunk.newLines.push(line.slice(1))
+    }
+    else if (firstChar === '+') {
+      chunk.newLines.push(line.slice(1))
+    }
+    else if (firstChar === '-') {
+      chunk.oldLines.push(line.slice(1))
+    }
+    else if (line === '') {
+      // 空行 = 空 context line
+      chunk.oldLines.push('')
+      chunk.newLines.push('')
+    }
+    else {
+      if (parsed === 0)
+        return [null, 0]
+      break
+    }
+    parsed++
+  }
+
+  if (parsed === 0)
+    return [null, 0]
+
+  return [chunk, (startIndex - start) + parsed]
+}
+
+// ── seekSequence: 4 级降级匹配 (移植自 Codex) ──
+
+function normalizeUnicode(s: string): string {
+  return s.trim().replace(/./g, (c) => {
+    switch (c) {
+      // dashes → ASCII -
+      case '\u2010': case '\u2011': case '\u2012': case '\u2013':
+      case '\u2014': case '\u2015': case '\u2212':
+        return '-'
+      // curly single quotes → '
+      case '\u2018': case '\u2019': case '\u201A': case '\u201B':
+        return '\''
+      // curly double quotes → "
+      case '\u201C': case '\u201D': case '\u201E': case '\u201F':
+        return '"'
+      // non-breaking/special spaces → space
+      case '\u00A0': case '\u2002': case '\u2003': case '\u2004':
+      case '\u2005': case '\u2006': case '\u2007': case '\u2008':
+      case '\u2009': case '\u200A': case '\u202F': case '\u205F':
+      case '\u3000':
+        return ' '
+      default:
+        return c
+    }
+  })
+}
+
+function seekSequence(
+  lines: string[],
+  pattern: string[],
+  start: number,
+  eof: boolean,
+): number | null {
+  if (pattern.length === 0)
+    return start
+  if (pattern.length > lines.length)
+    return null
+
+  const searchStart = eof && lines.length >= pattern.length
+    ? lines.length - pattern.length
+    : start
+  const limit = lines.length - pattern.length
+
+  // Level 1: exact match
+  for (let i = searchStart; i <= limit; i++) {
+    let ok = true
+    for (let k = 0; k < pattern.length; k++) {
+      if (lines[i + k] !== pattern[k]) { ok = false; break }
+    }
+    if (ok) return i
+  }
+
+  // Level 2: trim trailing whitespace
+  for (let i = searchStart; i <= limit; i++) {
+    let ok = true
+    for (let k = 0; k < pattern.length; k++) {
+      if (lines[i + k].trimEnd() !== pattern[k].trimEnd()) { ok = false; break }
+    }
+    if (ok) return i
+  }
+
+  // Level 3: trim both sides
+  for (let i = searchStart; i <= limit; i++) {
+    let ok = true
+    for (let k = 0; k < pattern.length; k++) {
+      if (lines[i + k].trim() !== pattern[k].trim()) { ok = false; break }
+    }
+    if (ok) return i
+  }
+
+  // Level 4: Unicode punctuation normalization
+  for (let i = searchStart; i <= limit; i++) {
+    let ok = true
+    for (let k = 0; k < pattern.length; k++) {
+      if (normalizeUnicode(lines[i + k]) !== normalizeUnicode(pattern[k])) { ok = false; break }
+    }
+    if (ok) return i
+  }
+
+  return null
+}
+
+// ── Patch 应用器 ──
+
+function computeReplacements(
+  originalLines: string[],
+  chunks: UpdateFileChunk[],
+): Array<[number, number, string[]]> {
+  const replacements: Array<[number, number, string[]]> = []
+  let lineIndex = 0
+
+  for (const chunk of chunks) {
+    // change_context 定位
+    if (chunk.changeContext) {
+      const idx = seekSequence(originalLines, [chunk.changeContext], lineIndex, false)
+      if (idx !== null) {
+        lineIndex = idx + 1
+      }
+    }
+
+    if (chunk.oldLines.length === 0) {
+      // 纯添加 — 添加到文件末尾
+      const insertionIdx = originalLines.length > 0 && originalLines[originalLines.length - 1] === ''
+        ? originalLines.length - 1
+        : originalLines.length
+      replacements.push([insertionIdx, 0, chunk.newLines.slice()])
+      continue
+    }
+
+    // 尝试匹配 old_lines
+    let pattern = chunk.oldLines
+    let found = seekSequence(originalLines, pattern, lineIndex, chunk.isEndOfFile)
+    let newSlice = chunk.newLines
+
+    // 尾部空行容错 — 与 Codex 一致
+    if (found === null && pattern.length > 0 && pattern[pattern.length - 1] === '') {
+      pattern = pattern.slice(0, -1)
+      if (newSlice.length > 0 && newSlice[newSlice.length - 1] === '')
+        newSlice = newSlice.slice(0, -1)
+      found = seekSequence(originalLines, pattern, lineIndex, chunk.isEndOfFile)
+    }
+
+    if (found !== null) {
+      replacements.push([found, pattern.length, newSlice.slice()])
+      lineIndex = found + pattern.length
+    }
+    // 匹配失败 → 跳过此 chunk (不中断整个 patch)
+  }
+
+  replacements.sort((a, b) => a[0] - b[0])
+  return replacements
+}
+
+function applyReplacements(lines: string[], replacements: Array<[number, number, string[]]>): string[] {
+  const result = [...lines]
+  // 从后往前 splice，避免偏移
+  for (let r = replacements.length - 1; r >= 0; r--) {
+    const [startIdx, oldLen, newSegment] = replacements[r]
+    result.splice(startIdx, oldLen, ...newSegment)
+  }
+  return result
+}
+
 function applyPatch(patch: ParsedPatch): string {
-    if (patch.action === 'add') {
-        return (patch.addLines ?? []).join('\n');
+  if (patch.action === 'add')
+    return patch.addContents ?? ''
+
+  if (patch.action === 'delete')
+    return ''
+
+  let raw: string
+  try {
+    raw = readFileSync(patch.path, 'utf8')
+  }
+  catch {
+    return ''
+  }
+
+  // EOL 规范化
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n'
+  const content = raw.replace(/\r\n/g, '\n')
+  let originalLines = content.split('\n')
+
+  // 去掉尾部空元素 (与 Codex 一致: split('\n') 对 "foo\n" 产生 ["foo", ""])
+  if (originalLines.length > 0 && originalLines[originalLines.length - 1] === '')
+    originalLines.pop()
+
+  const replacements = computeReplacements(originalLines, patch.chunks ?? [])
+  let newLines = applyReplacements(originalLines, replacements)
+
+  // 确保尾部换行
+  if (newLines.length === 0 || newLines[newLines.length - 1] !== '')
+    newLines.push('')
+
+  return newLines.join(eol)
+}
+
+// ── Diff 生成 (使用 diff 库) ──
+
+function computeDiffFromContents(
+  oldContent: string,
+  newContent: string,
+): { diffString: string, linesAdded: number, linesRemoved: number } {
+  const patch = structuredPatch('file', 'file', oldContent, newContent, undefined, undefined, { context: 3 })
+
+  let linesAdded = 0
+  let linesRemoved = 0
+  const parts: string[] = ['--- a', '+++ b']
+
+  for (const hunk of patch.hunks) {
+    parts.push(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`)
+    for (const line of hunk.lines) {
+      if (line.startsWith('+'))
+        linesAdded++
+      else if (line.startsWith('-'))
+        linesRemoved++
+      parts.push(line)
     }
+  }
 
-    // Update File
-    let content: string;
-    try {
-        content = readFileSync(patch.path, 'utf8');
-    } catch {
-        return ''; // 文件不存在
-    }
-
-    const fileLines = content.split('\n');
-
-    for (const hunk of patch.hunks ?? []) {
-        // 简化策略：找到 removals 对应的行，替换为 additions
-        // 用 context + removals 一起作为搜索模式
-        const searchLines = [...hunk.contextLines, ...hunk.removals];
-        if (searchLines.length === 0 && hunk.additions.length > 0) {
-            // 纯新增，追加到末尾
-            fileLines.push(...hunk.additions);
-            continue;
-        }
-
-        // 在文件中查找 removals 的位置
-        for (let j = 0; j < fileLines.length; j++) {
-            let match = true;
-            for (let k = 0; k < hunk.removals.length; k++) {
-                if (j + k >= fileLines.length || fileLines[j + k] !== hunk.removals[k]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match && hunk.removals.length > 0) {
-                fileLines.splice(j, hunk.removals.length, ...hunk.additions);
-                break;
-            }
-        }
-    }
-
-    return fileLines.join('\n');
+  return { diffString: parts.join('\n'), linesAdded, linesRemoved }
 }
 
 // ── OpenAI 工具定义 ──
@@ -158,69 +401,73 @@ It is important to remember:
 - You must include a header with your intended action (Add/Update)
 - You must prefix new lines with \` +\` even when creating a new file
 
-All file paths must be absolute paths. Make sure to read the file before applying a patch to get the latest file content, unless you are creating a new file.`;
+All file paths must be absolute paths. Make sure to read the file before applying a patch to get the latest file content, unless you are creating a new file.`
 
 const OPENAI = {
-    name: 'ApplyPatch',
-    description: OPENAI_DESCRIPTION,
-    // 官方 Cursor 用 { type: 'string' }（与 OpenAI 的专有协议），
-    // 但标准 OpenAI API 强制要求 type: 'object'。BYOK 走标准 API，必须包装。
-    inputSchema: {
-        type: 'object',
-        required: ['patch'],
-        properties: {
-            patch: {
-                type: 'string',
-                description: 'The patch content following the format described above. Must obey the lark grammar and start with "*** Begin Patch" and end with "*** End Patch". All file paths must be absolute paths.',
-            },
-        },
+  name: 'ApplyPatch',
+  description: OPENAI_DESCRIPTION,
+  // 官方 Cursor 用 { type: 'string' }（与 OpenAI 的专有协议），
+  // 但标准 OpenAI API 强制要求 type: 'object'。BYOK 走标准 API，必须包装。
+  inputSchema: {
+    type: 'object',
+    required: ['patch'],
+    properties: {
+      patch: {
+        type: 'string',
+        description: 'The patch content following the format described above. Must obey the lark grammar and start with "*** Begin Patch" and end with "*** End Patch". All file paths must be absolute paths.',
+      },
     },
-};
+  },
+}
 
 export const ApplyPatchTool: ToolRegistryEntry = {
-    canonicalName: 'ApplyPatch',
-    aliases: ['ApplyPatch'],
-    cursorToolType: 'editToolCall',
-    execArgsType: 'writeArgs',
-    llmToolByProvider: {
-        // ApplyPatch 仅 OpenAI provider 使用
-        openai: OPENAI,
-    },
-    buildStartedArgs: (input) => {
-        // 官方: toolCallStarted 只发 path，不含 streamContent
-        // patch 内容通过 editToolCallDelta 发送
-        const patchStr = typeof input === 'string'
-            ? input
-            : typeof (input as any).patch === 'string'
-                ? (input as any).patch
-                : str(input as any);
-        const parsed = parsePatch(patchStr);
-        if (!parsed) throw new Error('Failed to parse patch: invalid format');
-        return { path: parsed.path };
-    },
-    buildExecArgs: (input, callId) => {
-        const patchStr = typeof input === 'string'
-            ? input
-            : typeof (input as any).patch === 'string'
-                ? (input as any).patch
-                : str(input as any);
-        const parsed = parsePatch(patchStr);
-        if (!parsed) throw new Error('Failed to parse patch: invalid format');
-        const newContent = applyPatch(parsed);
-        const beforeContent = (() => { try { return readFileSync(parsed.path, 'utf8'); } catch { return ''; } })();
-        // streamContent = patch 格式内容（用于 editToolCallDelta）
-        // 从原始 patch 中提取 hunk 部分（去掉 *** Begin Patch 和文件头）
-        const patchBody = patchStr
-            .replace(/^\*\*\* Begin Patch\n/, '')
-            .replace(/^\*\*\* (?:Add|Update) File:.*\n/, '')
-            .replace(/\*\*\* End Patch\s*$/, '')
-            .trim();
-        return {
-            path: parsed.path,
-            fileText: newContent,
-            beforeContent,
-            streamContent: patchBody + '\n*** End Patch\n',
-            toolCallId: callId,
-        };
-    },
-};
+  canonicalName: 'ApplyPatch',
+  aliases: ['ApplyPatch'],
+  cursorToolType: 'editToolCall',
+  execArgsType: 'writeArgs',
+  llmToolByProvider: {
+    // ApplyPatch 仅 OpenAI provider 使用
+    openai: OPENAI,
+  },
+  buildStartedArgs: (input) => {
+    // 官方: toolCallStarted 只发 path，不含 streamContent
+    // patch 内容通过 editToolCallDelta 发送
+    const patchStr = typeof input === 'string'
+      ? input
+      : typeof (input as any).patch === 'string'
+        ? (input as any).patch
+        : str(input as any)
+    const parsed = parsePatch(patchStr)
+    if (!parsed)
+      throw new Error('Failed to parse patch: invalid format')
+    return { path: parsed.path }
+  },
+  buildExecArgs: (input, callId) => {
+    const patchStr = typeof input === 'string'
+      ? input
+      : typeof (input as any).patch === 'string'
+        ? (input as any).patch
+        : str(input as any)
+    const parsed = parsePatch(patchStr)
+    if (!parsed)
+      throw new Error('Failed to parse patch: invalid format')
+    const newContent = applyPatch(parsed)
+    const beforeContent = (() => { try { return readFileSync(parsed.path, 'utf8') } catch { return '' } })()
+    // streamContent = patch 格式内容（用于 editToolCallDelta）
+    const patchBody = patchStr
+      .replace(/^\*\*\* Begin Patch\n/, '')
+      .replace(/^\*\*\* (?:Add|Update|Delete) File:.*\n/, '')
+      .replace(/\*\*\* End Patch\s*$/, '')
+      .trim()
+    return {
+      path: parsed.path,
+      fileText: newContent,
+      beforeContent,
+      streamContent: `${patchBody}\n*** End Patch\n`,
+      toolCallId: callId,
+    }
+  },
+}
+
+// 导出给 editRuntime 使用
+export { computeDiffFromContents }

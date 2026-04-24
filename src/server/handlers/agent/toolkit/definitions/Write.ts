@@ -98,14 +98,26 @@ export const WriteTool: ToolRegistryEntry = {
     }),
     buildExecArgs: (input, callId) => {
         const path = str(input.path);
-        const fileText = typeof input.contents === 'string' ? input.contents : '';
+        let fileText = typeof input.contents === 'string' ? input.contents : '';
         let beforeContent = '';
-        try { beforeContent = readFileSync(path, 'utf8'); } catch { /* new file */ }
+        try {
+            const raw = readFileSync(path, 'utf8');
+            const stripped = raw.startsWith('\uFEFF') ? raw.slice(1) : raw;
+            const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+            const eol = stripped.indexOf('\r\n') !== -1 && stripped.indexOf('\r\n') <= stripped.indexOf('\n') ? '\r\n' : '\n';
+            beforeContent = stripped.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            if (eol === '\r\n') {
+                fileText = fileText.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
+            }
+            fileText = bom + fileText;
+        } catch { /* new file */ }
+        // streamContent 用 LF 化版本
+        const streamContent = fileText.replace(/\r\n/g, '\n');
         return {
             path,
             fileText,
             beforeContent,
-            streamContent: fileText,
+            streamContent,
             toolCallId: callId,
         };
     },
