@@ -9,6 +9,7 @@ import { Footer } from './footer'
 import { Providers } from './providers'
 import { Server } from './server'
 import { styles } from './styles'
+import { ToastContainer } from './toast'
 
 function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: string }) {
   const codiconCss = codiconUri
@@ -40,6 +41,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         <Providers />
 
         <Footer />
+        <ToastContainer />
 
         <script dangerouslySetInnerHTML={{ __html: webviewJs }} />
       </body>

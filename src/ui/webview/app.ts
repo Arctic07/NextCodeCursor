@@ -33,6 +33,21 @@ export function initApp(Alpine: AlpineType) {
     expanded: {} as Record<string, boolean>,
     modelExpanded: {} as Record<string, Record<string, boolean>>,
 
+    // ── Toast ──
+    toasts: [] as Array<{ id: number, text: string, level: string }>,
+    _toastId: 0,
+
+    toast(text: string, level: 'error' | 'warn' | 'info' = 'info', durationMs = 4000) {
+      const id = ++this._toastId
+      this.toasts = [...this.toasts, { id, text, level }]
+      if (durationMs > 0)
+        setTimeout(() => this.dismissToast(id), durationMs)
+    },
+
+    dismissToast(id: number) {
+      this.toasts = this.toasts.filter((t: any) => t.id !== id)
+    },
+
     // ── Autocomplete ──
     ac: null as { pid: string, mid: string, results: any[], selected: number, reqId: number } | null,
     acReqId: 0,
@@ -149,6 +164,13 @@ export function initApp(Alpine: AlpineType) {
         else if (!Number.isFinite(Number(m.contextTokenLimit)) || Number(m.contextTokenLimit) <= 0 || !Number.isInteger(Number(m.contextTokenLimit))) {
           me.contextTokenLimit = 'Must be a positive integer'
         }
+        // maxOutputTokens 必填
+        if (m.maxOutputTokens === undefined || m.maxOutputTokens === null || m.maxOutputTokens === '') {
+          me.maxOutputTokens = 'Max output tokens is required'
+        }
+        else if (!Number.isFinite(Number(m.maxOutputTokens)) || Number(m.maxOutputTokens) <= 0 || !Number.isInteger(Number(m.maxOutputTokens))) {
+          me.maxOutputTokens = 'Must be a positive integer'
+        }
         for (const f of OPTIONAL_NUM_FIELDS) {
           const v = m[f]
           if (v === undefined || v === null || v === '')
@@ -156,6 +178,19 @@ export function initApp(Alpine: AlpineType) {
           if (!Number.isFinite(Number(v)) || Number(v) < 0 || !Number.isInteger(Number(v))) {
             me[f] = 'Must be a non-negative integer'
           }
+        }
+        // Budget 模式校验: thinking=true + 无 level → budget 必填, ≥1024, < maxOutputTokens
+        if (m.thinking && !m.thinkingLevel) {
+          const b = m.thinkingBudgetTokens
+          const maxOut = Number(m.maxOutputTokens) || 0
+          if (b === undefined || b === null || b === '')
+            me.thinkingBudgetTokens = 'Required — enter budget tokens'
+          else if (Number(b) < 1024)
+            me.thinkingBudgetTokens = 'Min 1024'
+          else if (maxOut > 0 && Number(b) >= maxOut)
+            me.thinkingBudgetTokens = `Must be < Max Output Tokens (${maxOut})`
+          else if (maxOut === 0)
+            me.thinkingBudgetTokens = 'Set Max Output Tokens first'
         }
         if (Object.keys(me).length > 0)
           modelErrors[m.id] = me
@@ -213,6 +248,23 @@ export function initApp(Alpine: AlpineType) {
           delete m.thinkingLevel
         else m.thinkingLevel = value
       }
+      else if (field === 'thinking') {
+        m.thinking = !!value
+        if (!value) {
+          delete m.thinkingLevel
+          delete m.thinkingBudgetTokens
+        }
+        else {
+          // 按 provider type 自动初始化默认 level
+          const pType = (this.getDraft(pid) as any).type
+          if (!m.thinkingLevel && !m.thinkingBudgetTokens) {
+            if (pType === 'anthropic')
+              m.thinkingLevel = 'high'
+            else
+              m.thinkingLevel = 'medium'
+          }
+        }
+      }
       else {
         m[field] = value
       }
@@ -220,6 +272,21 @@ export function initApp(Alpine: AlpineType) {
       // id = apiModel 同步 — 仅在 blur 时触发, 不在每次 input 时触发
       // 避免 x-for key 变化导致 DOM 销毁重建 + 输入脱焦
       // 实际同步由 syncModelId() 在 blur 事件中调用
+    },
+
+    setThinkingMode(pid: string, mid: string, mode: 'level' | 'budget') {
+      const d = this.getDraft(pid)
+      const m = (d.models || []).find((x: any) => x.id === mid)
+      if (!m)
+        return
+      if (mode === 'level') {
+        delete m.thinkingBudgetTokens
+        if (!m.thinkingLevel)
+          m.thinkingLevel = 'high'
+      }
+      else {
+        delete m.thinkingLevel
+      }
     },
 
     updateModelNumber(pid: string, mid: string, field: string, raw: string) {
@@ -298,11 +365,29 @@ export function initApp(Alpine: AlpineType) {
     },
 
     saveProvider(pid: string) {
-      const v = this.validate(pid)
-      if (!v.ok)
-        return
-      // JSON roundtrip 去除 Alpine reactive proxy, 确保 postMessage structured clone 正常序列化
-      this.post('saveProviders', { providers: JSON.parse(JSON.stringify(this.providers)) })
+      try {
+        const v = this.validate(pid)
+        if (!v.ok) {
+          const p = this.getDraft(pid)
+          for (const [, msg] of Object.entries(v.errors))
+            this.toast(`${p.name || 'Provider'}: ${msg}`, 'error', 6000)
+          for (const [mid, errs] of Object.entries(v.modelErrors) as [string, Record<string, string>][]) {
+            const m = (p.models || []).find((x: any) => x.id === mid)
+            const modelLabel = m?.displayName || m?.apiModel || mid
+            for (const [, msg] of Object.entries(errs))
+              this.toast(`${modelLabel}: ${msg}`, 'error', 6000)
+            if (!this.modelExpanded[pid])
+              this.modelExpanded[pid] = {}
+            this.modelExpanded[pid][mid] = true
+          }
+          return
+        }
+        const data = JSON.parse(JSON.stringify(this.providers))
+        this.post('saveProviders', { providers: data })
+      }
+      catch (e) {
+        this.toast(`Save error: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      }
     },
 
     // ── Autocomplete ──
@@ -327,9 +412,8 @@ export function initApp(Alpine: AlpineType) {
       if (!m)
         return
 
-      const oldId = m.id
+      // id 保持 addModel 生成的随机值不变 — 作为跨 provider 全局唯一 key
       m.apiModel = entry.id
-      m.id = entry.id
       if (!m.displayName?.trim())
         m.displayName = entry.name
       if (m.contextTokenLimit === undefined || m.contextTokenLimit === null) {
@@ -338,16 +422,12 @@ export function initApp(Alpine: AlpineType) {
       }
       if (!m.thinking)
         m.thinking = entry.reasoning
+      if ((m.maxOutputTokens === undefined || m.maxOutputTokens === null) && entry.outputLimit)
+        m.maxOutputTokens = entry.outputLimit
       if (m.supportsAgent === undefined)
         m.supportsAgent = entry.toolCall
       if (m.supportsImages === undefined)
         m.supportsImages = entry.hasImages
-
-      // 同步 expand key
-      if (this.modelExpanded[pid]?.[oldId]) {
-        delete this.modelExpanded[pid][oldId]
-        this.modelExpanded[pid][m.id] = true
-      }
 
       this.ac = null
     },
@@ -370,18 +450,9 @@ export function initApp(Alpine: AlpineType) {
       this.ac = null
     },
 
-    /** apiModel blur 时同步 m.id — 避免每次 keystroke 改 key 导致脱焦 */
-    syncModelId(pid: string, mid: string) {
-      const d = this.getDraft(pid)
-      const m = (d.models || []).find((x: any) => x.id === mid)
-      if (!m || !m.apiModel || m.id === m.apiModel)
-        return
-      const oldId = m.id
-      m.id = m.apiModel
-      if (this.modelExpanded[pid]?.[oldId]) {
-        delete this.modelExpanded[pid][oldId]
-        this.modelExpanded[pid][m.id] = true
-      }
+    /** apiModel blur — id 保持不变,不再同步覆盖 */
+    syncModelId(_pid: string, _mid: string) {
+      // id 是 addModel 生成的随机值,作为全局唯一 key,不随 apiModel 变化
     },
 
     /** 获取单个 model 的校验错误 (供模板使用, 避免长表达式) */
@@ -390,8 +461,10 @@ export function initApp(Alpine: AlpineType) {
     },
 
     fmtCtx(n: number): string {
-      if (n >= 1_000_000)
-        return `${(n / 1_000_000).toFixed(1)}M`
+      if (n >= 1_000_000) {
+        const v = n / 1_000_000
+        return `${Number.isInteger(v) ? v : v.toFixed(1)}M`
+      }
       if (n >= 1_000)
         return `${Math.round(n / 1_000)}k`
       return String(n)
@@ -425,6 +498,9 @@ export function initApp(Alpine: AlpineType) {
         return
       s.ac.results = msg.results || []
       s.ac.selected = 0
+    }
+    else if (msg?.type === 'toast') {
+      s.toast(msg.text, msg.level || 'info', msg.duration ?? 4000)
     }
   })
 

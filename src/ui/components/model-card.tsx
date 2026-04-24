@@ -1,13 +1,26 @@
 import { Autocomplete } from './autocomplete'
 import { CustomSelect } from './custom-select'
 
-const THINKING_LEVELS = [
-  { value: '', label: '(auto)' },
+/** Level 选项按 Provider Type 分化 */
+const THINKING_LEVELS_ANTHROPIC = [
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' },
+  { value: 'xhigh', label: 'xhigh' },
+  { value: 'max', label: 'max' },
+]
+const THINKING_LEVELS_OPENAI = [
   { value: 'minimal', label: 'minimal' },
   { value: 'low', label: 'low' },
   { value: 'medium', label: 'medium' },
   { value: 'high', label: 'high' },
   { value: 'xhigh', label: 'xhigh' },
+]
+const THINKING_LEVELS_GEMINI = [
+  { value: 'minimal', label: 'minimal' },
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' },
 ]
 
 /**
@@ -107,28 +120,87 @@ export function ModelCard() {
             <input type="checkbox" x-bind:checked="m.thinking === true" x-on:change="$store.app.updateModelField(p.id, m.id, 'thinking', $event.target.checked)" />
             {' Thinking'}
           </label>
-          <div class="check thinking-level-cell">
-            <CustomSelect
-              valueExpr="m.thinkingLevel || ''"
-              changeExpr="$store.app.updateModelField(p.id, m.id, 'thinkingLevel', $value || undefined)"
-              options={THINKING_LEVELS}
-              title="Thinking/reasoning effort level"
-            />
-          </div>
-          {/* Thinking Budget — 紧跟 Thinking Level */}
-          <div class="check thinking-budget-cell">
-            <input
-              type="number"
-              x-effect="if(document.activeElement !== $el) $el.value = m.thinkingBudgetTokens ?? ''"
-              x-on:input="$store.app.updateModelNumber(p.id, m.id, 'thinkingBudgetTokens', $event.target.value)"
-              placeholder="budget tokens"
-              title="Thinking budget tokens (optional, legacy Anthropic 4.x / Gemini precise)"
-              style="height:20px;padding:0 4px;font-size:10px"
-            />
-          </div>
+          {/* ── Thinking 子控件 ──
+              thinking=false → 灰色提示
+              Anthropic → Level/Budget 模式切换器,互斥
+              OpenAI → Level 下拉 (thinking 开启时自动设 medium)
+              Gemini → Level 下拉 (thinking 开启时自动设 medium) */}
+          <template x-if="!m.thinking">
+            <div class="check thinking-sub-disabled">
+              <span style="opacity:.35;font-size:10px">—</span>
+            </div>
+          </template>
+
+          {/* ── Anthropic: 模式选择 Level ↔ Budget ── */}
+          <template x-if="m.thinking && p.type === 'anthropic'">
+            <div class="check thinking-mode-group">
+              <div class="thinking-mode-tabs">
+                <button
+                  class="thinking-mode-tab"
+                  x-bind:class="{'active': !!m.thinkingLevel && !m.thinkingBudgetTokens}"
+                  x-on:click="$store.app.setThinkingMode(p.id, m.id, 'level')"
+                  title="Adaptive thinking (4.5-opus / 4.6+)"
+                >
+                  Level
+                </button>
+                <button
+                  class="thinking-mode-tab"
+                  x-bind:class="{'active': !m.thinkingLevel && !!m.thinkingBudgetTokens}"
+                  x-on:click="$store.app.setThinkingMode(p.id, m.id, 'budget')"
+                  title="Legacy budget (Claude 4.x)"
+                >
+                  Budget
+                </button>
+              </div>
+              <div class="thinking-mode-value" x-show="!!m.thinkingLevel">
+                <CustomSelect
+                  valueExpr="m.thinkingLevel || ''"
+                  changeExpr="$store.app.updateModelField(p.id, m.id, 'thinkingLevel', $value || undefined)"
+                  options={THINKING_LEVELS_ANTHROPIC}
+                  title="Anthropic effort: low → max"
+                />
+              </div>
+              <div class="thinking-mode-value" x-show="!m.thinkingLevel">
+                <input
+                  type="number"
+                  x-effect="if(document.activeElement !== $el) $el.value = m.thinkingBudgetTokens ?? ''"
+                  x-on:input="$store.app.updateModelNumber(p.id, m.id, 'thinkingBudgetTokens', $event.target.value)"
+                  placeholder="≥ 1024"
+                  title="budget_tokens (≥ 1024, < maxOutputTokens)"
+                  x-bind:class="{'invalid': me?.thinkingBudgetTokens}"
+                  style="height:20px;padding:0 4px;font-size:10px;width:80px"
+                />
+                <div class="err" x-show="me?.thinkingBudgetTokens" x-text="me?.thinkingBudgetTokens" style="font-size:9px"></div>
+              </div>
+            </div>
+          </template>
+
+          {/* ── OpenAI: Level only ── */}
+          <template x-if="m.thinking && (p.type === 'openai-chat' || p.type === 'openai-responses')">
+            <div class="check thinking-level-cell">
+              <CustomSelect
+                valueExpr="m.thinkingLevel || 'medium'"
+                changeExpr="$store.app.updateModelField(p.id, m.id, 'thinkingLevel', $value)"
+                options={THINKING_LEVELS_OPENAI}
+                title="reasoning_effort"
+              />
+            </div>
+          </template>
+
+          {/* ── Gemini: Level only ── */}
+          <template x-if="m.thinking && p.type === 'gemini'">
+            <div class="check thinking-level-cell">
+              <CustomSelect
+                valueExpr="m.thinkingLevel || 'medium'"
+                changeExpr="$store.app.updateModelField(p.id, m.id, 'thinkingLevel', $value)"
+                options={THINKING_LEVELS_GEMINI}
+                title="thinkingLevel"
+              />
+            </div>
+          </template>
         </div>
 
-        {/* Context limits */}
+        {/* Context + Output limits */}
         <div class="field-row">
           <div class="field">
             <label>
@@ -144,7 +216,21 @@ export function ModelCard() {
             />
             <div class="err" x-show="me?.contextTokenLimit" x-text="me?.contextTokenLimit"></div>
           </div>
-          {/* autoContextMaxTokens 已移除 — 从 contextTokenLimit 自动派生, 用户无需配置 */}
+          <div class="field">
+            <label>
+              {'Max Output Tokens '}
+              <span style="color:var(--vscode-errorForeground);font-weight:normal">*</span>
+            </label>
+            <input
+              type="number"
+              x-effect="if(document.activeElement !== $el) $el.value = m.maxOutputTokens ?? ''"
+              x-on:input="$store.app.updateModelNumber(p.id, m.id, 'maxOutputTokens', $event.target.value)"
+              placeholder="required"
+              title="Maximum tokens per LLM response"
+              x-bind:class="{'invalid': me?.maxOutputTokens}"
+            />
+            <div class="err" x-show="me?.maxOutputTokens" x-text="me?.maxOutputTokens"></div>
+          </div>
         </div>
 
         {/* Tooltip */}

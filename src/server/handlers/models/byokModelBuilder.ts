@@ -62,6 +62,7 @@ const LEVEL_LABELS: Record<string, string> = {
   medium: 'Medium',
   high: 'High',
   xhigh: 'xHigh',
+  max: 'Max',
 }
 
 /** budget tokens → "16k" / "32k" 格式 */
@@ -76,8 +77,8 @@ function formatContextLabel(ctx: number): string | null {
   if (ctx < LARGE_CTX_THRESHOLD)
     return null
   if (ctx >= 1_000_000) {
-    const m = ctx / 1_000_000
-    // 1.0M → "1M", 1.5M → "1.5M"
+    // 四舍五入到 0.1M 精度: 1048567 → 1M, 1500000 → 1.5M
+    const m = Math.round(ctx / 100_000) / 10
     return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`
   }
   return `${Math.round(ctx / 1000)}k`

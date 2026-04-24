@@ -100,15 +100,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             await updateProviders((draft) => {
               draft.providers = next
             })
-            resetProviderInstanceCache() // SDK client 用新 baseUrl/apiKey
-            bumpRefreshSignal() // 通知 renderer EventSource 刷新模型选择器
+            resetProviderInstanceCache()
+            bumpRefreshSignal()
             await refreshState()
             this.postState()
-            vscode.window.showInformationMessage('Providers saved.')
+            this.view?.webview.postMessage({ type: 'toast', text: 'Providers saved.', level: 'info' })
           }
           catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
-            vscode.window.showErrorMessage(`Save providers failed: ${errMsg}`)
+            this.view?.webview.postMessage({ type: 'toast', text: `Save failed: ${errMsg}`, level: 'error', duration: 6000 })
           }
           break
         }
