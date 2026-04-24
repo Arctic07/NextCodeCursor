@@ -24,17 +24,20 @@ import type { ProviderEntry } from '../../data/defaults';
 import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
 import { assertValidAnthropicToolUseContract } from './anthropicContract';
 import { encodeAnthropicRequestMessages, encodeAnthropicTools } from './conversationCodec';
+import { logger } from '../../logger';
 import { createProxiedFetch } from './proxyFetch';
+import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages';
 
 type AnthropicEffort = 'low' | 'medium' | 'high' | 'max';
 
 function mapThinkingLevelToAnthropicEffort(level: NonNullable<LLMStreamRequest['thinkingLevel']>): AnthropicEffort {
     switch (level) {
-        case 'minimal': return 'low';   // Anthropic 无 minimal,降级
+        case 'minimal': return 'low';     // Anthropic 无 minimal,降级
         case 'low': return 'low';
         case 'medium': return 'medium';
         case 'high': return 'high';
-        case 'xhigh': return 'max';     // 仅 4.6 支持
+        case 'xhigh': return 'max';       // Anthropic SDK effort 最高档为 max
+        case 'max': return 'max';
     }
 }
 
@@ -63,7 +66,16 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     async *stream(request: LLMStreamRequest): AsyncIterable<LLMStreamEvent> {
-        const encoded = encodeAnthropicRequestMessages(request.messages);
+        const diagnostics = createTransformDiagnostics('anthropic', request.messages.length);
+        const transformed = transformMessages(request.messages, 'anthropic', diagnostics, request.model);
+        if (hasTransformMutations(diagnostics)) {
+            logger.debug({
+                provider: 'anthropic',
+                model: request.model,
+                ...diagnostics,
+            }, '[HISTORY_REPAIR] provider conversation transformed');
+        }
+        const encoded = encodeAnthropicRequestMessages(transformed);
         assertValidAnthropicToolUseContract(encoded.messages);
 
         const params: Anthropic.MessageCreateParamsStreaming = {
@@ -111,7 +123,7 @@ export class AnthropicProvider implements LLMProvider {
         }
 
         const stream = this.client.messages.stream(params);
-        const contentBlocks = new Map<number, { type: string; id?: string; name?: string }>();
+        const contentBlocks = new Map<number, { type: string; id?: string; name?: string; signature?: string }>();
 
         for await (const event of stream) {
             switch (event.type) {
@@ -120,6 +132,8 @@ export class AnthropicProvider implements LLMProvider {
                     if (block.type === 'tool_use') {
                         contentBlocks.set(event.index, { type: block.type, id: block.id, name: block.name });
                         yield { type: 'tool_use_start', id: block.id, name: block.name };
+                    } else if (block.type === 'thinking') {
+                        contentBlocks.set(event.index, { type: block.type, signature: '' });
                     } else {
                         contentBlocks.set(event.index, { type: block.type });
                     }
@@ -132,6 +146,8 @@ export class AnthropicProvider implements LLMProvider {
                         yield { type: 'text_delta', text: delta.text };
                     } else if (delta.type === 'thinking_delta') {
                         yield { type: 'thinking_delta', text: delta.thinking };
+                    } else if ((delta as any).type === 'signature_delta' && blockMeta?.type === 'thinking') {
+                        blockMeta.signature = (blockMeta.signature ?? '') + (delta as any).signature;
                     } else if (delta.type === 'input_json_delta') {
                         yield {
                             type: 'tool_use_delta',
@@ -144,7 +160,7 @@ export class AnthropicProvider implements LLMProvider {
                 case 'content_block_stop': {
                     const blockMeta = contentBlocks.get(event.index);
                     if (blockMeta?.type === 'thinking') {
-                        yield { type: 'thinking_done' };
+                        yield { type: 'thinking_done', signature: blockMeta.signature };
                     } else if (blockMeta?.type === 'tool_use' && blockMeta.id) {
                         yield { type: 'tool_use_done', id: blockMeta.id };
                     }

@@ -18,7 +18,7 @@ export interface LLMMessage {
 export type LLMContentBlock
   = | { type: 'text', text: string }
     | { type: 'image', mimeType: string, data: string }
-    | { type: 'thinking', text: string, signature?: string, providerOptions?: Record<string, unknown> }
+    | { type: 'thinking', text: string, signature?: string, sourceModel?: string, providerOptions?: Record<string, unknown> }
     | { type: 'tool_use', id: string, name: string, input: Record<string, unknown> }
     | { type: 'tool_result', toolUseId: string, toolName?: string, content: string, isError?: boolean }
 
@@ -34,7 +34,7 @@ export interface LLMTool {
 /** Streaming delta 事件 */
 export type LLMStreamEvent
   = | { type: 'thinking_delta', text: string }
-    | { type: 'thinking_done' }
+    | { type: 'thinking_done', signature?: string }
     | { type: 'text_delta', text: string }
     | { type: 'tool_use_start', id: string, name: string }
     | { type: 'tool_use_delta', id: string, input: string }
@@ -57,7 +57,7 @@ export interface LLMStreamRequest {
   maxTokens?: number
   thinking?: boolean
   /** 思考档位 — Anthropic 4.5-opus/4.6+ / OpenAI / Gemini 消费; 见 ProviderModel.thinkingLevel */
-  thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** 精确思考预算 — 老 Claude 4.x (legacy budget_tokens) / Gemini 精确覆盖 */
   thinkingBudgetTokens?: number
 }

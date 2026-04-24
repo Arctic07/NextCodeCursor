@@ -291,6 +291,14 @@ function toAnthropicMessage(msg: LLMMessage): Anthropic.MessageParam {
       case 'tool_use':
         blocks.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input })
         break
+      case 'thinking':
+        if (block.signature) {
+          blocks.push({ type: 'thinking', thinking: block.text, signature: block.signature } as any)
+        }
+        else if (block.text?.trim()) {
+          blocks.push({ type: 'text', text: block.text })
+        }
+        break
       case 'tool_result':
         blocks.push({
           type: 'tool_result',
@@ -445,8 +453,10 @@ function toGeminiContent(msg: LLMMessage): Content {
   }
 
   const parts: Part[] = msg.content.map((block) => {
-    if (block.type === 'text' || block.type === 'thinking')
+    if (block.type === 'text')
       return { text: block.text }
+    if (block.type === 'thinking')
+      return { text: block.text, thought: true, ...(block.signature ? { thoughtSignature: block.signature } : {}) } as Part
     if (block.type === 'image') {
       return {
         inlineData: {
@@ -556,7 +566,7 @@ export interface ResponsesEncodedInput {
  *   - user/assistant messages → EasyInputMessage items
  *   - assistant tool_use blocks → function_call items (独立 item, 不嵌套在 message 里)
  *   - tool messages → function_call_output items (call_id 关联)
- *   - assistant thinking blocks → 跳过 (reasoning 由 API 自管, 不需要回传文本)
+ *   - assistant thinking blocks → ResponseReasoningItem (encrypted_content 用于无状态多轮推理上下文保留)
  */
 export function encodeResponsesInput(messages: LLMMessage[]): ResponsesEncodedInput {
   let instructions: string | undefined
@@ -587,6 +597,23 @@ export function encodeResponsesInput(messages: LLMMessage[]): ResponsesEncodedIn
         .join('')
       const toolUses = msg.content
         .filter((b): b is Extract<LLMContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+      const thinkingBlocks = msg.content
+        .filter((b): b is Extract<LLMContentBlock, { type: 'thinking' }> => b.type === 'thinking')
+
+      // thinking → ResponseReasoningItem (仅限同 provider 回传)
+      // Pi 方式: signature 是完整 ResponseReasoningItem JSON，直接还原。
+      // 跨 provider 的 thinking 块无有效 signature → 跳过（已由 transformMessages 降级为 text）。
+      for (const tb of thinkingBlocks) {
+        if (tb.signature) {
+          try {
+            const reasoningItem = JSON.parse(tb.signature)
+            if (reasoningItem?.type === 'reasoning' && reasoningItem?.id) {
+              items.push(reasoningItem as unknown as ResponseInputItem)
+            }
+          }
+          catch { /* 非合法 JSON（跨 provider signature）→ 跳过 */ }
+        }
+      }
 
       if (textParts) {
         items.push({ role: 'assistant', content: textParts })

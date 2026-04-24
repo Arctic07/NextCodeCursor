@@ -16,8 +16,10 @@
 import type { ResponseCreateParamsStreaming } from 'openai/resources/responses/responses'
 import OpenAI from 'openai'
 import type { ProviderEntry } from '../../data/defaults'
+import { logger } from '../../logger'
 import { encodeResponsesInput, encodeResponsesTools } from './conversationCodec'
 import { createProxiedFetch } from './proxyFetch'
+import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages'
 import type { LLMProvider, LLMStreamEvent, LLMStreamRequest } from './types'
 
 export class OpenAIResponsesProvider implements LLMProvider {
@@ -39,7 +41,16 @@ export class OpenAIResponsesProvider implements LLMProvider {
   }
 
   async *stream(request: LLMStreamRequest): AsyncIterable<LLMStreamEvent> {
-    const encoded = encodeResponsesInput(request.messages)
+    const diagnostics = createTransformDiagnostics('openai-responses', request.messages.length)
+    const transformed = transformMessages(request.messages, 'openai-responses', diagnostics, request.model)
+    if (hasTransformMutations(diagnostics)) {
+      logger.debug({
+        provider: 'openai-responses',
+        model: request.model,
+        ...diagnostics,
+      }, '[HISTORY_REPAIR] provider conversation transformed')
+    }
+    const encoded = encodeResponsesInput(transformed)
     const tools = encodeResponsesTools(request.tools)
 
     const params: ResponseCreateParamsStreaming = {
@@ -60,9 +71,10 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
 
     // Reasoning — Responses API 用 reasoning 嵌套对象 (非顶层 reasoning_effort)
+    // max 是 Anthropic 专有,映射到 xhigh
     if (request.thinkingLevel) {
       params.reasoning = {
-        effort: request.thinkingLevel,
+        effort: request.thinkingLevel === 'max' ? 'xhigh' : request.thinkingLevel,
         summary: 'auto',
       }
       // encrypted_content 用于多轮保留推理上下文 (参照 Codex CLI)
@@ -117,6 +129,10 @@ export class OpenAIResponsesProvider implements LLMProvider {
             if (call) {
               yield { type: 'tool_use_done', id: call.callId }
             }
+          }
+          else if (item.type === 'reasoning') {
+            // Pi 方式: 存整个 ResponseReasoningItem JSON 以便回传时完整还原
+            yield { type: 'thinking_done', signature: JSON.stringify(item) }
           }
           break
         }

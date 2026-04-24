@@ -6,8 +6,10 @@
  */
 import { GoogleGenAI, ThinkingLevel, type GenerateContentConfig, type ThinkingConfig } from '@google/genai';
 import type { ProviderEntry } from '../../data/defaults';
+import { logger } from '../../logger';
 import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
 import { encodeGeminiRequestMessages, encodeGeminiTools } from './conversationCodec';
+import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages';
 
 function mapThinkingLevelToGemini(level: NonNullable<LLMStreamRequest['thinkingLevel']>): ThinkingLevel {
     switch (level) {
@@ -15,7 +17,8 @@ function mapThinkingLevelToGemini(level: NonNullable<LLMStreamRequest['thinkingL
         case 'low': return ThinkingLevel.LOW;
         case 'medium': return ThinkingLevel.MEDIUM;
         case 'high': return ThinkingLevel.HIGH;
-        case 'xhigh': return ThinkingLevel.HIGH; // Gemini 无 xhigh, 饱和
+        case 'xhigh': return ThinkingLevel.HIGH; // Gemini 最高档为 HIGH
+        case 'max': return ThinkingLevel.HIGH;
     }
 }
 
@@ -34,7 +37,16 @@ export class GeminiProvider implements LLMProvider {
     }
 
     async *stream(request: LLMStreamRequest): AsyncIterable<LLMStreamEvent> {
-        const encoded = encodeGeminiRequestMessages(request.messages);
+        const diagnostics = createTransformDiagnostics('gemini', request.messages.length);
+        const transformed = transformMessages(request.messages, 'gemini', diagnostics, request.model);
+        if (hasTransformMutations(diagnostics)) {
+            logger.debug({
+                provider: 'gemini',
+                model: request.model,
+                ...diagnostics,
+            }, '[HISTORY_REPAIR] provider conversation transformed');
+        }
+        const encoded = encodeGeminiRequestMessages(transformed);
 
         const genConfig: GenerateContentConfig = {
             maxOutputTokens: request.maxTokens ?? 8192,
@@ -74,6 +86,8 @@ export class GeminiProvider implements LLMProvider {
         let outputTokens = 0;
         let sawToolCalls = false;
         let syntheticToolCallCounter = 0;
+        let wasThinking = false;
+        let lastThoughtSignature: string | undefined;
         const startedToolCalls = new Set<string>();
         const finishedToolCalls = new Set<string>();
 
@@ -88,8 +102,15 @@ export class GeminiProvider implements LLMProvider {
 
             for (const part of parts) {
                 if (part.thought && part.text) {
+                    wasThinking = true;
+                    if (part.thoughtSignature) lastThoughtSignature = part.thoughtSignature;
                     yield { type: 'thinking_delta', text: part.text };
                 } else if (part.text) {
+                    if (wasThinking) {
+                        yield { type: 'thinking_done', signature: lastThoughtSignature };
+                        wasThinking = false;
+                        lastThoughtSignature = undefined;
+                    }
                     yield { type: 'text_delta', text: part.text };
                 } else if (part.functionCall) {
                     sawToolCalls = true;
@@ -106,6 +127,10 @@ export class GeminiProvider implements LLMProvider {
                     }
                 }
             }
+        }
+
+        if (wasThinking) {
+            yield { type: 'thinking_done', signature: lastThoughtSignature };
         }
 
         yield {

@@ -7,9 +7,11 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParamsStreaming } from 'openai/resources/chat/completions';
 import type { ProviderEntry } from '../../data/defaults';
+import { logger } from '../../logger';
 import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
 import { encodeOpenAIRequestMessages, encodeOpenAITools } from './conversationCodec';
 import { createProxiedFetch } from './proxyFetch';
+import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages';
 
 export class OpenAIChatProvider implements LLMProvider {
     readonly name = 'openai-chat';
@@ -30,9 +32,18 @@ export class OpenAIChatProvider implements LLMProvider {
     }
 
     async *stream(request: LLMStreamRequest): AsyncIterable<LLMStreamEvent> {
+        const diagnostics = createTransformDiagnostics('openai-chat', request.messages.length);
+        const transformed = transformMessages(request.messages, 'openai-chat', diagnostics, request.model);
+        if (hasTransformMutations(diagnostics)) {
+            logger.debug({
+                provider: 'openai-chat',
+                model: request.model,
+                ...diagnostics,
+            }, '[HISTORY_REPAIR] provider conversation transformed');
+        }
         const params: ChatCompletionCreateParamsStreaming = {
             model: request.model,
-            messages: encodeOpenAIRequestMessages(request.messages),
+            messages: encodeOpenAIRequestMessages(transformed),
             max_tokens: request.maxTokens ?? 8192,
             stream: true,
             stream_options: { include_usage: true },
@@ -43,10 +54,12 @@ export class OpenAIChatProvider implements LLMProvider {
             params.tools = tools;
         }
 
-        // OpenAI reasoning 枚举与 ProviderModel.thinkingLevel 完全对齐,直接透传
-        // (gpt-5 / o-series 模型消费,其他模型忽略)
+        // OpenAI reasoning_effort: minimal | low | medium | high | xhigh
+        // max 是 Anthropic 专有,映射到 xhigh
         if (request.thinkingLevel) {
-            params.reasoning_effort = request.thinkingLevel;
+            params.reasoning_effort = request.thinkingLevel === 'max'
+                ? 'xhigh'
+                : request.thinkingLevel;
         }
 
         const stream = await this.client.chat.completions.create(params);
