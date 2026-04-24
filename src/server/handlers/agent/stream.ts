@@ -16,21 +16,48 @@ import type { LLMStreamEvent } from '../llm/types'
  * done                     → interactionUpdate.stepCompleted + turnEnded
  */
 import { create, toBinary } from '@bufbuild/protobuf'
+import type { GenMessage } from '@bufbuild/protobuf/codegenv2'
 import {
   AgentMode,
   AgentServerMessageSchema,
+  AskQuestionToolCallSchema,
+  AwaitToolCallSchema,
   ConversationStateStructureSchema,
+  CreatePlanToolCallSchema,
+  DeleteToolCallSchema,
+  EditToolCallDeltaSchema,
+  EditToolCallSchema,
   ExecServerMessageSchema,
+  FetchToolCallSchema,
+  GenerateImageToolCallSchema,
+  GlobToolCallSchema,
+  GrepToolCallSchema,
   InteractionQuerySchema,
   InteractionUpdateSchema,
   KvServerMessageSchema,
+  ListMcpResourcesToolCallSchema,
+  LsToolCallSchema,
+  McpToolCallSchema,
   PartialToolCallUpdateSchema,
+  ReadLintsToolCallSchema,
+  ReadMcpResourceToolCallSchema,
+  ReadToolCallSchema,
+  ReadTodosToolCallSchema,
+  SemSearchToolCallSchema,
+  ShellToolCallDeltaSchema,
+  ShellToolCallSchema,
+  SwitchModeToolCallSchema,
+  TaskToolCallDeltaSchema,
+  TaskToolCallSchema,
   ToolCallCompletedUpdateSchema,
   ToolCallDeltaSchema,
   ToolCallDeltaUpdateSchema,
   ToolCallSchema,
   ToolCallStartedUpdateSchema,
   TrackedGitRepoSchema,
+  UpdateTodosToolCallSchema,
+  WebFetchToolCallSchema,
+  WebSearchToolCallSchema,
 } from '../../gen/agent_v1_pb'
 import { logger, streamLogger } from '../../logger'
 import { AGENT_HEARTBEAT_INTERVAL_MS } from './constants'
@@ -68,6 +95,45 @@ function validateFrame(frame: AgentServerMessage): AgentServerMessage {
     throw new ProtoSerializeError(msg, msg)
   }
   return frame
+}
+
+/**
+ * Tool type → proto Schema 注册表
+ *
+ * buildToolCall 使用此表将裸 JS 对象提升为正式的 protobuf 消息实例。
+ * create(Schema, init) 会递归初始化嵌套 message 字段 (如 EditToolCall.args → EditArgs)，
+ * 确保序列化后客户端能正确反序列化各层 submessage。
+ */
+const TOOL_CALL_SCHEMAS: Record<string, GenMessage<any>> = {
+  readToolCall: ReadToolCallSchema,
+  editToolCall: EditToolCallSchema,
+  shellToolCall: ShellToolCallSchema,
+  grepToolCall: GrepToolCallSchema,
+  globToolCall: GlobToolCallSchema,
+  deleteToolCall: DeleteToolCallSchema,
+  readLintsToolCall: ReadLintsToolCallSchema,
+  webSearchToolCall: WebSearchToolCallSchema,
+  webFetchToolCall: WebFetchToolCallSchema,
+  askQuestionToolCall: AskQuestionToolCallSchema,
+  taskToolCall: TaskToolCallSchema,
+  mcpToolCall: McpToolCallSchema,
+  listMcpResourcesToolCall: ListMcpResourcesToolCallSchema,
+  readMcpResourceToolCall: ReadMcpResourceToolCallSchema,
+  updateTodosToolCall: UpdateTodosToolCallSchema,
+  readTodosToolCall: ReadTodosToolCallSchema,
+  awaitToolCall: AwaitToolCallSchema,
+  generateImageToolCall: GenerateImageToolCallSchema,
+  switchModeToolCall: SwitchModeToolCallSchema,
+  createPlanToolCall: CreatePlanToolCallSchema,
+  semSearchToolCall: SemSearchToolCallSchema,
+  fetchToolCall: FetchToolCallSchema,
+  lsToolCall: LsToolCallSchema,
+}
+
+const TOOL_CALL_DELTA_SCHEMAS: Record<string, GenMessage<any>> = {
+  editToolCallDelta: EditToolCallDeltaSchema,
+  shellToolCallDelta: ShellToolCallDeltaSchema,
+  taskToolCallDelta: TaskToolCallDeltaSchema,
 }
 
 /** 构造 AgentServerMessage with interactionUpdate */
@@ -148,9 +214,16 @@ export function turnEnded(inputTokens: number, outputTokens: number, cacheRead?:
  *   deleteToolCall, readLintsToolCall, mcpToolCall, webSearchToolCall,
  *   webFetchToolCall, taskToolCall, askQuestionToolCall, updateTodosToolCall, ...
  */
-function buildToolCall(toolType: string, data: Record<string, unknown> | { args: Record<string, unknown>, result: unknown } = {}) {
+function buildToolCall(toolType: string, data: Record<string, unknown> = {}) {
+  const schema = TOOL_CALL_SCHEMAS[toolType]
+  if (!schema) {
+    logger.warn({ toolType }, '[STREAM] unknown tool type — no proto Schema, falling back to bare object')
+    return create(ToolCallSchema, {
+      tool: { case: toolType, value: data } as any,
+    })
+  }
   return create(ToolCallSchema, {
-    tool: { case: toolType as any, value: data } as any,
+    tool: { case: toolType, value: create(schema, data as any) } as any,
   })
 }
 
@@ -176,9 +249,9 @@ function buildToolCallValue(toolType: string, args: Record<string, unknown> | un
   return value
 }
 
-/** 构造 partialToolCall 帧 (工具调用预告，参数未完成) */
-export function partialToolCall(callId: string, toolType: string, modelCallId: string): AgentServerMessage {
-  return create(AgentServerMessageSchema, {
+/** 构造 partialToolCall 帧 (工具调用预告，参数未完成) — 含 proto 预验证 */
+export function partialToolCall(callId: string, toolType: string, modelCallId: string, args?: Record<string, unknown>): AgentServerMessage {
+  const frame = create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
       value: create(InteractionUpdateSchema, {
@@ -186,13 +259,18 @@ export function partialToolCall(callId: string, toolType: string, modelCallId: s
           case: 'partialToolCall',
           value: create(PartialToolCallUpdateSchema, {
             callId,
-            toolCall: buildToolCall(toolType),
+            toolCall: args ? buildToolCall(toolType, { args }) : buildToolCall(toolType),
             modelCallId,
           }),
         } as any,
       }),
     },
   })
+  if (args) {
+    logger.debug({ callId, toolType, args }, '[STREAM] partialToolCall with args')
+    return validateFrame(frame)
+  }
+  return frame
 }
 
 /** 构造 toolCallStarted 帧 (参数完整，正式开始) — 含 proto 预验证 */
@@ -235,6 +313,8 @@ export function toolCallCompleted(callId: string, toolType: string, args: Record
 
 /** 构造 toolCallDelta 帧 */
 export function toolCallDelta(callId: string, deltaCase: string, deltaValue: Record<string, unknown>, modelCallId: string): AgentServerMessage {
+  const deltaSchema = TOOL_CALL_DELTA_SCHEMAS[deltaCase]
+  const resolvedValue = deltaSchema ? create(deltaSchema, deltaValue as any) : deltaValue
   return create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
@@ -245,8 +325,8 @@ export function toolCallDelta(callId: string, deltaCase: string, deltaValue: Rec
             callId,
             toolCallDelta: create(ToolCallDeltaSchema, {
               delta: {
-                case: deltaCase as any,
-                value: deltaValue,
+                case: deltaCase,
+                value: resolvedValue,
               } as any,
             }),
             modelCallId,
@@ -504,8 +584,9 @@ function delay(ms: number): Promise<void> {
 export async function* translateStream(
   events: AsyncIterable<LLMStreamEvent>,
   stepId: string = '1',
-  onEvent?: (event: LLMStreamEvent) => void,
+  onEvent?: (event: LLMStreamEvent) => AgentServerMessage | AgentServerMessage[] | void,
   keepAliveMs = AGENT_HEARTBEAT_INTERVAL_MS,
+  resolveToolModelCallId?: (event: LLMStreamEvent, defaultModelCallId: string) => string | undefined,
 ): AsyncIterable<AgentServerMessage> {
   const startTime = Date.now()
   let thinkingStartTime = startTime
@@ -548,9 +629,15 @@ export async function* translateStream(
       type: event.type,
       n: eventCount,
       ...('text' in event ? { text: (event as { text: string }).text } : {}),
+      ...('name' in event ? { name: (event as { name: string }).name } : {}),
+      ...('id' in event ? { id: (event as { id: string }).id } : {}),
     }, '[LLM] event')
 
-    onEvent?.(event)
+    const sideFrames = onEvent?.(event)
+    if (sideFrames) {
+      if (Array.isArray(sideFrames)) { for (const f of sideFrames) yield f }
+      else yield sideFrames
+    }
 
     switch (event.type) {
       case 'thinking_delta':
@@ -581,14 +668,17 @@ export async function* translateStream(
           yield tokenDelta(5)
         break
 
-      case 'tool_use_start':
-        // 流式过程中发送 partialToolCall 预告，让 Client 知道正在调用工具
-        // 对动态外部工具名（如 user-Context7-* / user-brave-search-*）先映射到合法 proto tool case。
-        // 完整的 toolCallStarted + exec 由 AgentService 的 tool call loop 处理。
-        yield partialToolCall(event.id, mapPartialToolName(event.name), `model-${stepId}`)
+      case 'tool_use_start': {
+        // 流式过程中发送 partialToolCall 空卡预告。
+        // 对 edit 类工具, conversationRuntime 通过 resolveToolModelCallId 让空卡、path、delta、started
+        // 使用同一个 modelCallId，对齐官方 RunSSE 抓包。
+        const defaultModelCallId = `model-${stepId}`
+        const modelCallId = resolveToolModelCallId?.(event, defaultModelCallId) ?? defaultModelCallId
+        yield partialToolCall(event.id, mapPartialToolName(event.name), modelCallId)
         tokenCount++
         yield tokenDelta(1)
         break
+      }
 
       case 'tool_use_delta':
         // 参数 token 流式传输
