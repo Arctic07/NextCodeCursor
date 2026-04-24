@@ -10,12 +10,15 @@ import { escapeXml } from '../shared'
  */
 export function buildAnthropicSystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderPromptProfile): string {
   const parts: string[] = []
-  const isThinkingModel = parsed.modelId.includes('thinking') || parsed.modelId.includes('opus')
-  const isSonnetOrAbove = parsed.modelId.includes('sonnet') || parsed.modelId.includes('opus')
+  const modelName = promptProfile.apiModel || parsed.modelId
+  // 由 providers.json 的 thinking 字段驱动,不靠模型名猜测
+  const isThinkingModel = promptProfile.thinking
+  // BYOK 场景: 所有用户配置的模型都是主力模型,统一启用保守文件创建策略
+  const isCapableModel = true
   const mode = parsed.mode || 'agent'
 
   // ── 角色定义 ──
-  parts.push(`You are an AI coding assistant, powered by ${parsed.modelId || 'AI'}.
+  parts.push(`You are an AI coding assistant, powered by ${modelName || 'AI'}.
 
 You operate in Cursor.
 
@@ -34,7 +37,7 @@ Your main goal is to follow the USER's instructions, which are denoted by the <u
 
   // ── 语气和风格 ──
   // 官方:sonnet/opus 有 "NEVER create files" 规则,haiku 没有
-  const neverCreateFiles = isSonnetOrAbove ? '\n- NEVER create files unless they\'re absolutely necessary for achieving your goal. ALWAYS prefer editing an existing file to creating a new one.' : ''
+  const neverCreateFiles = isCapableModel ? '\n- NEVER create files unless they\'re absolutely necessary for achieving your goal. ALWAYS prefer editing an existing file to creating a new one.' : ''
   parts.push(`
 <tone_and_style>
 - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.

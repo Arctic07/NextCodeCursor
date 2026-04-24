@@ -9,8 +9,9 @@ const XHIGH_FAST_SUFFIX_RE = /-xhigh-fast$/
  * 官方 GPT-5.x 使用独立的 prompt 结构,不共享 Claude/Gemini 的 XML 标签模板。
  * 包含 commentary/final 双通道输出概念、editing_constraints、automated_testing_guardrails 等。
  */
-export function buildOpenAISystemPrompt(parsed: ParsedRunRequest, _promptProfile: ProviderPromptProfile): string {
-  const modelLabel = parsed.modelId.replace(XHIGH_FAST_SUFFIX_RE, '').replace(/-/g, '-').toUpperCase().replace('GPT-', 'GPT-')
+export function buildOpenAISystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderPromptProfile): string {
+  const modelName = promptProfile.apiModel || parsed.modelId
+  const modelLabel = modelName.replace(XHIGH_FAST_SUFFIX_RE, '').replace(/-/g, '-').toUpperCase().replace('GPT-', 'GPT-')
   const mode = parsed.mode || 'agent'
 
   const parts: string[] = []

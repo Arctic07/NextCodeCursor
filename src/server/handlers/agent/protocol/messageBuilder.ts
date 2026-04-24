@@ -324,9 +324,18 @@ ${listing}
     const normalFileEntries = fileEntries.filter(([p]) => !p.includes('agent-transcripts'))
 
     if (normalFileEntries.length > 0) {
-      let section = `<attached_files description="Files the user attached via @File. Treat the content as canonical — it reflects the file state at the moment of the message.">\n`
-      for (const [path, content] of normalFileEntries)
-        section += `<attached_file path="${escapeXml(path)}">${escapeXml(content)}</attached_file>\n`
+      // 不注入文件全文 — 只告知 LLM 用户引用了哪些文件,由 LLM 按需用 ReadFile 读取。
+      // 官方 server 走 retrieval 索引服务做摘要,BYOK 简化为路径+大小提示。
+      const inlineThreshold = 2000
+      let section = `<attached_files description="Files the user referenced via @File. Read them with the ReadFile tool to see their contents.">\n`
+      for (const [path, content] of normalFileEntries) {
+        if (content.length <= inlineThreshold) {
+          section += `<attached_file path="${escapeXml(path)}">${escapeXml(content)}</attached_file>\n`
+        } else {
+          const lines = content.split('\n').length
+          section += `<attached_file path="${escapeXml(path)}" size="${content.length}" lines="${lines}">Use ReadFile to view this file.</attached_file>\n`
+        }
+      }
       section += `</attached_files>`
       parts.push(section)
     }
