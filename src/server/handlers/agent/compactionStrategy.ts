@@ -91,11 +91,43 @@ export function planCompaction(entries: HistoryEntry[]): CompactionPlan {
         summarizeCount = Math.max(0, body.length - keepTailCount);
     }
 
+    // tool 配对完整性: 确保切分点不在 tool call/result 之间。
+    //
+    // 消息序列: assistant(tool_use:A) → tool(result:A) → assistant(tool_use:B) → tool(result:B)
+    //
+    // 如果 keepTail 以 tool role 开头, 其配对的 assistant(tool_use) 在 summarize 侧,
+    // 发给 OpenAI 时报 "No tool call found for function call output"。
+    //
+    // 同理, 如果 keepTail 以 assistant(含 tool_use) 开头, 但下一条 tool(result)
+    // 被切到 summarize 侧, assistant 的 tool_use 就没有配对结果。
+    //
+    // 修复: 向前扩展 keepTail 到最近的安全边界 (user 或无 tool_use 的 assistant)。
+    while (summarizeCount > 0) {
+        const first = body[summarizeCount];
+        if (!first) break;
+        // keepTail 首条是 tool result → 配对的 tool_call 在 summarize 侧
+        if (first.message.role === 'tool') {
+            summarizeCount--;
+            continue;
+        }
+        // keepTail 首条是 assistant 且含 tool_use → 下面的 tool result 可能被切走
+        if (first.message.role === 'assistant' && hasToolUse(first.message)) {
+            summarizeCount--;
+            continue;
+        }
+        break;
+    }
+
     return {
         leading,
         summarizeEntries: body.slice(0, summarizeCount),
         keepTail: body.slice(summarizeCount),
     };
+}
+
+function hasToolUse(message: LLMMessage): boolean {
+    if (typeof message.content === 'string') return false;
+    return message.content.some(b => b.type === 'tool_use');
 }
 
 function encodeBinaryBlob(bytes: Uint8Array): { blobId: string; blobData: string } {

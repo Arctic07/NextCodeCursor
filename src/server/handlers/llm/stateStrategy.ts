@@ -73,7 +73,15 @@ class AnthropicStateStrategy implements ProviderStateStrategy {
         if (pending.length === 0) return;
         const reordered = reorderAnthropicToolResults(messages, pending);
         pending.splice(0, pending.length);
-        messages.push({ role: 'user', content: reordered });
+        for (const result of reordered) {
+            messages.push({
+                role: 'tool',
+                content: result.content,
+                toolCallId: result.toolUseId,
+                toolName: result.toolName,
+                ...(result.isError ? { isError: true } : {}),
+            });
+        }
     }
 }
 

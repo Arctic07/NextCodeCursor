@@ -5,7 +5,7 @@ import type { AgentSession } from './session';
 import { heartbeat, checkpoint, kvMessage, summary, summaryCompleted, summaryStarted } from './stream';
 import { clampTokenDetails, computeContextUsagePercent } from './usage';
 import { resolveProviderRuntime } from '../llm';
-import { hydrateHistoryEntries } from './historyManager';
+import { hydrateHistoryEntries, repairHistoryEntries } from './historyManager';
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy';
 import { executePreCompactHook } from './hookRuntime';
 import { persistConversationCheckpoint } from '../../database/checkpoints';
@@ -17,8 +17,9 @@ export async function* handleSummarizeAction(
     session: AgentSession | null,
 ): AsyncIterable<AgentServerMessage> {
     const route = resolveProviderRuntime(parsed.modelId);
-    const historyEntries = hydrateHistoryEntries(parsed.historyBlobIds);
-    const missingHistoryBlobs = Math.max(0, parsed.historyBlobIds.length - historyEntries.length);
+    const hydratedHistoryEntries = hydrateHistoryEntries(parsed.historyBlobIds);
+    const missingHistoryBlobs = Math.max(0, parsed.historyBlobIds.length - hydratedHistoryEntries.length);
+    const historyEntries = repairHistoryEntries(hydratedHistoryEntries);
     const compactionPlan = planCompaction(historyEntries);
     const currentTokenDetails = clampTokenDetails(
         parsed.historyTokenDetails?.usedTokens ?? estimateMessagesTokens(historyEntries.map(entry => entry.message)),
@@ -49,11 +50,12 @@ export async function* handleSummarizeAction(
         logger.warn({
             conversationId: parsed.conversationId,
             requestedBlobs: parsed.historyBlobIds.length,
-            resolvedBlobs: historyEntries.length,
+            resolvedBlobs: hydratedHistoryEntries.length,
             missingHistoryBlobs,
         }, '[AGENT] summarizeAction skipped due to incomplete history');
 
         persistConversationCheckpoint({
+            kind: 'committed',
             conversationId: parsed.conversationId,
             rootBlobIds: parsed.historyBlobIds,
             summaryArchiveIds: parsed.historySummaryArchiveIds,
@@ -82,6 +84,7 @@ export async function* handleSummarizeAction(
 
     if (compactionPlan.summarizeEntries.length === 0) {
         persistConversationCheckpoint({
+            kind: 'committed',
             conversationId: parsed.conversationId,
             rootBlobIds: parsed.historyBlobIds,
             summaryArchiveIds: parsed.historySummaryArchiveIds,
@@ -170,6 +173,7 @@ export async function* handleSummarizeAction(
     );
 
     persistConversationCheckpoint({
+        kind: 'committed',
         conversationId: parsed.conversationId,
         rootBlobIds: artifacts.nextRootBlobIds,
         summaryArchiveIds: artifacts.nextSummaryArchiveIds,
