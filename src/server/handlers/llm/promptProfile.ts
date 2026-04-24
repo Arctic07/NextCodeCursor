@@ -9,6 +9,10 @@ export interface ProviderPromptProfile {
     readonly observedSystemPromptHashes: string[];
     readonly promptVocabulary: string[];
     readonly toolCatalog: ProviderToolCatalog;
+    /** 实际 API 模型名 (如 gpt-5.4, claude-sonnet-4-5), 用于 system prompt 注入 */
+    readonly apiModel: string;
+    /** 是否为 thinking 模型 — 来自 providers.json 显式配置,不靠模型名猜测 */
+    readonly thinking: boolean;
 }
 
 const OPENAI_HASHES = ['3d7cc5e99085', '777e9a50a600', 'b91ffbc687c5'];
@@ -29,6 +33,8 @@ export function resolvePromptProfile(modelId: string): ProviderPromptProfile {
             observedSystemPromptHashes: ['b91ffbc687c5'],
             promptVocabulary: toolCatalog.promptVocabulary,
             toolCatalog,
+            apiModel: modelId,
+            thinking: false,
         };
     }
 
@@ -44,6 +50,8 @@ export function resolvePromptProfile(modelId: string): ProviderPromptProfile {
                 observedSystemPromptHashes: OPENAI_HASHES,
                 promptVocabulary: toolCatalog.promptVocabulary,
                 toolCatalog,
+                apiModel: resolved.apiModel,
+                thinking: resolved.thinking,
             };
         }
         case 'gemini': {
@@ -55,6 +63,8 @@ export function resolvePromptProfile(modelId: string): ProviderPromptProfile {
                 observedSystemPromptHashes: GEMINI_HASHES,
                 promptVocabulary: toolCatalog.promptVocabulary,
                 toolCatalog,
+                apiModel: resolved.apiModel,
+                thinking: resolved.thinking,
             };
         }
         case 'anthropic':
@@ -67,6 +77,8 @@ export function resolvePromptProfile(modelId: string): ProviderPromptProfile {
                 observedSystemPromptHashes: ANTHROPIC_HASHES,
                 promptVocabulary: toolCatalog.promptVocabulary,
                 toolCatalog,
+                apiModel: resolved.apiModel,
+                thinking: resolved.thinking,
             };
         }
     }

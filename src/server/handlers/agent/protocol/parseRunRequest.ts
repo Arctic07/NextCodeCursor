@@ -203,9 +203,16 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
       })
     }
     else {
-      // 未知类型作为用户规则兜底,内容不空才入
-      if (content)
+      // 未知类型: 通过文件路径判断是否为 skill
+      // Cursor 3.1.17 中 skill 的 type 可能为空对象 {},
+      // 不匹配 agentFetched, 但路径为 SKILL.md → 应作为 skill 处理
+      if (fullPath.endsWith('/SKILL.md') || fullPath.endsWith('\\SKILL.md')) {
+        const desc = extractSkillDescription(content)
+        agentSkillsFromRules.push({ fullPath, description: desc })
+      }
+      else if (content) {
         userRules.push(content)
+      }
     }
   }
 
@@ -513,6 +520,18 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const planFileUri = (executePlanAction?.planFileUri as string) ?? ''
   const baseUserText = (userMessage?.text as string) ?? ''
 
+  // 解析 RequestedModel.parameters[] — 客户端运行时 thinking 配置
+  const requestedParams = (requestedModel?.parameters as Array<{ id: string, value: string }>) ?? []
+  const paramMap = new Map(requestedParams.map(p => [p.id, p.value]))
+  const clientThinking = paramMap.has('thinking') ? paramMap.get('thinking') === 'true' : undefined
+  const clientThinkingLevel = paramMap.get('level') || undefined
+  const clientThinkingBudgetRaw = paramMap.get('budget')
+  const clientThinkingBudget = clientThinkingBudgetRaw ? Number(clientThinkingBudgetRaw) : undefined
+
+  if (requestedParams.length > 0) {
+    logger.debug({ parameters: Object.fromEntries(paramMap) }, '[AGENT] client thinking parameters')
+  }
+
   return {
     userText: isExecutePlan && planContent
       ? `Execute the following plan:\n\n${planContent}`
@@ -522,6 +541,9 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     conversationId: (runRequest.conversationId as string) ?? '',
     mode: (userMessage?.mode as string) ?? 'AGENT_MODE_AGENT',
     isSummarize,
+    clientThinking,
+    clientThinkingLevel,
+    clientThinkingBudget: clientThinkingBudget && Number.isFinite(clientThinkingBudget) ? clientThinkingBudget : undefined,
     userRules,
     projectRules,
     agentSkills: agentSkillsFromRules,
@@ -739,4 +761,14 @@ function unwrapProtoValue(v: unknown): unknown {
     return fields ? unwrapProtoValueFields(fields) : {}
   }
   return v
+}
+
+function extractSkillDescription(content: string): string {
+  // SKILL.md 格式: YAML frontmatter (--- ... ---) + markdown body
+  // 从 frontmatter 中提取 description 字段
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (!fmMatch) return content.slice(0, 120)
+  const fm = fmMatch[1]
+  const descMatch = fm.match(/^description:\s*(.+)$/m)
+  return descMatch ? descMatch[1].trim() : content.slice(0, 120)
 }

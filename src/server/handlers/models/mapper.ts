@@ -38,6 +38,7 @@ export interface ResolvedModel extends ModelContextMetadata {
   thinking: boolean
   thinkingLevel?: ThinkingLevel
   thinkingBudgetTokens?: number
+  maxOutputTokens: number
 }
 
 // 不再提供 provider 级默认 contextTokenLimit —— 用户必须在 ProviderModel 上显式填写。
@@ -63,6 +64,7 @@ export function resolveModel(modelId: string): ResolvedModel {
     thinking: hit.model.thinking,
     thinkingLevel: hit.model.thinkingLevel,
     thinkingBudgetTokens: hit.model.thinkingBudgetTokens,
+    maxOutputTokens: hit.model.maxOutputTokens ?? 8192,
     ...inferModelContextMetadata(modelId, hit.provider.type, hit.model),
   }
 }

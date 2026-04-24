@@ -5,6 +5,8 @@ import { OpenAIChatProvider } from './openai-chat';
 import { OpenAIResponsesProvider } from './openai-responses';
 import { GeminiProvider } from './gemini';
 import { resolveModel } from '../models/mapper';
+import { makeByokConnectError } from '../errors';
+import { ErrorDetails_Error } from '../../gen/aiserver_v1_pb';
 import type { ProviderStateStrategy } from './stateStrategy';
 import { anthropicStateStrategy, geminiStateStrategy, openAIStateStrategy } from './stateStrategy';
 import { resolvePromptProfile, type ProviderPromptProfile } from './promptProfile';
@@ -60,7 +62,9 @@ export interface ProviderRuntime {
     contextTokenLimitForMaxMode: number;
     supportsAutoContext: boolean;
     prepareConversation(messages: LLMMessage[]): PreparedProviderConversation;
-    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string): PreparedProviderRequest;
+    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }): PreparedProviderRequest;
+    /** 模型配置的最大输出 token 数 */
+    maxOutputTokens: number;
     listRuntimeTools(extraTools?: LLMTool[], mode?: string): LLMTool[];
     createRoundContext(): ProviderRoundContext;
     transitionRound(messages: LLMMessage[], assistantContent: LLMContentBlock[], pendingToolResults?: LLMToolResultBlock[]): ProviderRoundTransition;
@@ -150,21 +154,62 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         toolCatalog: promptProfile.toolCatalog,
         model: resolved.apiModel,
         thinking: resolved.thinking,
+        maxOutputTokens: resolved.maxOutputTokens,
         contextTokenLimit: resolved.contextTokenLimit,
         contextTokenLimitForMaxMode: resolved.contextTokenLimitForMaxMode,
         supportsAutoContext: resolved.supportsAutoContext,
         prepareConversation,
-        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = 8192, mode?: string): PreparedProviderRequest {
+        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }): PreparedProviderRequest {
             const conversation = prepareConversation(messages);
+            // 客户端运行时参数覆盖静态配置 (undefined = 不覆盖, 保留 providers.json 值)
+            const thinking = thinkingOverride?.thinking ?? resolved.thinking;
+            // Level 和 Budget 互斥: 客户端如果指定了其中一个,另一个必须清除
+            let thinkingLevel = (thinkingOverride?.level as LLMStreamRequest['thinkingLevel']) ?? resolved.thinkingLevel;
+            let thinkingBudgetTokens = thinkingOverride?.budget ?? resolved.thinkingBudgetTokens;
+            if (thinkingLevel && thinkingBudgetTokens) {
+                thinkingBudgetTokens = undefined;
+            }
+            // 后端校验: thinking 配置合规性
+            if (thinking) {
+                if (!thinkingLevel && !thinkingBudgetTokens) {
+                    throw makeByokConnectError({
+                        errorCode: ErrorDetails_Error.CUSTOM,
+                        title: 'Thinking configuration incomplete',
+                        detail: 'Thinking is enabled but neither Level nor Budget is set.\n\nOpen Cursor++ panel → edit the model to set a thinking level or budget.',
+                        isRetryable: false,
+                        additionalInfo: { model: resolved.apiModel },
+                    });
+                }
+                if (!thinkingLevel && thinkingBudgetTokens !== undefined) {
+                    if (thinkingBudgetTokens < 1024) {
+                        throw makeByokConnectError({
+                            errorCode: ErrorDetails_Error.CUSTOM,
+                            title: 'Invalid thinking budget',
+                            detail: `Thinking budget must be ≥ 1024 tokens (got ${thinkingBudgetTokens}).`,
+                            isRetryable: false,
+                            additionalInfo: { model: resolved.apiModel, budget: String(thinkingBudgetTokens) },
+                        });
+                    }
+                    if (thinkingBudgetTokens >= maxTokens) {
+                        throw makeByokConnectError({
+                            errorCode: ErrorDetails_Error.CUSTOM,
+                            title: 'Thinking budget exceeds output limit',
+                            detail: `Thinking budget (${thinkingBudgetTokens}) must be less than Max Output Tokens (${maxTokens}).`,
+                            isRetryable: false,
+                            additionalInfo: { model: resolved.apiModel, budget: String(thinkingBudgetTokens), maxTokens: String(maxTokens) },
+                        });
+                    }
+                }
+            }
             return {
                 conversation,
                 request: {
                     model: resolved.apiModel,
                     messages: conversation.normalizedMessages,
                     tools: listRuntimeTools(extraTools, mode),
-                    thinking: resolved.thinking,
-                    thinkingLevel: resolved.thinkingLevel,
-                    thinkingBudgetTokens: resolved.thinkingBudgetTokens,
+                    thinking,
+                    thinkingLevel,
+                    thinkingBudgetTokens,
                     maxTokens,
                 },
             };

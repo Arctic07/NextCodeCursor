@@ -173,7 +173,7 @@ it('buildMessages produces official-style system and structured user content', (
   expect(preambleUserContent).toMatch(/Always reply in Chinese/)
   expect(preambleUserContent).toMatch(/<project_rules/)
   expect(preambleUserContent).toMatch(/Use pnpm/)
-  expect(preambleUserContent).toMatch(/<agent_skills>/)
+  expect(preambleUserContent).toMatch(/<available_skills>/)
   expect(preambleUserContent).toMatch(/Review code carefully/)
   expect(preambleUserContent).not.toMatch(/<user_query>/)
 
