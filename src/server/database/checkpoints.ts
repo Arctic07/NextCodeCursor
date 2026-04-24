@@ -1,7 +1,10 @@
 import { getAgentDatabase } from './sqlite';
 
+export type CheckpointKind = 'committed' | 'draft';
+
 export interface PersistedConversationCheckpoint {
     conversationId: string;
+    kind: CheckpointKind;
     rootBlobIds: string[];
     summaryArchiveIds: string[];
     tokenDetails: { usedTokens: number; maxTokens: number };
@@ -11,6 +14,7 @@ export interface PersistedConversationCheckpoint {
 
 interface CheckpointRow {
     conversation_id: string;
+    kind: string;
     root_blob_ids_json: string;
     summary_archive_ids_json: string;
     used_tokens: number;
@@ -30,8 +34,9 @@ function parseStringArray(value: string): string[] {
 
 export async function persistConversationCheckpoint(checkpoint: PersistedConversationCheckpoint): Promise<void> {
     await getAgentDatabase().run(`
-        INSERT INTO conversation_checkpoints (
+        INSERT OR REPLACE INTO conversation_checkpoints (
             conversation_id,
+            kind,
             root_blob_ids_json,
             summary_archive_ids_json,
             used_tokens,
@@ -40,6 +45,7 @@ export async function persistConversationCheckpoint(checkpoint: PersistedConvers
             updated_at
         ) VALUES (
             $conversationId,
+            $kind,
             $rootBlobIdsJson,
             $summaryArchiveIdsJson,
             $usedTokens,
@@ -47,15 +53,9 @@ export async function persistConversationCheckpoint(checkpoint: PersistedConvers
             $mode,
             $updatedAt
         )
-        ON CONFLICT(conversation_id) DO UPDATE SET
-            root_blob_ids_json = excluded.root_blob_ids_json,
-            summary_archive_ids_json = excluded.summary_archive_ids_json,
-            used_tokens = excluded.used_tokens,
-            max_tokens = excluded.max_tokens,
-            mode = excluded.mode,
-            updated_at = excluded.updated_at
     `, {
         $conversationId: checkpoint.conversationId,
+        $kind: checkpoint.kind,
         $rootBlobIdsJson: JSON.stringify(checkpoint.rootBlobIds),
         $summaryArchiveIdsJson: JSON.stringify(checkpoint.summaryArchiveIds),
         $usedTokens: checkpoint.tokenDetails.usedTokens,
@@ -65,18 +65,26 @@ export async function persistConversationCheckpoint(checkpoint: PersistedConvers
     });
 }
 
-export async function getPersistedConversationCheckpoint(conversationId: string): Promise<PersistedConversationCheckpoint | null> {
+/**
+ * 获取指定会话的 committed checkpoint (默认)。
+ * 恢复历史时只用 committed，不用 draft。
+ */
+export async function getPersistedConversationCheckpoint(
+    conversationId: string,
+    kind: CheckpointKind = 'committed',
+): Promise<PersistedConversationCheckpoint | null> {
     if (!conversationId) return null;
 
     const row = await getAgentDatabase().get<CheckpointRow>(`
-        SELECT conversation_id, root_blob_ids_json, summary_archive_ids_json, used_tokens, max_tokens, mode, updated_at
+        SELECT conversation_id, kind, root_blob_ids_json, summary_archive_ids_json, used_tokens, max_tokens, mode, updated_at
         FROM conversation_checkpoints
-        WHERE conversation_id = ?
-    `, [conversationId]);
+        WHERE conversation_id = ? AND kind = ?
+    `, [conversationId, kind]);
     if (!row) return null;
 
     return {
         conversationId: row.conversation_id,
+        kind: row.kind as CheckpointKind,
         rootBlobIds: parseStringArray(row.root_blob_ids_json),
         summaryArchiveIds: parseStringArray(row.summary_archive_ids_json),
         tokenDetails: {
@@ -86,6 +94,15 @@ export async function getPersistedConversationCheckpoint(conversationId: string)
         mode: row.mode,
         updatedAt: row.updated_at,
     };
+}
+
+/** 清除指定会话的 draft checkpoint (provider error 后调用) */
+export async function clearDraftCheckpoint(conversationId: string): Promise<void> {
+    if (!conversationId) return;
+    await getAgentDatabase().run(
+        `DELETE FROM conversation_checkpoints WHERE conversation_id = ? AND kind = 'draft'`,
+        [conversationId],
+    );
 }
 
 /**

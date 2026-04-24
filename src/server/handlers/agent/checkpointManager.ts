@@ -47,6 +47,7 @@ export function emitRollingCheckpoint(params: {
 
     persistConversationCheckpoint({
         conversationId: params.conversationId,
+        kind: 'draft',
         rootBlobIds: params.allBlobIds,
         summaryArchiveIds: params.summaryArchiveIds,
         tokenDetails: rollingTokenDetails,
@@ -105,6 +106,7 @@ export function emitFinalCheckpoint(params: {
 
     persistConversationCheckpoint({
         conversationId: params.conversationId,
+        kind: 'committed',
         rootBlobIds: params.allBlobIds,
         summaryArchiveIds: params.summaryArchiveIds,
         tokenDetails,

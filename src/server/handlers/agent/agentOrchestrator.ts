@@ -33,15 +33,26 @@ export async function* handleRunRequest(
             const clientSentHistory = parsed.historyBlobIds.length > 0;
 
             if (!clientSentHistory) {
+                // 客户端发来空 conversationState 可能是:
+                //   1. revert (checkpoint 回退) — 需要清空历史
+                //   2. 切换模型 — 客户端重新初始化, 后续会带上 history
+                //   3. 新会话首条消息 — 正常的空状态
+                //
+                // 不主动清空 sqlite checkpoint, 而是从 sqlite 恢复历史。
+                // 如果客户端真的要 revert, 它会在后续请求中发送 revert 的目标 checkpoint。
+                // 如果是切换模型, 恢复的历史能让 LLM 看到之前的上下文。
                 logger.info({
                     conversationId: parsed.conversationId,
-                    discardedBlobIds: persistedCheckpoint.rootBlobIds.length,
-                    discardedSummaryArchives: persistedCheckpoint.summaryArchiveIds.length,
-                }, '[AGENT] empty conversationState + sqlite checkpoint present → clearing (revert signal)');
+                    kind: persistedCheckpoint.kind,
+                    persistedBlobIds: persistedCheckpoint.rootBlobIds.length,
+                    persistedSummaryArchives: persistedCheckpoint.summaryArchiveIds.length,
+                }, '[AGENT] empty conversationState → restoring from committed checkpoint');
 
-                await clearPersistedConversationCheckpoint(parsed.conversationId);
-                // 故意不 restore 任何字段: historyBlobIds/summaryArchiveIds/tokenDetails 全部维持空,
-                // 让下游从零重建, 与客户端当前视图对齐。
+                parsed.historyBlobIds = persistedCheckpoint.rootBlobIds;
+                parsed.historySummaryArchiveIds = persistedCheckpoint.summaryArchiveIds;
+                if (!parsed.historyTokenDetails) {
+                    parsed.historyTokenDetails = persistedCheckpoint.tokenDetails;
+                }
             } else {
                 // 客户端主动回传了历史 blob → 以客户端为 source of truth。
                 // 只在客户端未携带 tokenDetails 时补充一下 sqlite 里缓存的值, 避免上下文用量显示跳变。

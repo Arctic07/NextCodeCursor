@@ -291,13 +291,15 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
     );
 
     CREATE TABLE IF NOT EXISTS conversation_checkpoints (
-      conversation_id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'committed',
       root_blob_ids_json TEXT NOT NULL,
       summary_archive_ids_json TEXT NOT NULL,
       used_tokens INTEGER NOT NULL,
       max_tokens INTEGER NOT NULL,
       mode TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (conversation_id, kind)
     );
 
     CREATE INDEX IF NOT EXISTS idx_agent_blobs_last_accessed_at
@@ -322,6 +324,35 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_conversation_summaries_lookup
       ON conversation_summaries(conversation_id, kind, updated_at DESC);
   `)
+
+  // ── Schema 迁移: conversation_checkpoints 新增 kind 列 ──
+  // 旧表 PRIMARY KEY 是 conversation_id (单列), 新表需要 (conversation_id, kind) 复合键。
+  // SQLite 不支持 ALTER PRIMARY KEY, 只能重建表。
+  try {
+    await database.get(`SELECT kind FROM conversation_checkpoints LIMIT 1`)
+  }
+  catch {
+    // kind 列不存在 → 旧 schema, 需要迁移
+    await database.exec(`
+      ALTER TABLE conversation_checkpoints RENAME TO conversation_checkpoints_old;
+      CREATE TABLE conversation_checkpoints (
+        conversation_id TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'committed',
+        root_blob_ids_json TEXT NOT NULL,
+        summary_archive_ids_json TEXT NOT NULL,
+        used_tokens INTEGER NOT NULL,
+        max_tokens INTEGER NOT NULL,
+        mode TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (conversation_id, kind)
+      );
+      INSERT INTO conversation_checkpoints
+        SELECT conversation_id, 'committed', root_blob_ids_json, summary_archive_ids_json,
+               used_tokens, max_tokens, mode, updated_at
+        FROM conversation_checkpoints_old;
+      DROP TABLE conversation_checkpoints_old;
+    `)
+  }
 }
 
 /**
