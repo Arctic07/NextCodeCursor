@@ -281,23 +281,17 @@ function normalizeIdsAndThinking(messages: LLMMessage[], targetProvider: Provide
             transformedContent.push({ ...block, id: getNormalizedId(block.id) })
           }
           else if (block.type === 'thinking') {
-            if (!block.text?.trim()) {
+            if (targetProvider === 'openai-chat') {
               signedThinkingDowngraded++
-            }
-            else if (targetProvider === 'openai-chat') {
-              // Chat API 不支持 thinking，降级为 text
-              signedThinkingDowngraded++
-              transformedContent.push({ type: 'text', text: block.text })
+              if (block.text) transformedContent.push({ type: 'text', text: block.text })
             }
             else if (targetSourceModel && block.sourceModel && block.sourceModel !== targetSourceModel) {
-              // 跨 provider 或跨 model — signature 不可移植，降级为 text
               signedThinkingDowngraded++
-              transformedContent.push({ type: 'text', text: block.text })
+              if (block.text) transformedContent.push({ type: 'text', text: block.text })
             }
             else if (!block.sourceModel && block.signature) {
-              // 旧 thinking 块无 sourceModel 标记但有 signature — 保守降级
               signedThinkingDowngraded++
-              transformedContent.push({ type: 'text', text: block.text })
+              if (block.text) transformedContent.push({ type: 'text', text: block.text })
             }
             else {
               // 同 provider + 同 model 保留 thinking 块

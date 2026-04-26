@@ -3,24 +3,120 @@ import type { LLMContentBlock, LLMMessage } from '../llm/types'
 import type { ParsedRunRequest } from './protocol'
 import type { AgentSession } from './session'
 import type { ToolCallInfo } from './tools'
-import { persistConversationCheckpoint } from '../../database/checkpoints'
+import { clearDraftCheckpoint, persistConversationCheckpoint } from '../../database/checkpoints'
 import { logger } from '../../logger'
 import { resolveProviderRuntime } from '../llm'
 import { decodeBlob } from './blob'
 import { getCachedBlob } from './blobStore'
 import { emitFinalCheckpoint, emitRollingCheckpoint } from './checkpointManager'
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy'
-import { flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, sendAndCacheBlob } from './historyManager'
+import { flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
 import { buildMessages, workspaceUris } from './protocol'
-import { checkpoint, heartbeat, kvMessage, summary, summaryCompleted, summaryStarted, translateStream } from './stream'
+import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
 import { runToolCall } from './toolRuntime'
 import { restoreBlobMessageToLLMMessage } from './transcript'
 import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, shouldTriggerCompaction } from './usage'
 import { isAgentRunAbortedError } from './wait'
 import { makeProviderError, makeToolError } from '../errors'
+import { createRepairDiagnostics, hasRepairMutations, repairConversationHistory } from '../llm/transformMessages'
 
 const LEADING_DASH_RE = /^-\s*/
+
+const EDIT_TOOL_NAMES = new Set(['ApplyPatch', 'Edit', 'Write', 'EditNotebook'])
+
+const EDIT_TARGET_FIELD: Record<string, string> = {
+  ApplyPatch: 'patch',
+  Write: 'contents',
+  Edit: 'new_string',
+  EditNotebook: 'new_string',
+}
+
+export function detectEditPathFromToolInput(toolName: string, rawInput: string): string {
+  const pathKey = toolName === 'EditNotebook' ? 'target_notebook' : 'path'
+  const m = rawInput.match(new RegExp(`"${pathKey}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`))
+  if (m?.[1]) return decodeJsonStringFragment(m[1])
+  if (toolName === 'ApplyPatch') {
+    const p = rawInput.match(/\*\*\*\s+(?:Update|Add|Delete)\s+File:\s+(.+?)(?:\\n|\n)/)
+    if (p?.[1]) return p[1].trim()
+  }
+  return ''
+}
+
+/**
+ * 增量 JSON 值提取器 — flat scanner。
+ *
+ * 从 LLM 流式 tool_use 参数（JSON chunks）中提取:
+ * 1. path（通过 regex 在累积文本上匹配）
+ * 2. 目标字段值（通过状态机扫描 key/value string pairs）
+ *
+ * 不做完整 JSON parse。忽略 {/[/]/} 结构字符，只关注 "key":"value"。
+ * 对嵌套结构（如旧 edits[] 内的 newText）也能自然工作。
+ */
+export class EditDeltaExtractor {
+  private state: 'SCAN' | 'IN_KEY' | 'COLON' | 'IN_VAL' | 'SKIP_VAL' | 'DONE' = 'SCAN'
+  private key = ''
+  private esc = false
+  private buf = ''
+  private readonly target: string
+  detectedPath = ''
+
+  constructor(private readonly toolName: string) {
+    this.target = EDIT_TARGET_FIELD[toolName] ?? 'patch'
+  }
+
+  feed(delta: string): string | null {
+    this.buf += delta
+    if (!this.detectedPath) this.detectedPath = detectEditPathFromToolInput(this.toolName, this.buf)
+    if (this.state === 'DONE') return null
+    let out = ''
+    for (let i = 0; i < delta.length; i++) {
+      const c = delta[i]
+      if (this.esc) { this.esc = false; if (this.state === 'IN_VAL') out += decodeEscape(c); else if (this.state === 'IN_KEY') this.key += c; continue }
+      switch (this.state) {
+        case 'SCAN': if (c === '"') { this.state = 'IN_KEY'; this.key = '' } break
+        case 'IN_KEY': if (c === '\\') { this.esc = true } else if (c === '"') this.state = 'COLON'; else this.key += c; break
+        case 'COLON': if (c === ':' || c === ' ' || c === '\t') break; if (c === '"') this.state = this.key === this.target ? 'IN_VAL' : 'SKIP_VAL'; else this.state = 'SCAN'; break
+        case 'IN_VAL': if (c === '\\') { if (i + 1 < delta.length) { out += decodeEscape(delta[++i]) } else this.esc = true } else if (c === '"') this.state = 'DONE'; else out += c; break
+        case 'SKIP_VAL': if (c === '\\') { if (i + 1 < delta.length) i++; else this.esc = true } else if (c === '"') this.state = 'SCAN'; break
+      }
+      if (this.state === 'DONE') break
+    }
+    return out || null
+  }
+}
+
+function decodeJsonStringFragment(value: string): string {
+  return value.replace(/\\(["\\/bfnrt]|u[0-9a-fA-F]{4})/g, (_match, esc: string) => {
+    if (esc === 'b') return '\b'
+    if (esc === 'f') return '\f'
+    if (esc === 'n') return '\n'
+    if (esc === 'r') return '\r'
+    if (esc === 't') return '\t'
+    if (esc.startsWith('u')) return String.fromCharCode(Number.parseInt(esc.slice(1), 16))
+    return esc
+  })
+}
+
+function decodeEscape(ch: string): string {
+  switch (ch) {
+    case 'n': return '\n'
+    case 't': return '\t'
+    case '\\': return '\\'
+    case '"': return '"'
+    case '/': return '/'
+    case 'r': return ''
+    default: return '\\' + ch
+  }
+}
+
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+const editExtractors = new Map<string, EditDeltaExtractor>()
+const editPathSent = new Set<string>()
 
 /** Auto-summarize 阈值（与客户端的 speculative summarization 70% 区分，服务端在更激进的阈值触发） */
 const AUTO_SUMMARIZE_THRESHOLD_PERCENT = 85
@@ -81,7 +177,7 @@ async function* performInlineAutoSummarize(params: {
 } | null> {
   const { parsed, allBlobIds, summaryArchiveIds, usedTokensEstimate, contextTokenLimit, route } = params
 
-  const historyEntries = hydrateHistoryEntries(allBlobIds)
+  const historyEntries = repairHistoryEntries(hydrateHistoryEntries(allBlobIds))
   if (historyEntries.length === 0)
     return null
 
@@ -165,7 +261,7 @@ async function* performInlineAutoSummarize(params: {
     contextTokenLimit,
   )
 
-  persistConversationCheckpoint({
+  persistConversationCheckpoint({ kind: 'committed',
     conversationId: parsed.conversationId,
     rootBlobIds: artifacts.nextRootBlobIds,
     summaryArchiveIds: artifacts.nextSummaryArchiveIds,
@@ -207,6 +303,15 @@ async function* performInlineAutoSummarize(params: {
     }
     catch {}
   }
+  const repairDiagnostics = createRepairDiagnostics(newMessages.length)
+  const repairedNewMessages = repairConversationHistory(newMessages, repairDiagnostics)
+  if (hasRepairMutations(repairDiagnostics)) {
+    logger.debug({
+      stage: 'performInlineAutoSummarize:newMessages',
+      conversationId: parsed.conversationId,
+      ...repairDiagnostics,
+    }, '[HISTORY_REPAIR] canonicalized conversation history')
+  }
 
   logger.info({
     conversationId: parsed.conversationId,
@@ -214,14 +319,14 @@ async function* performInlineAutoSummarize(params: {
     newBlobCount: artifacts.nextRootBlobIds.length,
     previousUsedTokens: usedTokensEstimate,
     newUsedTokens: compactedTokenDetails.usedTokens,
-    newMessageCount: newMessages.length,
+    newMessageCount: repairedNewMessages.length,
   }, '[AGENT] auto-summarize: compaction complete')
 
   return {
     newBlobIds: artifacts.nextRootBlobIds,
     newSummaryArchiveIds: artifacts.nextSummaryArchiveIds,
     newUsedTokens: compactedTokenDetails.usedTokens,
-    newMessages,
+    newMessages: repairedNewMessages,
   }
 }
 
@@ -329,7 +434,11 @@ export async function* handleConversationRun(
     let currentText = ''
 
     try {
-      const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, 8192, parsed.mode)
+      const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, undefined, parsed.mode, {
+        thinking: parsed.clientThinking,
+        level: parsed.clientThinkingLevel,
+        budget: parsed.clientThinkingBudget,
+      }, parsed.conversationId)
 
       logger.info({
         round,
@@ -345,16 +454,15 @@ export async function* handleConversationRun(
 
       const llmStream = route.provider.stream(preparedRequest.request)
 
-      for await (const frame of translateStream(llmStream, String(++stepCounter), (event) => {
+      const translatedFrames = translateStream(llmStream, String(++stepCounter), (event) => {
         switch (event.type) {
           case 'thinking_delta':
             currentThinking += event.text
             break
           case 'thinking_done':
-            if (currentThinking) {
-              roundAssistantBlocks.push({ type: 'thinking', text: currentThinking })
-              currentThinking = ''
-            }
+            // 即使 currentThinking 为空也要保存 — DeepSeek 要求空 reasoning_content 原样回传
+            roundAssistantBlocks.push({ type: 'thinking', text: currentThinking, signature: event.signature, sourceModel: `${route.promptProfile.provider}:${route.model}` })
+            currentThinking = ''
             break
           case 'text_delta':
             currentText += event.text
@@ -366,21 +474,42 @@ export async function* handleConversationRun(
               currentText,
             }))
             inflightToolCalls.set(event.id, { name: event.name, input: '' })
+            if (EDIT_TOOL_NAMES.has(event.name)) {
+              editExtractors.set(event.id, new EditDeltaExtractor(event.name))
+              logger.debug({ callId: event.id, tool: event.name }, '[EDIT_T] 1.tool_use_start → extractor created')
+            }
             break
           }
           case 'tool_use_delta': {
             const current = inflightToolCalls.get(event.id) ?? { name: '', input: '' }
             inflightToolCalls.set(event.id, { ...current, input: current.input + event.input })
+            const extractor = editExtractors.get(event.id)
+            if (extractor) {
+              const content = extractor.feed(event.input)
+              const mcid = `${parsed.conversationId}-${round}-${event.id.slice(-4)}`
+              const frames: AgentServerMessage[] = []
+              if (extractor.detectedPath && !editPathSent.has(event.id)) {
+                editPathSent.add(event.id)
+                frames.push(partialToolCall(event.id, 'editToolCall', mcid, { path: extractor.detectedPath }))
+                logger.debug({ callId: event.id, path: extractor.detectedPath, mcid }, '[EDIT_T] 2.partialToolCall{path}')
+              }
+              if (content) {
+                frames.push(editToolCallStreamDelta(event.id, content, mcid))
+                logger.debug({ callId: event.id, contentLen: content.length, hasPath: editPathSent.has(event.id), mcid }, '[EDIT_T] 3.editToolCallDelta')
+              }
+              if (frames.length > 0) return frames.length === 1 ? frames[0] : frames
+            }
             break
           }
           case 'tool_use_done': {
+            editExtractors.delete(event.id)
+            editPathSent.delete(event.id)
             const current = inflightToolCalls.get(event.id)
             if (current) {
+              // 权威参数: done 事件携带的完整 arguments > delta 累积
+              const rawArgs = event.arguments ?? current.input ?? ''
               let input: Record<string, unknown> = {}
-              try {
-                input = JSON.parse(current.input)
-              }
-              catch {}
+              try { input = JSON.parse(rawArgs) } catch {}
               pendingToolCalls.push({ callId: event.id, name: current.name, input })
               roundAssistantBlocks.push({ type: 'tool_use', id: event.id, name: current.name, input })
               inflightToolCalls.delete(event.id)
@@ -397,7 +526,12 @@ export async function* handleConversationRun(
             usedTokensEstimate = Math.max(usedTokensEstimate, estimateContextTokens(event.usage))
             break
         }
-      })) {
+      }, undefined, (event) => {
+        if (event.type === 'tool_use_start')
+          return `${parsed.conversationId}-${round}-${event.id.slice(-4)}`
+      })
+
+      for await (const frame of translatedFrames) {
         yield frame
       }
     }
@@ -411,6 +545,7 @@ export async function* handleConversationRun(
       // 后, composer.maybeThrowErrorAndRetry 会写入 ComposerData.submitErrorDetails,
       // Glass Composer 的 Lzv 组件渲染成 input 正上方的 retry banner。
       logger.error({ error: (e as Error).message, stack: (e as Error).stack }, '[LLM] stream error')
+      clearDraftCheckpoint(parsed.conversationId).catch(() => {})
       throw makeProviderError(e, {
         conversationId: parsed.conversationId,
         modelId: parsed.modelId,
@@ -565,6 +700,7 @@ export async function* handleConversationRun(
       // 半构造的 tool_use block, 我们让它和 error 一起丢弃, 保证客户端点 retry
       // 后从干净状态重发最后一条 human bubble。
       logger.error({ error: (e as Error).message, stack: (e as Error).stack }, '[AGENT] tool call processing error')
+      clearDraftCheckpoint(parsed.conversationId).catch(() => {})
       throw makeToolError(e)
     }
 
