@@ -41,7 +41,7 @@ export type CursorAgentMode = 'agent' | 'ask' | 'plan' | 'debug';
  *   更严格的设计: 工具层面也移除,防止 LLM 无视指令。
  */
 const ASK_MODE_EXCLUDED_TOOLS = new Set([
-    'StrReplace', 'Write', 'Delete', 'Task',
+    'Edit', 'Write', 'Delete', 'Task',
     'EditNotebook', 'GenerateImage', 'SwitchMode',
 ]);
 

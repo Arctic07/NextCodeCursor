@@ -10,7 +10,7 @@ import { GrepTool } from './definitions/Grep';
 import { AwaitTool } from './definitions/Await';
 import { ReadTool } from './definitions/Read';
 import { DeleteTool } from './definitions/Delete';
-import { StrReplaceTool } from './definitions/StrReplace';
+import { EditTool } from './definitions/Edit';
 import { WriteTool } from './definitions/Write';
 import { EditNotebookTool } from './definitions/EditNotebook';
 import { TodoWriteTool } from './definitions/TodoWrite';
@@ -37,7 +37,7 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     AwaitTool,
     ReadTool,
     DeleteTool,
-    StrReplaceTool,
+    EditTool,
     WriteTool,
     EditNotebookTool,
     TodoWriteTool,
@@ -82,7 +82,7 @@ export function findToolByCursorType(cursorToolType: string): ToolRegistryEntry 
 
 /**
  * 按 LLM 工具名（alias）查找 buildStartedArgs。
- * 不能用 cursorToolType 查找，因为 StrReplace 和 Write 共享 editToolCall。
+ * 不能用 cursorToolType 查找，因为 Edit 和 Write 共享 editToolCall。
  *
  * MCP 工具: 工具名是动态的 (如 "cursor-ide-browser-browser_navigate"),
  * 不在任何 entry 的 aliases 里。resolveToolCall 已识别并在 input 中标记了

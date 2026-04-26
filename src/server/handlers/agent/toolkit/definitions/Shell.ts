@@ -84,7 +84,7 @@ Usage notes:
 - The command argument is required.
 - The shell starts in the workspace root and is stateful across sequential calls. Current working directory and environment variables persist between calls. Use the \`working_directory\` parameter to run commands in different directories. Example: to run \`npm install\` in the \`frontend\` folder, set \`working_directory: "frontend"\` rather than using \`cd frontend && npm install\`.
 - It is very helpful if you write a clear, concise description of what this command does in 5-10 words.
-- VERY IMPORTANT: You MUST avoid using search commands like \`find\` and \`grep\`.Instead use Grep, Glob to search.You MUST avoid read tools like \`cat\`, \`head\`, and \`tail\`, and use Read to read files.Avoid editing files with tools like \`sed\` and \`awk\`, use StrReplace instead.
+- VERY IMPORTANT: You MUST avoid using search commands like \`find\` and \`grep\`.Instead use Grep, Glob to search.You MUST avoid read tools like \`cat\`, \`head\`, and \`tail\`, and use Read to read files.Avoid editing files with tools like \`sed\` and \`awk\`, use Edit instead.
 - If you _still_ need to run \`grep\`, STOP. ALWAYS USE ripgrep at \`rg\` first, which all users have pre-installed.
 - When issuing multiple commands:
    - If the commands are independent and can run in parallel, make multiple Shell tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Shell tool calls in parallel.
@@ -410,7 +410,7 @@ Usage notes:
 - The command argument is required.
 - The shell starts in the workspace root and is stateful across sequential calls. Current working directory and environment variables persist between calls. Use the \`working_directory\` parameter to run commands in different directories. Example: to run \`npm install\` in the \`frontend\` folder, set \`working_directory: "frontend"\` rather than using \`cd frontend && npm install\`.
 - It is very helpful if you write a clear, concise description of what this command does in 5-10 words.
-- VERY IMPORTANT: You MUST avoid using search commands like \`find\` and \`grep\`.Instead use Grep, Glob to search.You MUST avoid read tools like \`cat\`, \`head\`, and \`tail\`, and use Read to read files.Avoid editing files with tools like \`sed\` and \`awk\`, use StrReplace instead.
+- VERY IMPORTANT: You MUST avoid using search commands like \`find\` and \`grep\`.Instead use Grep, Glob to search.You MUST avoid read tools like \`cat\`, \`head\`, and \`tail\`, and use Read to read files.Avoid editing files with tools like \`sed\` and \`awk\`, use Edit instead.
 - If you _still_ need to run \`grep\`, STOP. ALWAYS USE ripgrep at \`rg\` first, which all users have pre-installed.
 - When issuing multiple commands:
   - If the commands are independent and can run in parallel, make multiple Shell tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Shell tool calls in parallel.

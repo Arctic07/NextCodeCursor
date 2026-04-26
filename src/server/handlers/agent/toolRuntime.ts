@@ -55,7 +55,7 @@ export async function* runToolCall(params: {
                 startedArgs: {},
                 rawToolResult: safeErrorResult,
                 input: tc.input,
-                modelCallId: `${params.conversationId}-${params.round}-${tc.callId.slice(-8)}`,
+                modelCallId: `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`,
             });
             yield finalized.frame;
             return;
@@ -69,7 +69,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     const resolvedTool = resolveToolCall(tc.name, tc.input, params.availableMcpTools);
     const cursorToolType = resolvedTool.cursorToolType;
     const execArgsType = mapToolToExecArgs(cursorToolType);
-    const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-8)}`;
+    const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`;
 
     // sanitizedInput 兜底补全:
     //
@@ -120,7 +120,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
         return;
     }
 
-    // editToolCall (StrReplace/Write/ApplyPatch/EditNotebook):
+    // editToolCall (Edit/Write/ApplyPatch/EditNotebook):
     // 官方流程: editToolCallDelta → toolCallStarted → readArgs exec → writeArgs exec → toolCallCompleted (含 diff)
     if (cursorToolType === 'editToolCall' && params.session) {
         let execArgs: Record<string, unknown>;
@@ -130,6 +130,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
                 currentModelId: params.currentModelId,
             });
         } catch (e) {
+
             const errorMsg = e instanceof Error ? e.message : String(e);
             logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] editToolCall buildExecArgs failed');
             yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
@@ -146,7 +147,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
 
         const filePath = typeof execArgs.path === 'string' ? execArgs.path : '';
         const fileText = typeof execArgs.fileText === 'string' ? execArgs.fileText : '';
-        // streamContent: StrReplace 返回仅被修改的内容 (newStr); Write 返回全文
+        // streamContent: Edit 返回仅被修改的内容; Write 返回全文
         const streamContent = typeof execArgs.streamContent === 'string'
             ? execArgs.streamContent as string
             : fileText;

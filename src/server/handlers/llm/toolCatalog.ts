@@ -17,26 +17,26 @@ export interface ProviderToolCatalog {
     getCanonicalToolIntents(): CanonicalToolIntent[];
 }
 
-const OPENAI_OBSERVED = ['Shell', 'Glob', 'rg', 'Await', 'ReadFile', 'Delete', 'EditNotebook', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Subagent', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode', 'StrReplace', 'Write'];
-const OPENAI_VOCAB = ['Shell', 'ReadFile', 'StrReplace', 'Write', 'SwitchMode', 'CallMcpTool', 'ListMcpResources', 'FetchMcpResource', 'ReadLints'];
+const OPENAI_OBSERVED = ['Shell', 'Glob', 'rg', 'Await', 'ReadFile', 'Delete', 'EditNotebook', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Subagent', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode', 'ApplyPatch', 'Write'];
+const OPENAI_VOCAB = ['Shell', 'ReadFile', 'ApplyPatch', 'Write', 'SwitchMode', 'CallMcpTool', 'ListMcpResources', 'FetchMcpResource', 'ReadLints'];
 
 const OBSERVED_TRANSCRIPT_TOOLS: Record<Provider, string[]> = {
-    'anthropic': ['Shell', 'Read', 'StrReplace', 'Write', 'Delete', 'Glob', 'Grep', 'ReadLints', 'WebSearch', 'WebFetch', 'AskQuestion', 'TodoWrite', 'Task', 'EditNotebook', 'GenerateImage', 'SwitchMode', 'Await', 'ListMcpResources', 'FetchMcpResource'],
+    'anthropic': ['Shell', 'Read', 'Edit', 'Write', 'Delete', 'Glob', 'Grep', 'ReadLints', 'WebSearch', 'WebFetch', 'AskQuestion', 'TodoWrite', 'Task', 'EditNotebook', 'GenerateImage', 'SwitchMode', 'Await', 'ListMcpResources', 'FetchMcpResource'],
     'openai-chat': OPENAI_OBSERVED,
     'openai-responses': OPENAI_OBSERVED,
-    'gemini': ['Shell', 'Glob', 'Grep', 'Await', 'Read', 'Delete', 'StrReplace', 'Write', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Task', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode'],
+    'gemini': ['Shell', 'Glob', 'Grep', 'Await', 'Read', 'Delete', 'Edit', 'Write', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Task', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode'],
 };
 
 const PROMPT_VOCABULARY: Record<Provider, string[]> = {
-    'anthropic': ['Shell', 'Read', 'StrReplace', 'Write', 'Grep', 'Glob', 'ReadLints', 'TodoWrite', 'Task', 'SwitchMode', 'ListMcpResources', 'FetchMcpResource'],
+    'anthropic': ['Shell', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'ReadLints', 'TodoWrite', 'Task', 'SwitchMode', 'ListMcpResources', 'FetchMcpResource'],
     'openai-chat': OPENAI_VOCAB,
     'openai-responses': OPENAI_VOCAB,
-    'gemini': ['Shell', 'Read', 'StrReplace', 'Write', 'Grep', 'Glob', 'ReadLints', 'TodoWrite', 'Task', 'SwitchMode', 'ListMcpResources', 'FetchMcpResource'],
+    'gemini': ['Shell', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'ReadLints', 'TodoWrite', 'Task', 'SwitchMode', 'ListMcpResources', 'FetchMcpResource'],
 };
 
 const CANONICAL_INTENTS: CanonicalToolIntent[] = [
     { id: 'read', aliases: ['Read', 'read_file', 'ReadFile'] },
-    { id: 'str_replace', aliases: ['StrReplace', 'str_replace', 'edit_file'] },
+    { id: 'edit', aliases: ['Edit', 'edit_file'] },
     { id: 'write', aliases: ['Write', 'write_file'] },
     { id: 'delete', aliases: ['Delete', 'delete_file'] },
     { id: 'glob', aliases: ['Glob', 'glob', 'file_search'] },

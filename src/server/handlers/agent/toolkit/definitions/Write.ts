@@ -103,21 +103,15 @@ export const WriteTool: ToolRegistryEntry = {
         try {
             const raw = readFileSync(path, 'utf8');
             const stripped = raw.startsWith('\uFEFF') ? raw.slice(1) : raw;
-            const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
-            const eol = stripped.indexOf('\r\n') !== -1 && stripped.indexOf('\r\n') <= stripped.indexOf('\n') ? '\r\n' : '\n';
             beforeContent = stripped.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-            if (eol === '\r\n') {
-                fileText = fileText.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
-            }
-            fileText = bom + fileText;
         } catch { /* new file */ }
-        // streamContent 用 LF 化版本
-        const streamContent = fileText.replace(/\r\n/g, '\n');
+        // LLM 输出规范化为纯 LF — Cursor 客户端写入时自动处理 EOL
+        fileText = fileText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         return {
             path,
             fileText,
             beforeContent,
-            streamContent,
+            streamContent: fileText,
             toolCallId: callId,
         };
     },
