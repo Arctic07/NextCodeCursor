@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.88.0
-        version: 0.88.0
+        specifier: ^0.91.1
+        version: 0.91.1
       '@bufbuild/protobuf':
         specifier: ^2.11.0
         version: 2.11.0
@@ -35,6 +35,9 @@ importers:
       acorn-walk:
         specifier: ^8.3.4
         version: 8.3.5
+      diff:
+        specifier: ^9.0.0
+        version: 9.0.0
       fastify:
         specifier: ^5.8.2
         version: 5.8.4
@@ -42,8 +45,8 @@ importers:
         specifier: ^7.3.0
         version: 7.3.0
       hono:
-        specifier: ^4.12.12
-        version: 4.12.12
+        specifier: ^4.12.15
+        version: 4.12.15
       openai:
         specifier: ^6.34.0
         version: 6.34.0(ws@8.20.0)
@@ -160,8 +163,8 @@ packages:
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
 
-  '@anthropic-ai/sdk@0.88.0':
-    resolution: {integrity: sha512-QQOtB5U9ZBJQj6y1ICmDZl14LWa4JCiJRoihI+0yuZ4OjbONrakP0yLwPv4DJFb3VYCtQM31bTOpCBMs2zghPw==}
+  '@anthropic-ai/sdk@0.91.1':
+    resolution: {integrity: sha512-LAmu761tSN9r66ixvmciswUj/ZC+1Q4iAfpedTfSVLeswRwnY3n2Nb6Tsk+cLPP28aLOPWeMgIuTuCcMC6W/iw==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -568,8 +571,8 @@ packages:
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
-  '@napi-rs/wasm-runtime@1.1.3':
-    resolution: {integrity: sha512-xK9sGVbJWYb08+mTJt3/YV24WxvxpXcXtP6B172paPZ+Ts69Re9dAr7lKwJoeIx8OoeuimEiRZ7umkiUVClmmQ==}
+  '@napi-rs/wasm-runtime@1.1.4':
+    resolution: {integrity: sha512-3NQNNgA1YSlJb/kMH1ildASP9HW7/7kYnRI2szWJaofaS1hWmbGI4H+d3+22aGzXXN9IJ+n+GiFVcGipJP18ow==}
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
@@ -1126,6 +1129,9 @@ packages:
   ajv@6.14.0:
     resolution: {integrity: sha512-IWrosm/yrn43eiKqkfkHis7QioDleaXQHdDVPKg0FSwwd/DuvyX79TZnFOnYpB7dcsFAMmtFztZuXPDvSePkFw==}
 
+  ajv@6.15.0:
+    resolution: {integrity: sha512-fgFx7Hfoq60ytK2c7DhnF8jIvzYgOMxfugjLOSMHjLIPgenqa7S7oaagATUq99mV6IYvN2tRmC0wnTYX6iPbMw==}
+
   ajv@8.18.0:
     resolution: {integrity: sha512-PlXPeEWMXMZ7sPYOHqmDyCJzcfNrUr3fGNKtezX14ykXOEIvyK81d+qydx89KY5O71FKMPaQ2vBfBFI5NHR63A==}
 
@@ -1479,6 +1485,10 @@ packages:
   diff-sequences@29.6.3:
     resolution: {integrity: sha512-EjePK1srD3P08o2j4f0ExnylqRs5B9tJjcp9t1krH2qRi8CCdsYfwe9JgSLurFBWwq4uOlipzfk5fHNvwFKr8Q==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+
+  diff@9.0.0:
+    resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
+    engines: {node: '>=0.3.1'}
 
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
@@ -2053,8 +2063,8 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.12:
-    resolution: {integrity: sha512-p1JfQMKaceuCbpJKAPKVqyqviZdS0eUxH9v82oWo1kb9xjQ5wA6iP3FNVAPDFlz5/p7d45lO+BpSk1tuSZMF4Q==}
+  hono@4.12.15:
+    resolution: {integrity: sha512-qM0jDhFEaCBb4TxoW7f53Qrpv9RBiayUHo0S52JudprkhvpjIrGoU1mnnr29Fvd1U335ZFPZQY1wlkqgfGXyLg==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@2.8.9:
@@ -2937,8 +2947,8 @@ packages:
     resolution: {integrity: sha512-orRsuYpJVw8LdAwqqLykBj9ecS5/cRHlI5+nvTo8LcCKmzDmqVORXtOIYEEQuL9D4BxtA1lm5isAqzQZCoQ6Eg==}
     engines: {node: '>=4'}
 
-  postcss@8.5.9:
-    resolution: {integrity: sha512-7a70Nsot+EMX9fFU3064K/kdHWZqGVY+BADLyXc8Dfv+mTLLVl6JzJpPaCZ2kQL9gIJvKXSLMHhqdRRjwQeFtw==}
+  postcss@8.5.12:
+    resolution: {integrity: sha512-W62t/Se6rA0Az3DfCL0AqJwXuKwBeYg6nOaIgzP+xZ7N5BFCI7DYi1qs6ygUYT6rvfi6t9k65UMLJC+PHZpDAA==}
     engines: {node: ^10 || ^12 || >=14}
 
   prebuild-install@7.1.3:
@@ -3758,7 +3768,7 @@ snapshots:
       package-manager-detector: 1.6.0
       tinyexec: 1.1.1
 
-  '@anthropic-ai/sdk@0.88.0':
+  '@anthropic-ai/sdk@0.91.1':
     dependencies:
       json-schema-to-ts: 3.1.1
 
@@ -4137,7 +4147,7 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@napi-rs/wasm-runtime@1.1.3(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
+  '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
     dependencies:
       '@emnapi/core': 1.9.2
       '@emnapi/runtime': 1.9.2
@@ -4225,7 +4235,7 @@ snapshots:
 
   '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
     dependencies:
-      '@napi-rs/wasm-runtime': 1.1.3(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
@@ -4475,7 +4485,7 @@ snapshots:
       '@typescript-eslint/parser': 8.58.0(eslint@10.2.0)(typescript@6.0.2)
       '@typescript-eslint/typescript-estree': 8.58.0(typescript@6.0.2)
       '@typescript-eslint/utils': 8.58.0(eslint@10.2.0)(typescript@6.0.2)
-      ajv: 6.14.0
+      ajv: 6.15.0
       eslint: 10.2.0
       json-stable-stringify-without-jsonify: 1.0.1
       lodash.merge: 4.6.2
@@ -4738,7 +4748,7 @@ snapshots:
       '@vue/shared': 3.5.32
       estree-walker: 2.0.2
       magic-string: 0.30.21
-      postcss: 8.5.9
+      postcss: 8.5.12
       source-map-js: 1.2.1
 
   '@vue/compiler-ssr@3.5.32':
@@ -4773,6 +4783,13 @@ snapshots:
       ajv: 8.18.0
 
   ajv@6.14.0:
+    dependencies:
+      fast-deep-equal: 3.1.3
+      fast-json-stable-stringify: 2.1.0
+      json-schema-traverse: 0.4.1
+      uri-js: 4.4.1
+
+  ajv@6.15.0:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-json-stable-stringify: 2.1.0
@@ -5123,6 +5140,8 @@ snapshots:
       dequal: 2.0.3
 
   diff-sequences@29.6.3: {}
+
+  diff@9.0.0: {}
 
   dom-serializer@2.0.0:
     dependencies:
@@ -5890,7 +5909,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.12: {}
+  hono@4.12.15: {}
 
   hosted-git-info@2.8.9: {}
 
@@ -6949,7 +6968,7 @@ snapshots:
       cssesc: 3.0.0
       util-deprecate: 1.0.2
 
-  postcss@8.5.9:
+  postcss@8.5.12:
     dependencies:
       nanoid: 3.3.11
       picocolors: 1.1.1
@@ -7617,7 +7636,7 @@ snapshots:
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
-      postcss: 8.5.9
+      postcss: 8.5.12
       rolldown: 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
       tinyglobby: 0.2.16
     optionalDependencies:
