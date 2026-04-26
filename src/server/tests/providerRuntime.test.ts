@@ -67,8 +67,8 @@ it('resolvePromptProfile exposes provider-specific prompt and tool metadata', ()
   // Cursor++ 把 OpenAI 拆成 openai-chat / openai-responses 两种 ProviderType
   expect(openaiProfile.provider).toBe('openai-chat')
   expect(openaiProfile.systemPromptStyle).toBe('openai-main')
-  // OPENAI_VOCAB: Shell ReadFile StrReplace Write SwitchMode CallMcpTool ListMcpResources FetchMcpResource ReadLints
-  expect(openaiProfile.promptVocabulary.join(' ')).toMatch(/StrReplace/)
+  // OPENAI_VOCAB: Shell ReadFile ApplyPatch Write SwitchMode CallMcpTool ListMcpResources FetchMcpResource ReadLints
+  expect(openaiProfile.promptVocabulary.join(' ')).toMatch(/ApplyPatch/)
   expect(openaiProfile.toolCatalog.observedTranscriptTools.join(' ')).toMatch(/ReadFile/)
 
   expect(geminiProfile.provider).toBe('gemini')
@@ -236,7 +236,7 @@ it('provider runtime centralizes tool listing and round transitions', () => {
   expect(transition.flushedToolResults).toBe(1)
   expect(transition.shouldContinue).toBe(true)
   expect(messages[0]?.role).toBe('assistant')
-  expect(messages[1]?.role).toBe('user')
+  expect(messages[1]?.role).toBe('tool')
   expect(pending.length).toBe(0)
 })
 
@@ -274,11 +274,16 @@ it('provider runtime reorders anthropic tool results to match assistant tool_use
       ],
     },
     {
-      role: 'user',
-      content: [
-        { type: 'tool_result', toolUseId: 'call-a', toolName: 'Read', content: 'read result' },
-        { type: 'tool_result', toolUseId: 'call-b', toolName: 'Grep', content: 'grep result' },
-      ],
+      role: 'tool',
+      toolCallId: 'call-a',
+      toolName: 'Read',
+      content: 'read result',
+    },
+    {
+      role: 'tool',
+      toolCallId: 'call-b',
+      toolName: 'Grep',
+      content: 'grep result',
     },
   ])
 })
@@ -301,7 +306,7 @@ it('provider runtime prepares provider stream requests from runtime metadata', (
   expect(prepared.conversation.semanticTurns[1]?.kind).toBe('user')
 })
 
-it('provider state strategy batches anthropic tool results but writes gemini tool-role messages immediately', () => {
+it('provider state strategy batches anthropic tool results but flushes canonical tool-role messages', () => {
   const anthropicMessages: LLMMessage[] = []
   const anthropicPending: LLMToolResultBlock[] = []
   const anthropicResult = anthropicStateStrategy.createToolResult({
@@ -314,8 +319,8 @@ it('provider state strategy batches anthropic tool results but writes gemini too
   expect(anthropicMessages.length).toBe(0)
   expect(anthropicPending.length).toBe(1)
   anthropicStateStrategy.flushToolResults(anthropicMessages, anthropicPending)
-  expect(anthropicMessages[0]?.role).toBe('user')
-  expect(Array.isArray(anthropicMessages[0]?.content)).toBe(true)
+  expect(anthropicMessages[0]?.role).toBe('tool')
+  expect(anthropicMessages[0]?.toolCallId).toBe('tool-a')
 
   const geminiMessages: LLMMessage[] = []
   const geminiPending: LLMToolResultBlock[] = []
@@ -373,6 +378,7 @@ it('blob store persists blobs to sqlite and reloads after memory cache reset', a
 it('conversation checkpoints persist to sqlite and round-trip summary archives', async () => {
   await withTempAgentDatabase(async () => {
     await persistConversationCheckpoint({
+      kind: 'committed',
       conversationId: 'conv-sqlite-1',
       rootBlobIds: ['blob-a', 'blob-b'],
       summaryArchiveIds: ['archive-1'],
@@ -382,6 +388,7 @@ it('conversation checkpoints persist to sqlite and round-trip summary archives',
     })
 
     expect(await getPersistedConversationCheckpoint('conv-sqlite-1')).toEqual({
+      kind: 'committed',
       conversationId: 'conv-sqlite-1',
       rootBlobIds: ['blob-a', 'blob-b'],
       summaryArchiveIds: ['archive-1'],

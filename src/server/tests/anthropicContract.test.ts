@@ -2,7 +2,9 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { LLMMessage, LLMToolResultBlock } from '../handlers/llm/types'
 import { expect, it } from 'vitest'
 import { assertValidAnthropicToolUseContract } from '../handlers/llm/anthropicContract'
+import { encodeAnthropicRequestMessages } from '../handlers/llm/conversationCodec'
 import { anthropicStateStrategy } from '../handlers/llm/stateStrategy'
+import { transformMessages } from '../handlers/llm/transformMessages'
 
 it('accepts tool_result-first combined user message after tool_use', () => {
   const messages: Anthropic.MessageParam[] = [
@@ -107,7 +109,7 @@ it('accepts multiple tool_results followed by user text when the tool_result pre
   expect(() => assertValidAnthropicToolUseContract(messages)).not.toThrow()
 })
 
-it('anthropic state strategy reorders pending tool_results to match prior tool_use order', () => {
+it('anthropic state strategy keeps canonical tool messages in tool_use order, and anthropic compilation still satisfies contract', () => {
   const messages: LLMMessage[] = [
     {
       role: 'assistant',
@@ -136,11 +138,12 @@ it('anthropic state strategy reorders pending tool_results to match prior tool_u
   anthropicStateStrategy.flushToolResults(messages, pending)
 
   expect(pending).toEqual([])
-  expect(messages[1]).toEqual({
-    role: 'user',
-    content: [
-      { type: 'tool_result', toolUseId: 'tool-A', toolName: 'Read', content: 'read ok' },
-      { type: 'tool_result', toolUseId: 'tool-B', toolName: 'Grep', content: 'grep ok' },
-    ],
-  })
+  expect(messages.slice(1)).toEqual([
+    { role: 'tool', toolCallId: 'tool-A', toolName: 'Read', content: 'read ok' },
+    { role: 'tool', toolCallId: 'tool-B', toolName: 'Grep', content: 'grep ok' },
+  ])
+
+  const compiled = transformMessages(messages, 'anthropic')
+  const encoded = encodeAnthropicRequestMessages(compiled)
+  expect(() => assertValidAnthropicToolUseContract(encoded.messages)).not.toThrow()
 })

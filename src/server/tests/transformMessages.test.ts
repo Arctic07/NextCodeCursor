@@ -212,14 +212,28 @@ describe('transformMessages — thinking 降级', () => {
     expect(blocks[0].type).toBe('text')
   })
 
-  it('空 thinking 被丢弃', () => {
+  it('空 thinking 同 model 保留（DeepSeek 要求空 reasoning_content 回传）', () => {
     const messages: LLMMessage[] = [
       { role: 'assistant', content: [
-        { type: 'thinking', text: '', signature: 'sig' },
+        { type: 'thinking', text: '', sourceModel: 'anthropic:deepseek-v4-pro' },
         { type: 'text', text: 'Hello' },
       ] },
     ]
-    const result = transformMessages(messages, 'anthropic')
+    const result = transformMessages(messages, 'anthropic', undefined, 'deepseek-v4-pro')
+    const blocks = result[0].content as any[]
+    expect(blocks.length).toBe(2)
+    expect(blocks[0].type).toBe('thinking')
+    expect(blocks[1].text).toBe('Hello')
+  })
+
+  it('空 thinking 跨 model 降级为 text', () => {
+    const messages: LLMMessage[] = [
+      { role: 'assistant', content: [
+        { type: 'thinking', text: '', sourceModel: 'anthropic:deepseek-v4-pro' },
+        { type: 'text', text: 'Hello' },
+      ] },
+    ]
+    const result = transformMessages(messages, 'openai-chat', undefined, 'gpt-5.4')
     const blocks = result[0].content as any[]
     expect(blocks.length).toBe(1)
     expect(blocks[0].text).toBe('Hello')
