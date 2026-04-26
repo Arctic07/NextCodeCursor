@@ -60,7 +60,7 @@ import {
   WebSearchToolCallSchema,
 } from '../../gen/agent_v1_pb'
 import { logger, streamLogger } from '../../logger'
-import { AGENT_HEARTBEAT_INTERVAL_MS } from './constants'
+import { AGENT_HEARTBEAT_INTERVAL_MS, IDLE_HINT_AFTER_MS } from './constants'
 import { mapPartialToolName } from './tools'
 
 /**
@@ -597,6 +597,8 @@ export async function* translateStream(
   let textChars = 0
 
   const iterator = events[Symbol.asyncIterator]()
+  let lastContentTime = startTime
+  let idleHintSent = false
 
   while (true) {
     const nextPromise = iterator.next()
@@ -609,6 +611,13 @@ export async function* translateStream(
       ])
 
       if (raced.kind === 'heartbeat') {
+        // 空窗期 idle hint: 有内容产出后长时间无新事件 → 注入信号让客户端转到 "Generating response"
+        // 客户端状态机: streaming_text → (thinkingCompleted) → waiting_server_next → (heartbeat) → inference
+        if (!idleHintSent && textChars > 0 && Date.now() - lastContentTime >= IDLE_HINT_AFTER_MS) {
+          idleHintSent = true
+          yield thinkingCompleted(0)
+          streamLogger.debug('[LLM] idle hint: thinkingCompleted(0) injected')
+        }
         yield heartbeat()
         continue
       }
@@ -646,6 +655,8 @@ export async function* translateStream(
           thinkingStartTime = Date.now()
         }
         thinkingChars += event.text.length
+        lastContentTime = Date.now()
+        idleHintSent = false
         yield thinkingDelta(event.text)
         tokenCount++
         if (tokenCount % 3 === 0)
@@ -662,6 +673,7 @@ export async function* translateStream(
 
       case 'text_delta':
         textChars += event.text.length
+        lastContentTime = Date.now()
         yield textDelta(event.text)
         tokenCount++
         if (tokenCount % 5 === 0)
@@ -669,11 +681,11 @@ export async function* translateStream(
         break
 
       case 'tool_use_start': {
-        // 流式过程中发送 partialToolCall 空卡预告。
-        // 对 edit 类工具, conversationRuntime 通过 resolveToolModelCallId 让空卡、path、delta、started
-        // 使用同一个 modelCallId，对齐官方 RunSSE 抓包。
+        lastContentTime = Date.now()
+        idleHintSent = false
         const defaultModelCallId = `model-${stepId}`
         const modelCallId = resolveToolModelCallId?.(event, defaultModelCallId) ?? defaultModelCallId
+        streamLogger.debug({ callId: event.id, toolType: mapPartialToolName(event.name), mcid: modelCallId }, '[EDIT_T] 0.partialToolCall{empty}')
         yield partialToolCall(event.id, mapPartialToolName(event.name), modelCallId)
         tokenCount++
         yield tokenDelta(1)

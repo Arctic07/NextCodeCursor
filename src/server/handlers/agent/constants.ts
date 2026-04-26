@@ -34,6 +34,12 @@ export const SHELL_FILE_OUTPUT_THRESHOLD_BYTES = 40_000n;
 // 详见 analysis/checkpoint-revert-protocol.md 的 Round D 记录.
 export const SHELL_TIMEOUT_BEHAVIOR_BACKGROUND = 2;
 
+// 空窗期 idle hint: 模型输出文本后长时间无新事件时,
+// 注入 thinkingCompleted 让客户端从 streaming_text 转到 waiting_server_next,
+// 下一个 heartbeat 将触发 "Generating response" 状态显示。
+// 避免兼容性较差的模型提供商 (如 GLM 不流式 tool_use) 导致 UI 看起来卡死。
+export const IDLE_HINT_AFTER_MS = 3_000;
+
 // Heuristic compaction policy:
 // preserve more recent turns uncompressed so continuation quality keeps short-term state.
 // These values are local policy choices, not protocol-defined by Cursor.
