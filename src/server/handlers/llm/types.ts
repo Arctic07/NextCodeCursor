@@ -38,7 +38,7 @@ export type LLMStreamEvent
     | { type: 'text_delta', text: string }
     | { type: 'tool_use_start', id: string, name: string }
     | { type: 'tool_use_delta', id: string, input: string }
-    | { type: 'tool_use_done', id: string }
+    | { type: 'tool_use_done', id: string, arguments?: string }
     | { type: 'done', usage: LLMUsage, stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | string }
 
 /** Token 用量 */
@@ -60,6 +60,8 @@ export interface LLMStreamRequest {
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** 精确思考预算 — 老 Claude 4.x (legacy budget_tokens) / Gemini 精确覆盖 */
   thinkingBudgetTokens?: number
+  /** 会话 ID — OpenAI prompt_cache_key (同会话共享前缀缓存) */
+  conversationId?: string
 }
 
 /** Provider 接口 — 各 SDK 实现此接口 */

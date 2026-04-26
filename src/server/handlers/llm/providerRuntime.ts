@@ -62,7 +62,7 @@ export interface ProviderRuntime {
     contextTokenLimitForMaxMode: number;
     supportsAutoContext: boolean;
     prepareConversation(messages: LLMMessage[]): PreparedProviderConversation;
-    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }): PreparedProviderRequest;
+    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string): PreparedProviderRequest;
     /** 模型配置的最大输出 token 数 */
     maxOutputTokens: number;
     listRuntimeTools(extraTools?: LLMTool[], mode?: string): LLMTool[];
@@ -159,7 +159,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         contextTokenLimitForMaxMode: resolved.contextTokenLimitForMaxMode,
         supportsAutoContext: resolved.supportsAutoContext,
         prepareConversation,
-        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }): PreparedProviderRequest {
+        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string): PreparedProviderRequest {
             const conversation = prepareConversation(messages);
             // 客户端运行时参数覆盖静态配置 (undefined = 不覆盖, 保留 providers.json 值)
             const thinking = thinkingOverride?.thinking ?? resolved.thinking;
@@ -211,6 +211,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                     thinkingLevel,
                     thinkingBudgetTokens,
                     maxTokens,
+                    conversationId,
                 },
             };
         },

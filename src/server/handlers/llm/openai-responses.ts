@@ -20,6 +20,7 @@ import { logger } from '../../logger'
 import { encodeResponsesInput, encodeResponsesTools } from './conversationCodec'
 import { createProxiedFetch } from './proxyFetch'
 import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages'
+import { buildDefaultHeaders } from './userAgent'
 import type { LLMProvider, LLMStreamEvent, LLMStreamRequest } from './types'
 
 export class OpenAIResponsesProvider implements LLMProvider {
@@ -36,6 +37,10 @@ export class OpenAIResponsesProvider implements LLMProvider {
     const proxiedFetch = createProxiedFetch(entry.proxyUrl)
     if (proxiedFetch) {
       opts.fetch = proxiedFetch
+    }
+    const headers = buildDefaultHeaders('openai-responses', entry.headers)
+    if (headers) {
+      opts.defaultHeaders = headers
     }
     this.client = new OpenAI(opts)
   }
@@ -59,6 +64,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       store: false,
       input: encoded.items,
       max_output_tokens: request.maxTokens ?? 8192,
+      ...(request.conversationId ? { prompt_cache_key: request.conversationId } : {}),
     }
 
     if (encoded.instructions) {
@@ -83,8 +89,8 @@ export class OpenAIResponsesProvider implements LLMProvider {
 
     const stream = await this.client.responses.create(params)
 
-    // 跟踪活跃的 function_call items (item_id → { callId, name })
-    const activeCalls = new Map<string, { callId: string, name: string }>()
+    // 跟踪活跃的 function_call items (item_id → { callId, name, hadDeltas })
+    const activeCalls = new Map<string, { callId: string, name: string, hadDeltas: boolean }>()
     let sawToolCalls = false
 
     for await (const event of stream) {
@@ -106,7 +112,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
           const item = event.item
           if (item.type === 'function_call') {
             const itemId = item.id ?? item.call_id
-            activeCalls.set(itemId, { callId: item.call_id, name: item.name })
+            activeCalls.set(itemId, { callId: item.call_id, name: item.name, hadDeltas: false })
             yield { type: 'tool_use_start', id: item.call_id, name: item.name }
             sawToolCalls = true
           }
@@ -116,6 +122,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
         case 'response.function_call_arguments.delta': {
           const call = activeCalls.get(event.item_id)
           if (call) {
+            call.hadDeltas = true
             yield { type: 'tool_use_delta', id: call.callId, input: event.delta }
           }
           break
@@ -127,7 +134,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
             const itemId = item.id ?? item.call_id
             const call = activeCalls.get(itemId)
             if (call) {
-              yield { type: 'tool_use_done', id: call.callId }
+              yield { type: 'tool_use_done', id: call.callId, arguments: item.arguments }
             }
           }
           else if (item.type === 'reasoning') {
@@ -140,6 +147,14 @@ export class OpenAIResponsesProvider implements LLMProvider {
         // ── 完成 ──
         case 'response.completed': {
           const r = event.response
+          const cachedTokens = r.usage?.input_tokens_details?.cached_tokens ?? 0
+          if (cachedTokens) {
+            logger.info({
+              model: request.model,
+              cached: cachedTokens,
+              input: r.usage?.input_tokens ?? 0,
+            }, '[OAI_RESP] prompt cache')
+          }
           yield {
             type: 'done',
             stopReason: sawToolCalls
@@ -150,6 +165,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
             usage: {
               inputTokens: r.usage?.input_tokens ?? 0,
               outputTokens: r.usage?.output_tokens ?? 0,
+              cacheReadTokens: cachedTokens || undefined,
             },
           }
           break

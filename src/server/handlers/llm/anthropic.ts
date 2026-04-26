@@ -23,10 +23,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ProviderEntry } from '../../data/defaults';
 import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
 import { assertValidAnthropicToolUseContract } from './anthropicContract';
-import { encodeAnthropicRequestMessages, encodeAnthropicTools } from './conversationCodec';
+import { applyAnthropicCacheBreakpoints, encodeAnthropicRequestMessages, encodeAnthropicTools } from './conversationCodec';
 import { logger } from '../../logger';
 import { createProxiedFetch } from './proxyFetch';
 import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages';
+import { buildDefaultHeaders } from './userAgent';
 
 type AnthropicEffort = 'low' | 'medium' | 'high' | 'max';
 
@@ -62,6 +63,11 @@ export class AnthropicProvider implements LLMProvider {
             opts.fetch = proxiedFetch;
         }
 
+        const headers = buildDefaultHeaders('anthropic', entry.headers);
+        if (headers) {
+            opts.defaultHeaders = headers;
+        }
+
         this.client = new Anthropic(opts);
     }
 
@@ -76,17 +82,18 @@ export class AnthropicProvider implements LLMProvider {
             }, '[HISTORY_REPAIR] provider conversation transformed');
         }
         const encoded = encodeAnthropicRequestMessages(transformed);
-        assertValidAnthropicToolUseContract(encoded.messages);
+        const cached = applyAnthropicCacheBreakpoints(encoded.system, encoded.messages);
+        assertValidAnthropicToolUseContract(cached.messages);
 
         const params: Anthropic.MessageCreateParamsStreaming = {
             model: request.model,
             max_tokens: request.maxTokens ?? 8192,
-            messages: encoded.messages,
+            messages: cached.messages,
             stream: true,
         };
 
-        if (encoded.system) {
-            params.system = encoded.system;
+        if (cached.system) {
+            params.system = cached.system;
         }
 
         const tools = encodeAnthropicTools(request.tools);
@@ -173,14 +180,24 @@ export class AnthropicProvider implements LLMProvider {
         }
 
         const finalMessage = await stream.finalMessage();
+        const cacheRead = finalMessage.usage.cache_read_input_tokens ?? 0;
+        const cacheWrite = finalMessage.usage.cache_creation_input_tokens ?? 0;
+        if (cacheRead || cacheWrite) {
+            logger.info({
+                model: request.model,
+                cacheRead,
+                cacheWrite,
+                input: finalMessage.usage.input_tokens,
+            }, '[ANTHROPIC] prompt cache');
+        }
         yield {
             type: 'done',
             stopReason: finalMessage.stop_reason ?? 'end_turn',
             usage: {
                 inputTokens: finalMessage.usage.input_tokens,
                 outputTokens: finalMessage.usage.output_tokens,
-                cacheReadTokens: finalMessage.usage.cache_read_input_tokens ?? undefined,
-                cacheWriteTokens: finalMessage.usage.cache_creation_input_tokens ?? undefined,
+                cacheReadTokens: cacheRead || undefined,
+                cacheWriteTokens: cacheWrite || undefined,
             },
         };
     }

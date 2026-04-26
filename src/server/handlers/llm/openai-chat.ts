@@ -12,6 +12,7 @@ import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
 import { encodeOpenAIRequestMessages, encodeOpenAITools } from './conversationCodec';
 import { createProxiedFetch } from './proxyFetch';
 import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages';
+import { buildDefaultHeaders } from './userAgent';
 
 export class OpenAIChatProvider implements LLMProvider {
     readonly name = 'openai-chat';
@@ -27,6 +28,10 @@ export class OpenAIChatProvider implements LLMProvider {
         const proxiedFetch = createProxiedFetch(entry.proxyUrl);
         if (proxiedFetch) {
             opts.fetch = proxiedFetch;
+        }
+        const headers = buildDefaultHeaders('openai-chat', entry.headers);
+        if (headers) {
+            opts.defaultHeaders = headers;
         }
         this.client = new OpenAI(opts);
     }
@@ -47,6 +52,7 @@ export class OpenAIChatProvider implements LLMProvider {
             max_tokens: request.maxTokens ?? 8192,
             stream: true,
             stream_options: { include_usage: true },
+            ...(request.conversationId ? { prompt_cache_key: request.conversationId } : {}),
         };
 
         const tools = encodeOpenAITools(request.tools);
@@ -64,16 +70,25 @@ export class OpenAIChatProvider implements LLMProvider {
 
         const stream = await this.client.chat.completions.create(params);
 
-        const toolCalls = new Map<number, { id: string; name: string }>();
-        let usage: { inputTokens: number; outputTokens: number } | null = null;
+        const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+        let usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } | null = null;
         let sawToolCalls = false;
 
         for await (const chunk of stream) {
             if (chunk.usage) {
+                const cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
                 usage = {
                     inputTokens: chunk.usage.prompt_tokens,
                     outputTokens: chunk.usage.completion_tokens,
+                    cacheReadTokens: cachedTokens || undefined,
                 };
+                if (cachedTokens) {
+                    logger.info({
+                        model: request.model,
+                        cached: cachedTokens,
+                        input: chunk.usage.prompt_tokens,
+                    }, '[OAI_CHAT] prompt cache');
+                }
             }
 
             const choice = chunk.choices?.[0];
@@ -87,10 +102,11 @@ export class OpenAIChatProvider implements LLMProvider {
             if (delta.tool_calls) {
                 sawToolCalls = true;
                 for (const tc of delta.tool_calls) {
-                    const existing = toolCalls.get(tc.index) ?? { id: '', name: '' };
+                    const existing = toolCalls.get(tc.index) ?? { id: '', name: '', args: '' };
                     const next = {
                         id: tc.id ?? existing.id,
                         name: tc.function?.name ?? existing.name,
+                        args: existing.args + (tc.function?.arguments ?? ''),
                     };
 
                     const shouldStart = !existing.id && !!next.id && !!next.name;
@@ -113,7 +129,7 @@ export class OpenAIChatProvider implements LLMProvider {
             if (choice?.finish_reason === 'tool_calls') {
                 for (const [, toolCall] of toolCalls) {
                     if (toolCall.id) {
-                        yield { type: 'tool_use_done', id: toolCall.id };
+                        yield { type: 'tool_use_done', id: toolCall.id, arguments: toolCall.args || undefined };
                     }
                 }
             }

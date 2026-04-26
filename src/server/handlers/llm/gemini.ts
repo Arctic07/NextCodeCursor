@@ -10,6 +10,7 @@ import { logger } from '../../logger';
 import type { LLMProvider, LLMStreamRequest, LLMStreamEvent } from './types';
 import { encodeGeminiRequestMessages, encodeGeminiTools } from './conversationCodec';
 import { createTransformDiagnostics, hasTransformMutations, transformMessages } from './transformMessages';
+import { buildDefaultHeaders } from './userAgent';
 
 function mapThinkingLevelToGemini(level: NonNullable<LLMStreamRequest['thinkingLevel']>): ThinkingLevel {
     switch (level) {
@@ -30,8 +31,12 @@ export class GeminiProvider implements LLMProvider {
         const opts: ConstructorParameters<typeof GoogleGenAI>[0] = {
             apiKey: entry.auth.value,
         };
-        if (entry.baseUrl) {
-            opts.httpOptions = { baseUrl: entry.baseUrl };
+        const headers = buildDefaultHeaders('gemini', entry.headers);
+        if (entry.baseUrl || headers) {
+            opts.httpOptions = {
+                ...(entry.baseUrl ? { baseUrl: entry.baseUrl } : {}),
+                ...(headers ? { headers } : {}),
+            };
         }
         this.client = new GoogleGenAI(opts);
     }

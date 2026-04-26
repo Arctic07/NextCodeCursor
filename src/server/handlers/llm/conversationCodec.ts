@@ -292,11 +292,15 @@ function toAnthropicMessage(msg: LLMMessage): Anthropic.MessageParam {
         blocks.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input })
         break
       case 'thinking':
+        // 有 signature → 带签名回传（Anthropic Claude）
+        // 无 signature 但有 text → 降级为 text
+        // 无 signature + 空 text → 仍编码为 thinking（DeepSeek 要求空 reasoning_content 回传）
+        // transformMessages 已对跨 model 做了降级，到此处的 thinking 块都是同 model 的
         if (block.signature) {
           blocks.push({ type: 'thinking', thinking: block.text, signature: block.signature } as any)
         }
-        else if (block.text?.trim()) {
-          blocks.push({ type: 'text', text: block.text })
+        else {
+          blocks.push({ type: 'thinking', thinking: block.text ?? '', signature: '' } as any)
         }
         break
       case 'tool_result':
@@ -674,4 +678,57 @@ export function encodeResponsesTools(
     parameters: t.inputSchema,
     strict: false,
   }))
+}
+
+// ── Anthropic Prompt Caching ──
+//
+// 对齐 Claude Code 策略 (HAR 实证):
+//   - system: 所有 text block 标记 cache_control
+//   - messages: 最后一条 user 消息的最后一个 content block 标记
+//   - tools: 不标记 (前缀缓存自动覆盖)
+//
+// Anthropic 按前缀匹配缓存: tools → system → messages
+// cache_control 断点标记 "缓存到此处" 的边界，断点之前的内容被缓存。
+// 每个请求最多 4 个显式断点; 最小可缓存块大小 1024~4096 tokens (按模型)。
+
+const CACHE_CONTROL_EPHEMERAL = { type: 'ephemeral' as const }
+
+export function applyAnthropicCacheBreakpoints(
+  system: Anthropic.MessageCreateParamsStreaming['system'] | undefined,
+  messages: Anthropic.MessageParam[],
+): {
+  system: Anthropic.MessageCreateParamsStreaming['system'] | undefined
+  messages: Anthropic.MessageParam[]
+} {
+  // system: 所有 block 标记 (system prompt 几乎不变，缓存命中率最高)
+  let cachedSystem = system
+  if (typeof system === 'string' && system) {
+    cachedSystem = [{ type: 'text' as const, text: system, cache_control: CACHE_CONTROL_EPHEMERAL }]
+  }
+  else if (Array.isArray(system)) {
+    cachedSystem = system.map(block => ({ ...block, cache_control: CACHE_CONTROL_EPHEMERAL }))
+  }
+
+  // messages: 最后一条 user 消息的最后一个 content block 标记 (滑动窗口)
+  const cachedMessages = [...messages]
+  for (let i = cachedMessages.length - 1; i >= 0; i--) {
+    const msg = cachedMessages[i]
+    if (msg.role !== 'user')
+      continue
+
+    if (typeof msg.content === 'string') {
+      cachedMessages[i] = {
+        ...msg,
+        content: [{ type: 'text' as const, text: msg.content, cache_control: CACHE_CONTROL_EPHEMERAL }],
+      }
+    }
+    else if (Array.isArray(msg.content) && msg.content.length > 0) {
+      const content = [...msg.content]
+      content[content.length - 1] = { ...content[content.length - 1], cache_control: CACHE_CONTROL_EPHEMERAL } as any
+      cachedMessages[i] = { ...msg, content }
+    }
+    break
+  }
+
+  return { system: cachedSystem, messages: cachedMessages }
 }

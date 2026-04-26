@@ -179,6 +179,17 @@ export interface ProviderEntry {
    * 留空则不走代理。
    */
   proxyUrl?: string
+  /**
+   * 自定义请求头 — 每次 LLM 请求时附加。
+   *
+   * 用途:
+   *   - Anthropic: anthropic-beta (interleaved-thinking, prompt-caching-scope 等)
+   *   - OpenAI: 自定义 header (如 Helicone 等代理网关需要的 key)
+   *   - 第三方兼容 API: 特定认证或功能头
+   *
+   * 示例: { "anthropic-beta": "interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05" }
+   */
+  headers?: Record<string, string>
 }
 
 export interface ProvidersConfig {
