@@ -219,6 +219,23 @@ export function initApp(Alpine: AlpineType) {
       else if (field === 'auth.value') {
         d.auth = { ...(d.auth || {}), value }
       }
+      else if (field === 'headers') {
+        // JSON textarea → parse to object, ignore invalid
+        if (typeof value === 'string') {
+          const trimmed = value.trim()
+          if (!trimmed) {
+            delete d.headers
+          }
+          else {
+            try {
+              const parsed = JSON.parse(trimmed)
+              if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed))
+                d.headers = parsed
+            }
+            catch { /* 输入中途不合法 — 不更新 */ }
+          }
+        }
+      }
       else {
         d[field] = value
       }
@@ -430,6 +447,11 @@ export function initApp(Alpine: AlpineType) {
         m.supportsImages = entry.hasImages
 
       this.ac = null
+      // blur input 使 x-effect 同步 DOM 值
+      queueMicrotask(() => {
+        if (document.activeElement instanceof HTMLInputElement)
+          document.activeElement.blur()
+      })
     },
 
     acNavigate(dir: number) {

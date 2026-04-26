@@ -99,6 +99,22 @@ export function ProviderFields() {
           placeholder="http://127.0.0.1:8080"
         />
       </div>
+      <div class="field" x-data="{ headersInvalid: false }">
+        <label>
+          {'Custom Headers (optional, JSON) '}
+          <span style="opacity:.55;font-weight:normal;font-size:0.85em">e.g. anthropic-beta</span>
+        </label>
+        <textarea
+          rows={2}
+          style="font-family:var(--vscode-editor-font-family,monospace);font-size:0.9em;resize:vertical"
+          x-effect="if(document.activeElement !== $el) $el.value = JSON.stringify($store.app.getDraft(p.id).headers || {}, null, 0) === '{}' ? '' : JSON.stringify($store.app.getDraft(p.id).headers, null, 2)"
+          x-on:input="try { if($event.target.value.trim()) JSON.parse($event.target.value); headersInvalid = false } catch { headersInvalid = true }; $store.app.updateField(p.id, 'headers', $event.target.value)"
+          x-bind:class="{ 'invalid': headersInvalid }"
+          placeholder={'{"anthropic-beta": "interleaved-thinking-2025-05-14"}'}
+        >
+        </textarea>
+        <div class="err" x-show="headersInvalid">Invalid JSON</div>
+      </div>
     </>
   )
 }
