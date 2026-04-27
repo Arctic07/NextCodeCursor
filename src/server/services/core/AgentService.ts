@@ -50,6 +50,13 @@ function normalizeToConnectError(error: unknown, context: Record<string, string>
   return makeProviderError(error, context)
 }
 
+function isStreamDestroyedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.message.includes('stream was destroyed')
+    || error.message.includes('write after end')
+    || error.message.includes('ERR_STREAM_DESTROYED')
+}
+
 export default (router: ConnectRouter) => {
   router.service(AgentService, {
     /** Bidi streaming (HTTP/2) */
@@ -96,6 +103,11 @@ export default (router: ConnectRouter) => {
         }
       }
       catch (error) {
+        // 用户中断对话 → stream 已销毁, yield 写入失败 — 正常退出, 不触发 retry banner
+        if (isStreamDestroyedError(error)) {
+          logger.info({ sessionId: session?.requestId }, '[SVC] Run bidi stream destroyed (client abort)')
+          return
+        }
         // Bidi (HTTP/2) 路径 —— 同 runSSE, 把下游冒上来的错归一化为 ConnectError
         // + ErrorDetails, 让客户端 retry banner 能识别。
         const sessionIdStr = session?.requestId ?? 'bidi'
@@ -151,6 +163,11 @@ export default (router: ConnectRouter) => {
         }
       }
       catch (error) {
+        // 用户中断对话 → stream 已销毁, yield 写入失败 — 正常退出
+        if (isStreamDestroyedError(error)) {
+          logger.info({ requestId }, '[SVC] RunSSE stream destroyed (client abort)')
+          return
+        }
         // 关键修复 —— 之前这里是 logger.error(...) 后静默吞掉, 导致下游抛出
         // 的任何错误都不会到达客户端, SSE 突然结束, Composer 不会显示 banner。
         //
