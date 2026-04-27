@@ -282,19 +282,23 @@ function normalizeIdsAndThinking(messages: LLMMessage[], targetProvider: Provide
           }
           else if (block.type === 'thinking') {
             if (targetProvider === 'openai-chat') {
+              // OpenAI Chat 不支持 thinking 块 — 降级为 text
               signedThinkingDowngraded++
               if (block.text) transformedContent.push({ type: 'text', text: block.text })
             }
             else if (targetSourceModel && block.sourceModel && block.sourceModel !== targetSourceModel) {
+              // 跨模型: signature 不兼容, 但 Anthropic 兼容 API (如 DeepSeek)
+              // 要求 thinking 块必须回传。保留 thinking 类型, 清空 signature。
               signedThinkingDowngraded++
-              if (block.text) transformedContent.push({ type: 'text', text: block.text })
+              transformedContent.push({ type: 'thinking', text: block.text ?? '', sourceModel: block.sourceModel })
             }
             else if (!block.sourceModel && block.signature) {
+              // 无 sourceModel 但有 signature — 来源不明, 清空 signature 保留结构
               signedThinkingDowngraded++
-              if (block.text) transformedContent.push({ type: 'text', text: block.text })
+              transformedContent.push({ type: 'thinking', text: block.text ?? '' })
             }
             else {
-              // 同 provider + 同 model 保留 thinking 块
+              // 同 provider + 同 model 保留 thinking 块 (含 signature)
               transformedContent.push(block)
             }
           }

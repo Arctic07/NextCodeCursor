@@ -28,6 +28,19 @@ export async function* handleSummarizeAction(
     const contextUsagePercent = computeContextUsagePercent(currentTokenDetails.usedTokens, currentTokenDetails.maxTokens);
     const generationId = randomUUID();
 
+    logger.info({
+        conversationId: parsed.conversationId,
+        model: route.model,
+        historyBlobIds: parsed.historyBlobIds.length,
+        hydratedEntries: hydratedHistoryEntries.length,
+        missingBlobs: missingHistoryBlobs,
+        summarizeEntries: compactionPlan.summarizeEntries.length,
+        keepTail: compactionPlan.keepTail.length,
+        contextUsagePercent: contextUsagePercent.toFixed(1),
+        usedTokens: currentTokenDetails.usedTokens,
+        maxTokens: currentTokenDetails.maxTokens,
+    }, '[SUMMARIZE] action started');
+
     yield heartbeat();
 
     const hookMessage = yield* executePreCompactHook({
@@ -117,6 +130,16 @@ export async function* handleSummarizeAction(
         .join('\n\n');
 
     let summaryText = '';
+    const llmStartTime = Date.now();
+    logger.info({
+        conversationId: parsed.conversationId,
+        model: route.model,
+        sourceTextLen: summarySourceText.length,
+        summarizeEntries: compactionPlan.summarizeEntries.length,
+        keepTail: compactionPlan.keepTail.length,
+    }, '[SUMMARIZE] LLM summary starting');
+
+    let lastHeartbeatTime = Date.now();
     try {
         const llmStream = route.provider.stream({
             model: route.model,
@@ -132,10 +155,21 @@ export async function* handleSummarizeAction(
                 summaryText += event.text;
                 yield summary(event.text);
             }
+            // LLM 生成期间持续 yield heartbeat, 防止客户端 stall detector 误判
+            if (Date.now() - lastHeartbeatTime >= 4000) {
+                yield heartbeat();
+                lastHeartbeatTime = Date.now();
+            }
         }
     } catch (error) {
-        logger.warn({ error: (error as Error).message }, '[AGENT] provider summarizeAction failed, falling back to local summary');
+        logger.warn({ error: (error as Error).message, durationMs: Date.now() - llmStartTime }, '[SUMMARIZE] LLM failed, falling back to local summary');
     }
+
+    logger.info({
+        conversationId: parsed.conversationId,
+        summaryLen: summaryText.length,
+        durationMs: Date.now() - llmStartTime,
+    }, '[SUMMARIZE] LLM summary done');
 
     summaryText = summaryText.trim();
     if (!summaryText) {

@@ -438,7 +438,7 @@ export async function* handleConversationRun(
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
-      }, parsed.conversationId)
+      }, parsed.conversationId, parsed.isSubagent)
 
       logger.info({
         round,
