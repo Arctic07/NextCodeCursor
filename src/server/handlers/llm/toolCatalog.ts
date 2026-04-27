@@ -17,14 +17,14 @@ export interface ProviderToolCatalog {
     getCanonicalToolIntents(): CanonicalToolIntent[];
 }
 
-const OPENAI_OBSERVED = ['Shell', 'Glob', 'rg', 'Await', 'ReadFile', 'Delete', 'EditNotebook', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Subagent', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode', 'ApplyPatch', 'Write'];
+const OPENAI_OBSERVED = ['Shell', 'Glob', 'rg', 'AwaitShell', 'ReadFile', 'Delete', 'EditNotebook', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Subagent', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode', 'ApplyPatch', 'Write'];
 const OPENAI_VOCAB = ['Shell', 'ReadFile', 'ApplyPatch', 'Write', 'SwitchMode', 'CallMcpTool', 'ListMcpResources', 'FetchMcpResource', 'ReadLints'];
 
 const OBSERVED_TRANSCRIPT_TOOLS: Record<Provider, string[]> = {
-    'anthropic': ['Shell', 'Read', 'Edit', 'Write', 'Delete', 'Glob', 'Grep', 'ReadLints', 'WebSearch', 'WebFetch', 'AskQuestion', 'TodoWrite', 'Task', 'EditNotebook', 'GenerateImage', 'SwitchMode', 'Await', 'ListMcpResources', 'FetchMcpResource'],
+    'anthropic': ['Shell', 'Read', 'Edit', 'Write', 'Delete', 'Glob', 'Grep', 'ReadLints', 'WebSearch', 'WebFetch', 'AskQuestion', 'TodoWrite', 'Task', 'EditNotebook', 'GenerateImage', 'SwitchMode', 'AwaitShell', 'ListMcpResources', 'FetchMcpResource'],
     'openai-chat': OPENAI_OBSERVED,
     'openai-responses': OPENAI_OBSERVED,
-    'gemini': ['Shell', 'Glob', 'Grep', 'Await', 'Read', 'Delete', 'Edit', 'Write', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Task', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode'],
+    'gemini': ['Shell', 'Glob', 'Grep', 'AwaitShell', 'Read', 'Delete', 'Edit', 'Write', 'TodoWrite', 'ReadLints', 'WebSearch', 'WebFetch', 'GenerateImage', 'AskQuestion', 'Task', 'ListMcpResources', 'FetchMcpResource', 'SwitchMode'],
 };
 
 const PROMPT_VOCABULARY: Record<Provider, string[]> = {
@@ -54,7 +54,7 @@ const CANONICAL_INTENTS: CanonicalToolIntent[] = [
     { id: 'edit_notebook', aliases: ['EditNotebook', 'edit_notebook'] },
     { id: 'generate_image', aliases: ['GenerateImage', 'generate_image'] },
     { id: 'switch_mode', aliases: ['SwitchMode', 'switch_mode'] },
-    { id: 'await', aliases: ['Await', 'await'] },
+    { id: 'await', aliases: ['AwaitShell', 'Await', 'await'] },
 ];
 
 class StaticProviderToolCatalog implements ProviderToolCatalog {

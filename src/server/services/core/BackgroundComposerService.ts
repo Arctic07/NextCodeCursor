@@ -24,6 +24,15 @@ export default (router: ConnectRouter) => {
         // CloudAgentRepository 启动时会调 listBackgroundComposers 获取云端 agent 列表。
         // BYOK 模式下没有云端 agent,返回空列表消除 invalid_argument 错误。
         listBackgroundComposers: async () => ({ composers: [], didLoadStatus: true }),
+        listDetailedBackgroundComposers: async () => ({ composers: [] }),
         fetchBackgroundComposer: async () => ({}),
+        getBackgroundComposerInfo: async () => ({}),
+        getBackgroundComposerStatus: async () => ({}),
+        getBackgroundComposerUserSettings: async () => ({}),
+        getMachine: async () => ({}),
+        listTeamEnvironments: async () => ({ environments: [] }),
+        listPersonalEnvironments: async () => ({ environments: [] }),
+        listPendingFollowups: async () => ({ pendingFollowups: [] }),
+        listGrindModeComposers: async () => ({ composers: [] }),
     });
 };

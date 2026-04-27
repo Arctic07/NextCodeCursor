@@ -2,7 +2,7 @@ import { str } from '../shared';
 import type { ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
-    name: 'Await',
+    name: 'AwaitShell',
     description: `Poll a background shell or subagent job. For jobs that cannot be awaited directly, you can omit the task id to sleep for the full \`block_until_ms\` duration.
 
 Monitor backgrounded jobs as follows:
@@ -35,7 +35,7 @@ Monitor backgrounded jobs as follows:
 };
 
 const OPENAI = {
-    name: 'Await',
+    name: 'AwaitShell',
     description: `Poll a background shell or subagent job. For jobs that cannot be awaited directly, you can omit the task id to sleep for the full \`block_until_ms\` duration.
 
 Monitor backgrounded jobs as follows:
@@ -68,7 +68,7 @@ Monitor backgrounded jobs as follows:
 };
 
 const GEMINI = {
-    name: 'Await',
+    name: 'AwaitShell',
     description: `Poll a background shell or subagent job. For jobs that cannot be awaited directly, you can omit the task id to sleep for the full \`block_until_ms\` duration.
 
 Monitor backgrounded jobs as follows:
@@ -101,8 +101,8 @@ Monitor backgrounded jobs as follows:
 };
 
 export const AwaitTool: ToolRegistryEntry = {
-    canonicalName: 'Await',
-    aliases: ['Await'],
+    canonicalName: 'AwaitShell',
+    aliases: ['AwaitShell', 'Await'],
     cursorToolType: 'awaitToolCall',
     // 官方: Await 通过 readArgs exec 读取终端输出文件
     execArgsType: 'readArgs',

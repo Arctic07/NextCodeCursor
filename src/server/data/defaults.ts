@@ -71,10 +71,12 @@ export const BYOK_REDIRECT: readonly string[] = [
   'aiserver.v1.DashboardService/GetGlobalCommands',
   'aiserver.v1.DashboardService/GetTeamCommands',
   'aiserver.v1.DashboardService/GetSlackInstallUrl',
+  'aiserver.v1.BackgroundComposerService',
   'aiserver.v1.ServerConfigService',
   'aiserver.v1.NetworkService',
   'aiserver.v1.HealthService',
   'aiserver.v1.InAppAdService',
+  'aiserver.v1.BackgroundComposerService',
 
   // ── REST endpoints (BYOK 流程下需要的假账号 stub) ──
   'REST:/auth/has_valid_payment_method',

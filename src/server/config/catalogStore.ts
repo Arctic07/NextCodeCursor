@@ -44,6 +44,8 @@ export interface CatalogEntry {
   toolCall: boolean
   /** 输入模态含 image → 可映射到 supportsImages */
   hasImages: boolean
+  /** 发布日期 (YYYY-MM-DD) — 用于搜索结果降序排列 */
+  releaseDate?: string
 }
 
 interface CatalogRaw {
@@ -56,6 +58,7 @@ interface CatalogRaw {
         name?: string
         reasoning?: boolean
         tool_call?: boolean
+        release_date?: string
         modalities?: { input?: string[], output?: string[] }
         limit?: { context?: number, output?: number }
       }
@@ -107,6 +110,7 @@ function flatten(raw: CatalogRaw): CatalogEntry[] {
         reasoning: m.reasoning === true,
         toolCall: m.tool_call === true,
         hasImages: Array.isArray(m.modalities?.input) && m.modalities!.input!.includes('image'),
+        releaseDate: typeof m.release_date === 'string' ? m.release_date : undefined,
       })
     }
   }
@@ -145,7 +149,9 @@ export function searchCatalog(query: string, limit = 20): CatalogEntry[] {
   loadCatalog()
   if (!query.trim() || !fuse)
     return []
-  return fuse.search(query, { limit }).map(r => r.item)
+  return fuse.search(query, { limit })
+    .map(r => r.item)
+    .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
 }
 
 /** 测试用 */
