@@ -313,6 +313,45 @@ it('task tool result maps subagent success into official task success shape', ()
   expect(firstMessage?.value?.text).toBe('capture_claude_status.py')
   expect(value.agentId).toBe('subagent-1')
   expect(value.durationMs).toBe(10101n)
+  expect(value.toolCallCount).toBe(1)
+  expect(buildToolResultText('taskToolCall', result, {})).toBe('capture_claude_status.py')
+})
+
+it('task tool result text exposes official subagent finalMessage response to the parent model', () => {
+  const finalMessage = '<user_visible_high_level_summary>撰写了一篇文章。</user_visible_high_level_summary>\n<response>\n# AI编程助手：软件开发的未来\n\n完整正文内容。\n</response>'
+  const result = normalizeToolResult('taskToolCall', buildExecToolResult('taskToolCall', {
+    id: 1,
+    subagentResult: {
+      success: {
+        agentId: 'subagent-1',
+        finalMessage,
+        transcriptPath: '/tmp/subagent.md',
+        toolCallCount: 2,
+      },
+    },
+  }, {}), {})
+  const text = buildToolResultText('taskToolCall', result, {})
+
+  expect(text).toContain('# AI编程助手：软件开发的未来')
+  expect(text).toContain('完整正文内容')
+  expect(text).toContain('[Subagent transcript: /tmp/subagent.md]')
+  expect(text).not.toMatch(/^Subagent completed/)
+  expect(result.result.value.transcriptPath).toBe('/tmp/subagent.md')
+  expect(result.result.value.toolCallCount).toBe(2)
+})
+
+it('task tool result text supports Cursor expanded conversationStep assistantMessage shape', () => {
+  const result: ToolResultEnvelope = {
+    result: {
+      case: 'success',
+      value: {
+        conversationSteps: [{ assistantMessage: { text: 'expanded step text' } }],
+        agentId: 'subagent-2',
+      },
+    },
+  }
+
+  expect(buildToolResultText('taskToolCall', result, {})).toBe('expanded step text')
 })
 
 it('normalizeToolResult keeps updateTodos status values so Cursor can diff progress', () => {

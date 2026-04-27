@@ -5,7 +5,6 @@ import {
     envelope,
     obj,
     str,
-    truncate,
     type ToolResultEnvelope,
 } from './shared';
 
@@ -25,6 +24,34 @@ function normalizeConversationStep(value: unknown): Record<string, unknown> {
     return { message: { case: 'assistantMessage', value: { text: '' } } };
 }
 
+function extractConversationStepText(value: unknown): string {
+    const step = obj(value);
+
+    // Normalized protobuf oneof shape used by our ToolResultEnvelope:
+    //   { message: { case: 'assistantMessage', value: { text } } }
+    const message = obj(step.message);
+    if (message.case === 'assistantMessage') return str(obj(message.value).text);
+
+    // protobuf JSON / Cursor client expanded shape:
+    //   { assistantMessage: { text } }
+    if (step.assistantMessage) return str(obj(step.assistantMessage).text);
+
+    return '';
+}
+
+function optionalNumber(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    if (typeof value === 'bigint') {
+        const parsed = Number(value);
+        return Number.isSafeInteger(parsed) ? parsed : undefined;
+    }
+    return undefined;
+}
+
 export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>): ToolResultEnvelope | null {
     const sr = obj(execClientMsg.subagentResult);
     const success = obj(sr.success);
@@ -42,6 +69,9 @@ export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>):
                     isBackground: bool(success.isBackground),
                     ...(durationMs !== undefined ? { durationMs } : {}),
                     ...(typeof success.resultSuffix === 'string' ? { resultSuffix: success.resultSuffix } : {}),
+                    ...(success.backgroundReason !== undefined ? { backgroundReason: success.backgroundReason } : {}),
+                    ...(typeof success.transcriptPath === 'string' ? { transcriptPath: success.transcriptPath } : {}),
+                    ...(optionalNumber(success.toolCallCount) !== undefined ? { toolCallCount: optionalNumber(success.toolCallCount) } : {}),
                 },
             },
         };
@@ -69,6 +99,9 @@ export function normalizeTaskToolResult(resultCaseName: string, value: Record<st
             isBackground: bool(value.isBackground),
             ...(value.durationMs !== undefined ? { durationMs: value.durationMs } : {}),
             ...(typeof value.resultSuffix === 'string' ? { resultSuffix: value.resultSuffix } : {}),
+            ...(value.backgroundReason !== undefined ? { backgroundReason: value.backgroundReason } : {}),
+            ...(typeof value.transcriptPath === 'string' ? { transcriptPath: value.transcriptPath } : {}),
+            ...(optionalNumber(value.toolCallCount) !== undefined ? { toolCallCount: optionalNumber(value.toolCallCount) } : {}),
         });
     }
     if (resultCaseName) return envelope(resultCaseName, value);
@@ -77,11 +110,18 @@ export function normalizeTaskToolResult(resultCaseName: string, value: Record<st
 
 export function buildTaskToolResultText(resultCaseName: string, value: Record<string, unknown>): string | null {
     if (resultCaseName === 'success') {
-        const steps = arr<Record<string, unknown>>(value.conversationSteps);
-        const texts = steps
-            .map(step => str(obj(step.assistantMessage).text))
+        const texts = arr<Record<string, unknown>>(value.conversationSteps)
+            .map(extractConversationStepText)
             .filter(Boolean);
-        if (texts.length > 0) return truncate(texts.join('\n\n'), 12000);
+
+        const parts = texts.length > 0 ? [...texts] : [];
+        const resultSuffix = str(value.resultSuffix).trim();
+        const transcriptPath = str(value.transcriptPath).trim();
+        if (resultSuffix) parts.push(resultSuffix);
+        if (transcriptPath) parts.push(`[Subagent transcript: ${transcriptPath}]`);
+
+        const body = parts.join('\n\n').trim();
+        if (body) return body;
         return `Subagent completed${typeof value.agentId === 'string' ? `: ${value.agentId}` : ''}`;
     }
     if (resultCaseName) return `Task ${resultCaseName || 'error'}: ${JSON.stringify(value)}`;
