@@ -176,6 +176,35 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
 
     yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
 
+    // communicateUpdateToolCall: 服务端自动完成 (不走 exec)
+    // 子代理通过此工具报告进度和最终摘要, 客户端从帧中提取 finalSummary
+    if (cursorToolType === 'communicateUpdateToolCall') {
+        const currentStep = typeof startedArgs.currentStep === 'string' ? startedArgs.currentStep : '';
+        const result = {
+            result: {
+                case: 'success',
+                value: {
+                    currentStep,
+                    messageIndex: params.messages.length,
+                },
+            },
+        };
+        const finalized = finalizeToolCall({
+            roundContext: params.roundContext,
+            messages: params.messages,
+            cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            rawToolResult: result,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        yield finalized.frame;
+        logger.info({ tool: tc.name, currentStep, hasFinalSummary: !!startedArgs.finalSummary }, '[TOOL] communicateUpdate auto-completed');
+        return;
+    }
+
     if (execArgsType && params.session) {
         let args: Record<string, unknown>;
         try {

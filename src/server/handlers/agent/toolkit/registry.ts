@@ -26,11 +26,14 @@ import { SwitchModeTool } from './definitions/SwitchMode';
 import { CallMcpToolTool } from './definitions/CallMcpTool';
 import { ApplyPatchTool } from './definitions/ApplyPatch';
 import { CreatePlanTool } from './definitions/CreatePlan';
+import { UpdateCurrentStepTool } from './definitions/UpdateCurrentStep';
 // SemanticSearch 暂不注册 — BYOK server 无 retrieval 后端,
 // 下发给 LLM 只会产生无意义的工具调用。待实现 retrieval 服务后恢复。
 // import { SemanticSearchTool } from './definitions/SemanticSearch';
 
+// 顺序对齐官方 Server (Haiku + Gemini 双提取验证)
 const TOOL_REGISTRY: ToolRegistryEntry[] = [
+    UpdateCurrentStepTool,
     ShellTool,
     GlobTool,
     GrepTool,
@@ -38,6 +41,7 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     ReadTool,
     DeleteTool,
     EditTool,
+    ApplyPatchTool,
     WriteTool,
     EditNotebookTool,
     TodoWriteTool,
@@ -51,7 +55,6 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     FetchMcpResourceTool,
     SwitchModeTool,
     CallMcpToolTool,
-    ApplyPatchTool,
     CreatePlanTool,
     // SemanticSearchTool,
 ];

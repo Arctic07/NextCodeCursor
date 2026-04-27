@@ -13,6 +13,7 @@ function stubParsed(overrides: Record<string, unknown>): Parameters<typeof build
     conversationId: 'c',
     mode: 'AGENT_MODE_AGENT',
     isSummarize: false,
+    isSubagent: false,
     userRules: [],
     projectRules: [],
     agentSkills: [],

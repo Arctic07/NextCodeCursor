@@ -13,6 +13,7 @@ export function emptyParsed(): ParsedRunRequest {
     conversationId: '',
     mode: '',
     isSummarize: false,
+    isSubagent: false,
     userRules: [],
     projectRules: [],
     agentSkills: [],

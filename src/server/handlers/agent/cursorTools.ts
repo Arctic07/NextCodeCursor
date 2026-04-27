@@ -8,10 +8,6 @@ import type { LLMTool } from '../llm/types';
 import type { ProviderType } from '../../data/defaults';
 import { listBuiltinLlmTools } from './toolRegistry';
 
-/**
- * 按 provider 返回内置工具列表。
- * Anthropic / OpenAI / Gemini 各有不同的工具名、描述和 schema。
- */
 export function getCursorAgentTools(provider: ProviderType): LLMTool[] {
     return listBuiltinLlmTools(provider);
 }

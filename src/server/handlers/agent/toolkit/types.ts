@@ -45,18 +45,24 @@ const ASK_MODE_EXCLUDED_TOOLS = new Set([
     'EditNotebook', 'GenerateImage', 'SwitchMode',
 ]);
 
-export function filterToolsForMode(tools: LLMTool[], mode: string): LLMTool[] {
+// updateCurrentStep 只在子代理中可用 — 主代理/Plan/Debug 不需要向 parent 汇报进度
+const SUBAGENT_ONLY_TOOLS = new Set([
+    'updateCurrentStep',
+]);
+
+export function filterToolsForMode(tools: LLMTool[], mode: string, isSubagent = false): LLMTool[] {
     const normalized = mode.replace('AGENT_MODE_', '').toLowerCase() as CursorAgentMode;
+    const filtered = isSubagent ? tools : tools.filter(t => !SUBAGENT_ONLY_TOOLS.has(t.name));
     switch (normalized) {
         case 'ask':
-            return tools.filter(t => !ASK_MODE_EXCLUDED_TOOLS.has(t.name) && t.name !== 'CreatePlan');
+            return filtered.filter(t => !ASK_MODE_EXCLUDED_TOOLS.has(t.name) && t.name !== 'CreatePlan');
         case 'debug':
-            return tools.filter(t => t.name !== 'SwitchMode' && t.name !== 'CreatePlan');
+            return filtered.filter(t => t.name !== 'SwitchMode' && t.name !== 'CreatePlan');
         case 'plan':
-            return tools; // 完整工具集含 CreatePlan + SwitchMode
+            return filtered; // 完整工具集含 CreatePlan + SwitchMode
         case 'agent':
         default:
-            return tools.filter(t => t.name !== 'CreatePlan'); // Agent 不暴露 CreatePlan
+            return filtered.filter(t => t.name !== 'CreatePlan');
     }
 }
 

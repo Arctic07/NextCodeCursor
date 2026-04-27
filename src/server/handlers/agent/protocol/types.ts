@@ -24,6 +24,7 @@ export interface ParsedRunRequest {
   contextTokenLimit?: number
   mode: string
   isSummarize: boolean
+  isSubagent: boolean
   /** 用户设置的规则 (type: global,对应 .cursorrules / user settings rules) */
   userRules: string[]
   /** 项目/文件级别规则 (type: fileGlobbed / manuallyAttached) */

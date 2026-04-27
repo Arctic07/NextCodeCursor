@@ -15,6 +15,16 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const resumeAction = action?.resumeAction as Record<string, unknown> | undefined
   const isResume = !!resumeAction
   const isSummarize = !!action?.summarizeAction
+  // 子代理判定: subagentTypeName 由客户端在创建 subagent RunSSE 时设置
+  // conversationGroupId 在 toJson() 后被 proto 丢弃 (非 schema field)
+  const subagentTypeName = runRequest.subagentTypeName as string | undefined
+  const isSubagent = typeof subagentTypeName === 'string' && subagentTypeName.length > 0
+
+  logger.debug({
+    actionKeys: action ? Object.keys(action) : [],
+    isSummarize, isResume, isSubagent,
+    runRequestTopKeys: Object.keys(runRequest).filter(k => !['conversationState', 'action', 'modelDetails', 'mcpTools'].includes(k)),
+  }, '[AGENT] action diagnosis')
 
   // executePlanAction: Build 按钮触发 (Plan 确认后执行)
   // Proto: ExecutePlanAction { request_context, plan, plan_file_uri, plan_file_content, execution_mode }
@@ -541,6 +551,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     conversationId: (runRequest.conversationId as string) ?? '',
     mode: (userMessage?.mode as string) ?? 'AGENT_MODE_AGENT',
     isSummarize,
+    isSubagent,
     clientThinking,
     clientThinkingLevel,
     clientThinkingBudget: clientThinkingBudget && Number.isFinite(clientThinkingBudget) ? clientThinkingBudget : undefined,

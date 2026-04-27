@@ -80,6 +80,7 @@ export function normalizeToolResult(
         ?? normalizeInteractionToolResult(cursorToolType, resultCaseName, value, input)
         ?? normalizeFileToolResult(cursorToolType, resultCaseName, value, input)
         ?? (cursorToolType === 'taskToolCall' ? normalizeTaskToolResult(resultCaseName, value) : null)
+        ?? (cursorToolType === 'communicateUpdateToolCall' ? { result: { case: resultCaseName || 'success', value } } : null)
         ?? normalizeMcpToolResult(cursorToolType, resultCaseName, value, input)
         ?? (cursorToolType === 'shellToolCall' ? normalizeShellToolResult(resultCaseName, value, input) : null)
         ?? { result: { case: resultCaseName || 'error', value } };
@@ -113,6 +114,7 @@ export function buildToolResultText(
         ?? buildFileToolResultText(cursorToolType, resultCaseName, value, input)
         ?? buildInteractionToolResultText(cursorToolType, toolResult, resultCaseName, value)
         ?? (cursorToolType === 'taskToolCall' ? buildTaskToolResultText(resultCaseName, value) : null)
+        ?? (cursorToolType === 'communicateUpdateToolCall' ? 'Progress update recorded.' : null)
         ?? buildMcpToolResultText(cursorToolType, resultCaseName, value)
         ?? truncate(JSON.stringify(toolResult, null, 2), 12000);
 }

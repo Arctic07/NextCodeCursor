@@ -58,6 +58,7 @@ import {
   UpdateTodosToolCallSchema,
   WebFetchToolCallSchema,
   WebSearchToolCallSchema,
+  CommunicateUpdateToolCallSchema,
 } from '../../gen/agent_v1_pb'
 import { logger, streamLogger } from '../../logger'
 import { AGENT_HEARTBEAT_INTERVAL_MS, IDLE_HINT_AFTER_MS } from './constants'
@@ -128,6 +129,7 @@ const TOOL_CALL_SCHEMAS: Record<string, GenMessage<any>> = {
   semSearchToolCall: SemSearchToolCallSchema,
   fetchToolCall: FetchToolCallSchema,
   lsToolCall: LsToolCallSchema,
+  communicateUpdateToolCall: CommunicateUpdateToolCallSchema,
 }
 
 const TOOL_CALL_DELTA_SCHEMAS: Record<string, GenMessage<any>> = {
