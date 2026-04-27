@@ -17,42 +17,18 @@ export async function* handleRunRequest(
     try {
         const persistedCheckpoint = await getPersistedConversationCheckpoint(parsed.conversationId);
         if (persistedCheckpoint) {
-            // 客户端回传的 conversationState 是唯一可信的 source of truth。
-            //
-            // 两种"客户端发空 historyBlobIds"的场景:
-            //   1. 首次新会话: sqlite 里也没有这个 conversationId → 上面 getPersisted 返回 null,不走此分支
-            //   2. revert / 用户显式重置: sqlite 里有旧 checkpoint,但客户端已经"忘了"它
-            //
-            // 历史做法是"fallback 到 sqlite 恢复 blob",但这会让 revert 完全失效 ——
-            // LLM 会看到被 revert 掉的消息仍然存在。
-            //
-            // 现在的策略: 客户端发空 historyBlobIds 时, 判定为重置信号 → 清空 sqlite 对应行
-            // 避免污染本次或后续的重建流程。
-            //
-            // 详见 analysis/checkpoint-revert-protocol.md
+            // 客户端是 source of truth。sqlite checkpoint 仅用于 auto-summarize 持久化,
+            // 不用于覆盖客户端的 conversationState。
             const clientSentHistory = parsed.historyBlobIds.length > 0;
 
             if (!clientSentHistory) {
-                // 客户端发来空 conversationState 可能是:
-                //   1. revert (checkpoint 回退) — 需要清空历史
-                //   2. 切换模型 — 客户端重新初始化, 后续会带上 history
-                //   3. 新会话首条消息 — 正常的空状态
-                //
-                // 不主动清空 sqlite checkpoint, 而是从 sqlite 恢复历史。
-                // 如果客户端真的要 revert, 它会在后续请求中发送 revert 的目标 checkpoint。
-                // 如果是切换模型, 恢复的历史能让 LLM 看到之前的上下文。
+                // 客户端是 source of truth — 发空就用空, 不从 sqlite 恢复。
+                // 空 CS 场景: revert / 新会话。跨模型切换时客户端始终携带 history (日志实证)。
+                // sqlite checkpoint 保留不删, 仅用于 auto-summarize 和灾难恢复备份。
                 logger.info({
                     conversationId: parsed.conversationId,
-                    kind: persistedCheckpoint.kind,
                     persistedBlobIds: persistedCheckpoint.rootBlobIds.length,
-                    persistedSummaryArchives: persistedCheckpoint.summaryArchiveIds.length,
-                }, '[AGENT] empty conversationState → restoring from committed checkpoint');
-
-                parsed.historyBlobIds = persistedCheckpoint.rootBlobIds;
-                parsed.historySummaryArchiveIds = persistedCheckpoint.summaryArchiveIds;
-                if (!parsed.historyTokenDetails) {
-                    parsed.historyTokenDetails = persistedCheckpoint.tokenDetails;
-                }
+                }, '[AGENT] empty conversationState with existing checkpoint — trusting client, skipping restore');
             } else {
                 // 客户端主动回传了历史 blob → 以客户端为 source of truth。
                 // 只在客户端未携带 tokenDetails 时补充一下 sqlite 里缓存的值, 避免上下文用量显示跳变。
