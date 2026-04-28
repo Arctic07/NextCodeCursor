@@ -4,7 +4,7 @@
  * 释放内容:
  *   - routes.json         ← DEFAULT_ROUTES (强制覆盖:白名单由开发者编排,非用户数据)
  *   - providers.json      ← DEFAULT_PROVIDERS (keep-if-exists:用户 API Key 不能丢)
- *   - models-catalog.json ← 从 installer 自带的 assets 复制 (models.dev 快照,keep-if-exists)
+ *   - models-catalog.json ← 从 installer 自带的 assets 复制 (models.dev 快照,强制覆盖)
  *
  * routes.json 强制覆盖的理由:
  *   redirect 数组由我们主动编排,用户不应手改;每次 install 都会拿到最新白名单,
@@ -48,9 +48,9 @@ function resolveAssetPath(filename) {
   return null;
 }
 
-function copyAsset(filename, log) {
+function copyAsset(filename, log, { force = false } = {}) {
   const dest = join(CCURSOR_DIR, filename);
-  if (existsSync(dest)) {
+  if (!force && existsSync(dest)) {
     log?.(`  ${filename} already exists, keep`);
     return false;
   }
@@ -59,9 +59,10 @@ function copyAsset(filename, log) {
     log?.(`  ${filename} asset not bundled, skip`);
     return false;
   }
+  const existed = existsSync(dest);
   copyFileSync(src, dest);
   const size = (readFileSync(dest).length / 1024).toFixed(1);
-  log?.(`  ${filename} released (${size} KB)`);
+  log?.(`  ${filename} ${existed ? 'updated' : 'released'} (${size} KB)`);
   return true;
 }
 
@@ -71,7 +72,7 @@ export function releaseDefaults(log) {
 
   release(ROUTES_FILE_NAME, DEFAULT_ROUTES, log, { force: true });
   release(PROVIDERS_FILE_NAME, DEFAULT_PROVIDERS, log);
-  copyAsset(MODELS_CATALOG_FILE_NAME, log);
+  copyAsset(MODELS_CATALOG_FILE_NAME, log, { force: true });
 
   log?.('[defaults] Done');
 }
