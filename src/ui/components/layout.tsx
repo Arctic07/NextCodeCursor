@@ -29,7 +29,14 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
       <body x-data>
         <Banner />
 
-        <h3>Server</h3>
+        <h3>
+          <span>Server</span>
+          <span
+            style="float:right;font-size:0.85em;font-weight:500;color:var(--vscode-descriptionForeground)"
+            {...{ 'x-effect': '$el.textContent = \'v\' + ($store.app.state?.version || \'\')' }}
+          >
+          </span>
+        </h3>
         <Server />
 
         <h3>

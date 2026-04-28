@@ -7,9 +7,11 @@
 import type { ByokMode, ProviderEntry } from '../server/data/defaults'
 import * as net from 'node:net'
 import * as vscode from 'vscode'
+import { version as EXTENSION_VERSION } from '../../package.json'
 import { isServerRunning } from '../server'
 import { getServerConfig } from '../server/config'
 import { loadProviders } from '../server/config/providersStore'
+
 import { getByokMode } from '../server/config/routesStore'
 
 export type ServerState = 'local' | 'remote' | 'offline'
@@ -20,6 +22,7 @@ export interface AppState {
   port: number
   byokMode: ByokMode
   providers: ProviderEntry[]
+  version: string
   /** 当前实例是否开启了文件日志 (globalState, per-instance, 不跨窗口同步) */
   fileLogEnabled: boolean
   /** 当前实例的日志文件路径 (用于 UI 显示 + Open 命令) */
@@ -34,6 +37,7 @@ let current: AppState = {
   host: '127.0.0.1',
   port: 9960,
   byokMode: 1,
+  version: EXTENSION_VERSION,
   providers: [],
   fileLogEnabled: false,
   logFilePath: '',
@@ -87,6 +91,7 @@ export async function refreshState(_secrets?: vscode.SecretStorage): Promise<App
     port: cfg.port,
     byokMode,
     providers,
+    version: EXTENSION_VERSION,
     fileLogEnabled: current.fileLogEnabled,
     logFilePath: current.logFilePath,
   }

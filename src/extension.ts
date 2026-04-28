@@ -13,6 +13,7 @@ import { initLogger } from './server/logger'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
 import { getState, onStateChange, refreshState, setFileLogState } from './ui/state'
+import { startUpdateCheck, stopUpdateCheck } from './update-check'
 
 let outputChannel: vscode.LogOutputChannel
 let statusBarItem: vscode.StatusBarItem
@@ -478,9 +479,13 @@ export async function activate(context: vscode.ExtensionContext) {
     log('info', `[SRV] file logging restored from globalState → ${logFilePath}`)
 
   log('info', 'Cursor++ activated')
+
+  // 版本更新检查
+  startUpdateCheck(context.globalState, msg => log('info', msg))
 }
 
 export async function deactivate() {
+  stopUpdateCheck()
   disconnectLogStream()
   closeLogFileStream()
   stopRoutesWatcher()

@@ -32,6 +32,7 @@ export function initApp(Alpine: AlpineType) {
     drafts: {} as Record<string, any>,
     expanded: {} as Record<string, boolean>,
     modelExpanded: {} as Record<string, Record<string, boolean>>,
+    headersInvalid: {} as Record<string, boolean>,
 
     // ── Toast ──
     toasts: [] as Array<{ id: number, text: string, level: string }>,
@@ -239,6 +240,30 @@ export function initApp(Alpine: AlpineType) {
       else {
         d[field] = value
       }
+    },
+
+    formatHeaders(pid: string): string {
+      const h = this.getDraft(pid).headers
+      if (!h || typeof h !== 'object' || Object.keys(h).length === 0)
+        return ''
+      return JSON.stringify(h, null, 2)
+    },
+
+    updateHeaders(pid: string, raw: string) {
+      const trimmed = raw.trim()
+      if (!trimmed) {
+        this.headersInvalid[pid] = false
+        this.updateField(pid, 'headers', '')
+        return
+      }
+      try {
+        JSON.parse(trimmed)
+        this.headersInvalid[pid] = false
+      }
+      catch {
+        this.headersInvalid[pid] = true
+      }
+      this.updateField(pid, 'headers', raw)
     },
 
     /**
