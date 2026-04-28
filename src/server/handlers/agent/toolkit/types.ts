@@ -4,6 +4,7 @@ import type { ProviderType } from '../../../data/defaults';
 export interface ToolExecBuildOptions {
     conversationId?: string;
     currentModelId?: string;
+    workspacePath?: string;
 }
 
 /**
@@ -78,7 +79,11 @@ export interface ToolRegistryEntry {
      * 未列出的 provider 族不会暴露此工具。
      */
     llmToolByProvider: Partial<Record<ProviderFamily, LLMTool>>;
-    buildStartedArgs?: (input: Record<string, unknown>, callId: string) => Record<string, unknown>;
+    buildStartedArgs?: (
+        input: Record<string, unknown>,
+        callId: string,
+        options?: ToolExecBuildOptions,
+    ) => Record<string, unknown>;
     buildExecArgs?: (
         input: Record<string, unknown>,
         callId: string,

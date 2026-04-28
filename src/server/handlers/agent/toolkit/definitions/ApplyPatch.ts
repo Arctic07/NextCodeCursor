@@ -1,7 +1,8 @@
-import { readFileSync } from 'fs'
+import { readFileSync } from 'node:fs'
 import { structuredPatch } from 'diff'
 import { str } from '../shared'
-import type { ToolRegistryEntry } from '../types'
+import { assertSafeForServerFs, resolveToolPath } from '../pathUtils'
+import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types'
 
 // ── Patch 解析器 (移植自 Codex apply-patch crate) ──
 
@@ -21,7 +22,7 @@ interface ParsedPatch {
 }
 
 function parsePatch(patch: string): ParsedPatch | null {
-  const lines = patch.trim().split('\n')
+  const lines = patch.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
   let i = 0
 
   while (i < lines.length && !lines[i].startsWith('*** Begin Patch'))
@@ -311,19 +312,28 @@ function applyReplacements(lines: string[], replacements: Array<[number, number,
   return result
 }
 
+function resolveParsedPatchPaths(patch: ParsedPatch, workspacePath?: string): ParsedPatch {
+  return {
+    ...patch,
+    path: resolveToolPath(patch.path, workspacePath),
+    ...(patch.movePath ? { movePath: resolveToolPath(patch.movePath, workspacePath) } : {}),
+  }
+}
+
 function applyPatch(patch: ParsedPatch): string {
   if (patch.action === 'add')
     return patch.addContents ?? ''
 
   if (patch.action === 'delete')
-    return ''
+    throw new Error('ApplyPatch Delete File is not supported by editToolCall; use the Delete tool instead')
 
   let raw: string
   try {
+    assertSafeForServerFs(patch.path, 'ApplyPatch')
     raw = readFileSync(patch.path, 'utf8')
   }
-  catch {
-    return ''
+  catch (error) {
+    throw new Error(`ApplyPatch could not read target file ${patch.path}: ${error instanceof Error ? error.message : String(error)}`)
   }
 
   // EOL 规范化
@@ -336,6 +346,8 @@ function applyPatch(patch: ParsedPatch): string {
     originalLines.pop()
 
   const replacements = computeReplacements(originalLines, patch.chunks ?? [])
+  if (replacements.length === 0)
+    throw new Error(`Patch did not apply to ${patch.path}: no hunks matched`)
   let newLines = applyReplacements(originalLines, replacements)
 
   // 确保尾部换行
@@ -403,6 +415,14 @@ It is important to remember:
 
 All file paths must be absolute paths. Make sure to read the file before applying a patch to get the latest file content, unless you are creating a new file.`
 
+function getPatchString(input: Record<string, unknown> | string): string {
+  return typeof input === 'string'
+    ? input
+    : typeof input.patch === 'string'
+      ? input.patch
+      : str(input)
+}
+
 const OPENAI = {
   name: 'ApplyPatch',
   description: OPENAI_DESCRIPTION,
@@ -429,32 +449,26 @@ export const ApplyPatchTool: ToolRegistryEntry = {
     // ApplyPatch 仅 OpenAI provider 使用
     openai: OPENAI,
   },
-  buildStartedArgs: (input) => {
+  buildStartedArgs: (input, _callId, options) => {
     // 官方: toolCallStarted 只发 path，不含 streamContent
     // patch 内容通过 editToolCallDelta 发送
-    const patchStr = typeof input === 'string'
-      ? input
-      : typeof (input as any).patch === 'string'
-        ? (input as any).patch
-        : str(input as any)
+    const patchStr = getPatchString(input)
     const parsed = parsePatch(patchStr)
     if (!parsed)
       throw new Error('Failed to parse patch: invalid format')
-    return { path: parsed.path }
+    return { path: resolveParsedPatchPaths(parsed, options?.workspacePath).path }
   },
-  buildExecArgs: (input, callId) => {
-    const patchStr = typeof input === 'string'
-      ? input
-      : typeof (input as any).patch === 'string'
-        ? (input as any).patch
-        : str(input as any)
-    const parsed = parsePatch(patchStr)
-    if (!parsed)
+  buildExecArgs: (input, callId, options) => {
+    const patchStr = getPatchString(input)
+    const parsedRaw = parsePatch(patchStr)
+    if (!parsedRaw)
       throw new Error('Failed to parse patch: invalid format')
+    const parsed = resolveParsedPatchPaths(parsedRaw, options?.workspacePath)
     const newContent = applyPatch(parsed)
-    const beforeContent = (() => { try { return readFileSync(parsed.path, 'utf8') } catch { return '' } })()
+    const beforeContent = (() => { try { assertSafeForServerFs(parsed.path, 'ApplyPatch'); return readFileSync(parsed.path, 'utf8') } catch { return '' } })()
     // streamContent = patch 格式内容（用于 editToolCallDelta）
-    const patchBody = patchStr
+    const normalizedPatchStr = patchStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const patchBody = normalizedPatchStr
       .replace(/^\*\*\* Begin Patch\n/, '')
       .replace(/^\*\*\* (?:Add|Update|Delete) File:.*\n/, '')
       .replace(/\*\*\* End Patch\s*$/, '')

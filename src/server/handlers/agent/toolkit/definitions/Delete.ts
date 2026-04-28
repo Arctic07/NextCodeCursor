@@ -1,5 +1,5 @@
-import { str } from '../shared';
-import type { ToolRegistryEntry } from '../types';
+import { resolveToolPath } from '../pathUtils';
+import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
     name: 'Delete',
@@ -58,6 +58,10 @@ const GEMINI = {
     },
 };
 
+function resolveDeletePath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
+    return resolveToolPath(input.path, options?.workspacePath);
+}
+
 export const DeleteTool: ToolRegistryEntry = {
     canonicalName: 'Delete',
     aliases: ["Delete"],
@@ -68,9 +72,9 @@ export const DeleteTool: ToolRegistryEntry = {
         openai: OPENAI,
         gemini: GEMINI,
     },
-    buildStartedArgs: (input, callId) => ({
-        path: str(input.path),
+    buildStartedArgs: (input, callId, options) => ({
+        path: resolveDeletePath(input, options),
         toolCallId: callId,
     }),
-    buildExecArgs: (input, callId) => ({ path: input.path || '', toolCallId: callId }),
+    buildExecArgs: (input, callId, options) => ({ path: resolveDeletePath(input, options), toolCallId: callId }),
 };

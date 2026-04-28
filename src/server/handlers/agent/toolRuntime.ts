@@ -102,7 +102,11 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     }
     let startedArgs: Record<string, unknown>;
     try {
-        startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId);
+        startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId, {
+            conversationId: params.conversationId,
+            currentModelId: params.currentModelId,
+            workspacePath: params.workspacePath,
+        });
     } catch (e) {
         // server 端 buildArgs 失败（如文件读取/解析错误）→ 发送 proto error result，不发 exec
         const errorMsg = e instanceof Error ? e.message : String(e);
@@ -128,6 +132,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             execArgs = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: params.currentModelId,
+                workspacePath: params.workspacePath,
             });
         } catch (e) {
 
@@ -211,6 +216,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: params.currentModelId,
+                workspacePath: params.workspacePath,
             });
         } catch (e) {
             // server 端 buildExecArgs 失败 → 发送 error result

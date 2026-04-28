@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync } from 'node:fs';
 import { str, num, bool } from '../shared';
-import type { ToolRegistryEntry } from '../types';
+import { assertSafeForServerFs, resolveToolPath } from '../pathUtils';
+import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
     name: 'EditNotebook',
@@ -147,6 +148,10 @@ Other requirements:
  * ipynb 格式: { cells: [{ cell_type, source: string[], ... }, ...], ... }
  * source 是行数组（每行末尾含 \n，最后一行可能不含）。
  */
+function resolveNotebookPath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
+    return resolveToolPath(input.target_notebook, options?.workspacePath);
+}
+
 function applyNotebookEdit(
     notebookPath: string,
     cellIdx: number,
@@ -155,6 +160,7 @@ function applyNotebookEdit(
     oldString: string,
     newString: string,
 ): string {
+    assertSafeForServerFs(notebookPath, 'EditNotebook');
     const raw = readFileSync(notebookPath, 'utf8');
     const nb = JSON.parse(raw);
 
@@ -210,8 +216,8 @@ export const EditNotebookTool: ToolRegistryEntry = {
         anthropic: ANTHROPIC,
         openai: OPENAI,
     },
-    buildStartedArgs: (input) => {
-        const path = str(input.target_notebook);
+    buildStartedArgs: (input, _callId, options) => {
+        const path = resolveNotebookPath(input, options);
         let streamContent = '';
         streamContent = applyNotebookEdit(
             path,
@@ -223,8 +229,9 @@ export const EditNotebookTool: ToolRegistryEntry = {
         );
         return { path, streamContent };
     },
-    buildExecArgs: (input, callId) => {
-        const path = str(input.target_notebook);
+    buildExecArgs: (input, callId, options) => {
+        const path = resolveNotebookPath(input, options);
+        const beforeContent = (() => { try { assertSafeForServerFs(path, 'EditNotebook'); return readFileSync(path, 'utf8') } catch { return '' } })();
         let fileText = '';
         fileText = applyNotebookEdit(
             path,
@@ -237,6 +244,8 @@ export const EditNotebookTool: ToolRegistryEntry = {
         return {
             path,
             fileText,
+            beforeContent,
+            streamContent: str(input.new_string),
             toolCallId: callId,
             returnFileContentAfterWrite: true,
             fileBytes: new Uint8Array(),

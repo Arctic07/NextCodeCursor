@@ -1,6 +1,8 @@
-import { readFileSync } from 'fs';
+import { readFileSync } from 'node:fs';
+import { extname } from 'node:path';
 import { str } from '../shared';
-import type { ToolRegistryEntry } from '../types';
+import { assertSafeForServerFs, resolveToolPath } from '../pathUtils';
+import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const DESCRIPTION = `Performs exact string replacements in files.
 
@@ -67,6 +69,95 @@ const GEMINI = {
     },
 };
 
+type TextFileMetadata = {
+    rawText: string;
+    normalizedText: string;
+    lineEnding: 'LF' | 'CRLF';
+    encodingHint: 'utf8' | 'utf16le';
+    bom: string;
+};
+
+function readTextFileWithMetadata(filePath: string): TextFileMetadata {
+    const buffer = readFileSync(filePath);
+    const encodingHint: 'utf8' | 'utf16le' = buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe
+        ? 'utf16le'
+        : 'utf8';
+    const rawText = buffer.toString(encodingHint);
+    const bom = rawText.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const textWithoutBom = bom ? rawText.slice(1) : rawText;
+    const lineEnding = textWithoutBom.includes('\r\n') ? 'CRLF' : 'LF';
+    return {
+        rawText,
+        normalizedText: textWithoutBom.replace(/\r\n/g, '\n').replace(/\r/g, '\n'),
+        lineEnding,
+        encodingHint,
+        bom,
+    };
+}
+
+function normalizeEditText(value: string): string {
+    return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function restoreLineEndings(value: string, lineEnding: 'LF' | 'CRLF'): string {
+    return lineEnding === 'CRLF'
+        ? value.replace(/\r\n/g, '\n').split('\n').join('\r\n')
+        : value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+    if (needle.length === 0) return 0;
+    return haystack.split(needle).length - 1;
+}
+
+function applyStringEdit(params: {
+    path: string;
+    oldString: string;
+    newString: string;
+    replaceAll: boolean;
+}): { fileText: string; beforeContent: string; streamContent: string; encodingHint: string } {
+    const { path, oldString, newString, replaceAll } = params;
+
+    if (oldString === newString) {
+        throw new Error('No changes to make: old_string and new_string are exactly the same.');
+    }
+    if (oldString.length === 0) {
+        throw new Error('Edit does not create files. Use the Write tool for new files.');
+    }
+    if (extname(path).toLowerCase() === '.ipynb') {
+        throw new Error('File is a Jupyter Notebook. Use EditNotebook to edit notebook cells.');
+    }
+
+    assertSafeForServerFs(path, 'Edit');
+    const meta = readTextFileWithMetadata(path);
+    const oldNorm = normalizeEditText(oldString);
+    const newNorm = normalizeEditText(newString);
+    const matches = countOccurrences(meta.normalizedText, oldNorm);
+
+    if (matches === 0) {
+        throw new Error(`String to replace not found in file.\nString: ${oldString}`);
+    }
+    if (matches > 1 && !replaceAll) {
+        throw new Error(`Found ${matches} matches of the string to replace, but replace_all is false. Provide more context or set replace_all to true.\nString: ${oldString}`);
+    }
+
+    const edited = replaceAll
+        ? meta.normalizedText.split(oldNorm).join(newNorm)
+        : meta.normalizedText.replace(oldNorm, newNorm);
+    const fileText = meta.bom + restoreLineEndings(edited, meta.lineEnding);
+
+    return {
+        fileText,
+        beforeContent: meta.rawText,
+        streamContent: restoreLineEndings(newNorm, meta.lineEnding),
+        encodingHint: meta.encodingHint,
+    };
+}
+
+function resolveEditPath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
+    return resolveToolPath(input.path, options?.workspacePath);
+}
+
 export const EditTool: ToolRegistryEntry = {
     canonicalName: 'Edit',
     aliases: ['Edit'],
@@ -77,41 +168,24 @@ export const EditTool: ToolRegistryEntry = {
         // OpenAI 使用 ApplyPatch — 见 ApplyPatch.ts
         gemini: GEMINI,
     },
-    buildStartedArgs: (input) => {
-        return { path: str(input.path) };
+    buildStartedArgs: (input, _callId, options) => {
+        return { path: resolveEditPath(input, options) };
     },
-    buildExecArgs: (input, callId) => {
-        const path = str(input.path);
-        const oldStr = str(input.old_string);
-        const newStr = str(input.new_string);
-        const replaceAll = input.replace_all === true;
-
-        const raw = readFileSync(path, 'utf8');
-        // BOM 处理 (Pi: stripBom)
-        const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
-        const stripped = bom ? raw.slice(1) : raw;
-        // EOL 检测 + LF 规范化 (Pi: detectLineEnding + normalizeToLF)
-        const eol = stripped.indexOf('\r\n') !== -1 && stripped.indexOf('\r\n') <= stripped.indexOf('\n') ? '\r\n' : '\n';
-        const normalized = stripped.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        // 输入也规范化
-        const oldNorm = oldStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        const newNorm = newStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-        const replaced = replaceAll
-            ? normalized.split(oldNorm).join(newNorm)
-            : normalized.replace(oldNorm, newNorm);
-
-        // 发送纯 LF 内容 — Cursor 客户端通过 VS Code API 写入时自动处理 EOL
-        // (对齐 Claude Code FileWriteTool: 不在 server 端做 EOL 还原)
-        const fileText = replaced;
-        const beforeContent = normalized;
-        const streamContent = newNorm;
+    buildExecArgs: (input, callId, options) => {
+        const path = resolveEditPath(input, options);
+        const result = applyStringEdit({
+            path,
+            oldString: str(input.old_string),
+            newString: str(input.new_string),
+            replaceAll: input.replace_all === true,
+        });
 
         return {
             path,
-            fileText,
-            beforeContent,
-            streamContent,
+            fileText: result.fileText,
+            beforeContent: result.beforeContent,
+            streamContent: result.streamContent,
+            encodingHint: result.encodingHint,
             toolCallId: callId,
         };
     },

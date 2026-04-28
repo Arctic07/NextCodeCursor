@@ -1,5 +1,6 @@
 import { str } from '../shared';
-import type { ToolRegistryEntry } from '../types';
+import { resolveToolPath } from '../pathUtils';
+import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
     name: 'Read',
@@ -118,6 +119,10 @@ PDF Support:
     },
 };
 
+function resolveReadPath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
+    return resolveToolPath(str(input.path ?? input.file_path), options?.workspacePath);
+}
+
 export const ReadTool: ToolRegistryEntry = {
     canonicalName: 'Read',
     aliases: ["Read","ReadFile"],
@@ -128,11 +133,11 @@ export const ReadTool: ToolRegistryEntry = {
         openai: OPENAI,
         gemini: GEMINI,
     },
-    buildStartedArgs: (input) => ({
-        path: str(input.path ?? input.file_path),
+    buildStartedArgs: (input, _callId, options) => ({
+        path: resolveReadPath(input, options),
     }),
-    buildExecArgs: (input, callId) => ({
-        path: str(input.path ?? input.file_path),
+    buildExecArgs: (input, callId, options) => ({
+        path: resolveReadPath(input, options),
         toolCallId: callId,
         ...(typeof input.offset === 'number' ? { offset: input.offset } : {}),
         ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),

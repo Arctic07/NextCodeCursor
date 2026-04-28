@@ -95,12 +95,13 @@ export function buildRegisteredToolArgs(
     llmToolName: string,
     input: Record<string, unknown>,
     callId: string,
+    options: ToolExecBuildOptions = {},
 ): Record<string, unknown> | null {
     const entry = findToolByAlias(llmToolName);
-    if (entry?.buildStartedArgs) return entry.buildStartedArgs(input, callId);
+    if (entry?.buildStartedArgs) return entry.buildStartedArgs(input, callId, options);
 
     if (typeof input.providerIdentifier === 'string' && input.providerIdentifier) {
-        return findToolByCursorType('mcpToolCall')?.buildStartedArgs?.(input, callId) ?? null;
+        return findToolByCursorType('mcpToolCall')?.buildStartedArgs?.(input, callId, options) ?? null;
     }
 
     return null;

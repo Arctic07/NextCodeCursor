@@ -40,6 +40,7 @@
 
 import { logger } from '../../logger';
 import { buildRegisteredExecArgs, findToolByAlias, findToolByCursorType } from './toolRegistry';
+import type { ToolExecBuildOptions } from './toolkit/types';
 
 export interface AvailableMcpTool {
     name: string;
@@ -136,7 +137,7 @@ export function buildExecArgs(
     llmToolName: string,
     input: Record<string, unknown>,
     callId: string,
-    options: { conversationId?: string; currentModelId?: string } = {},
+    options: ToolExecBuildOptions = {},
 ): Record<string, unknown> {
     const registered = buildRegisteredExecArgs(llmToolName, input, callId, options);
     if (registered) return registered;

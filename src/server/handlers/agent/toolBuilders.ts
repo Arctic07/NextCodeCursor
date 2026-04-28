@@ -1,4 +1,5 @@
 import { buildRegisteredToolArgs } from './toolRegistry';
+import type { ToolExecBuildOptions } from './toolkit/types';
 
 export type CursorToolType =
     | 'readToolCall'
@@ -28,8 +29,13 @@ export type CursorToolType =
  * 按 LLM 工具名查找并构建 toolCallStarted 帧的 args。
  * 第一参数是 LLM tool name（alias），不是 cursorToolType。
  */
-export function buildToolArgs(llmToolName: string, input: Record<string, unknown>, callId: string): Record<string, unknown> {
-    return buildRegisteredToolArgs(llmToolName, input, callId) ?? input;
+export function buildToolArgs(
+    llmToolName: string,
+    input: Record<string, unknown>,
+    callId: string,
+    options: ToolExecBuildOptions = {},
+): Record<string, unknown> {
+    return buildRegisteredToolArgs(llmToolName, input, callId, options) ?? input;
 }
 
 export type { ToolResultEnvelope } from './toolResults';

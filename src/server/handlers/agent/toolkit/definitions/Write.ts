@@ -1,6 +1,7 @@
-import { readFileSync } from 'fs';
+import { readFileSync } from 'node:fs';
 import { str } from '../shared';
-import type { ToolRegistryEntry } from '../types';
+import { assertSafeForServerFs, resolveToolPath } from '../pathUtils';
+import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
     name: 'Write',
@@ -83,6 +84,20 @@ Usage:
     },
 };
 
+function resolveWritePath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
+    return resolveToolPath(input.path, options?.workspacePath);
+}
+
+function readExistingContentForDiff(path: string): string {
+    try {
+        assertSafeForServerFs(path, 'Write');
+        return readFileSync(path, 'utf8');
+    }
+    catch {
+        return '';
+    }
+}
+
 export const WriteTool: ToolRegistryEntry = {
     canonicalName: 'Write',
     aliases: ["Write"],
@@ -93,25 +108,19 @@ export const WriteTool: ToolRegistryEntry = {
         // OpenAI 使用 ApplyPatch 而非 Write — 见 ApplyPatch.ts
         gemini: GEMINI,
     },
-    buildStartedArgs: (input) => ({
-        path: str(input.path),
+    buildStartedArgs: (input, _callId, options) => ({
+        path: resolveWritePath(input, options),
     }),
-    buildExecArgs: (input, callId) => {
-        const path = str(input.path);
-        let fileText = typeof input.contents === 'string' ? input.contents : '';
-        let beforeContent = '';
-        try {
-            const raw = readFileSync(path, 'utf8');
-            const stripped = raw.startsWith('\uFEFF') ? raw.slice(1) : raw;
-            beforeContent = stripped.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        } catch { /* new file */ }
-        // LLM 输出规范化为纯 LF — Cursor 客户端写入时自动处理 EOL
-        fileText = fileText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    buildExecArgs: (input, callId, options) => {
+        const path = resolveWritePath(input, options);
+        const fileText = typeof input.contents === 'string' ? input.contents : '';
+        const beforeContent = readExistingContentForDiff(path);
         return {
             path,
             fileText,
             beforeContent,
             streamContent: fileText,
+            encodingHint: 'utf8',
             toolCallId: callId,
         };
     },
