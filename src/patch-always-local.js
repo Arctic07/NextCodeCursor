@@ -258,7 +258,18 @@ function buildWaitSnippet() {
  * 返回 { bodyStart, funcKeyword } 或 null。
  */
 function findActivateInsertPosition(source, log) {
-  // 1. 扫描所有 "activate" 字符串出现位置
+  // 模式 A (3.1.17): .activate = function(n) { ... }
+  const resultA = findActivateAssignment(source, log);
+  if (resultA) return resultA;
+
+  // 模式 B (3.2.11+): n.d(r, {activate: ()=>lkt}) + function lkt(n) { ... }
+  const resultB = findActivateExportedFunction(source, log);
+  if (resultB) return resultB;
+
+  return null;
+}
+
+function findActivateAssignment(source, log) {
   const NEEDLE = 'activate';
   const LOOKBACK = 10;
   let searchFrom = 0;
@@ -268,49 +279,37 @@ function findActivateInsertPosition(source, log) {
     if (idx < 0) break;
     searchFrom = idx + NEEDLE.length;
 
-    // 排除 deactivate、activated 等
     if (idx > 0 && /[a-zA-Z_$]/.test(source[idx - 1])) continue;
     if (idx + NEEDLE.length < source.length && /[a-zA-Z0-9_$]/.test(source[idx + NEEDLE.length])) continue;
 
-    // 2. Lookback 确认前面是 . 或 ["activate"] 形式的属性访问
     const before = source.substring(Math.max(0, idx - LOOKBACK), idx).trimEnd();
     if (!before.endsWith('.')) continue;
 
-    // 3. 提取 X.activate=function(PARAMS){} 的最小可解析片段
-    //    向前找赋值左侧的标识符起始
-    const dotPos = idx - 1 - (before.length - before.trimEnd().length); // 实际 . 的位置
+    const dotPos = idx - 1 - (before.length - before.trimEnd().length);
     let lhsStart = dotPos;
     while (lhsStart > 0 && /[a-zA-Z0-9_$]/.test(source[lhsStart - 1])) lhsStart--;
 
-    // 向后跳过 =, 找到 function 关键字, 跳过参数列表 (), 找到 {
     let i = idx + NEEDLE.length;
-    // 跳过空格和 =
     while (i < source.length && /[\s=]/.test(source[i])) i++;
 
-    // 记录 function 关键字位置
     const funcKeyword = i;
-    // 检查是否是 function 关键字（可能是 async function）
     const ahead = source.substring(i, i + 20);
     if (!ahead.startsWith('function') && !ahead.startsWith('async')) continue;
 
-    // 找到参数列表 ( 的开始
     while (i < source.length && source[i] !== '(') i++;
     if (i >= source.length) continue;
 
-    // 配对跳过参数列表
     let parenDepth = 0;
     for (; i < source.length; i++) {
       if (source[i] === '(') parenDepth++;
       if (source[i] === ')') { parenDepth--; if (parenDepth === 0) { i++; break; } }
     }
 
-    // 找到函数体 {
     while (i < source.length && source[i] !== '{') i++;
     if (i >= source.length) continue;
 
     const bodyStart = i + 1;
 
-    // 4. 用 acorn 解析提取的赋值表达式（空函数体），验证 AST 结构
     const snippet = source.substring(lhsStart, bodyStart) + '}';
     let ast;
     try {
@@ -328,16 +327,124 @@ function findActivateInsertPosition(source, log) {
     if (!prop || (prop.type === 'Identifier' && prop.name !== 'activate')) continue;
     if (!expr.right || expr.right.type !== 'FunctionExpression') continue;
 
-    // 5. 验证同模块内存在 .deactivate= （确认是扩展主模块，非其他内部 activate）
-    //    activate 函数体可能很长，deactivate 在其闭合 } 之后，搜索足够宽的范围
     const VERIFY_RANGE = 5000;
     const nearbyRange = source.substring(Math.max(0, lhsStart - VERIFY_RANGE), Math.min(source.length, bodyStart + VERIFY_RANGE));
-    if (!nearbyRange.includes('.deactivate')) continue;
+    if (!nearbyRange.includes('.deactivate') && !nearbyRange.includes('deactivate')) continue;
 
     log?.(`  AST match: .activate = FunctionExpression at ${lhsStart}, body at ${bodyStart}`);
     return { bodyStart, funcKeyword };
   }
 
+  return null;
+}
+
+function findActivateExportedFunction(source, log) {
+  // 3.2.11+ webpack exports 模式:
+  //   n.d(r, {activate: ()=>lkt, deactivate: ()=>ukt})
+  // 需要 AST 精确匹配: 找 ObjectExpression 中 activate 属性的 ArrowFunction 返回的标识符
+
+  // 1. 扫描 "activate" 出现位置，提取包含它的对象字面量片段
+  const NEEDLE = 'activate';
+  let searchFrom = 0;
+  let activateFuncName = null;
+
+  while (true) {
+    const idx = source.indexOf(NEEDLE, searchFrom);
+    if (idx < 0) break;
+    searchFrom = idx + NEEDLE.length;
+
+    // 排除 deactivate 等
+    if (idx > 0 && /[a-zA-Z_$]/.test(source[idx - 1])) continue;
+    if (idx + NEEDLE.length < source.length && /[a-zA-Z0-9_$]/.test(source[idx + NEEDLE.length])) continue;
+
+    // 向前找 { 起始
+    let objStart = idx;
+    while (objStart > 0 && source[objStart] !== '{') objStart--;
+    if (source[objStart] !== '{') continue;
+
+    // 向后找 } 结束
+    let objEnd = idx;
+    let braceDepth = 0;
+    for (let k = objStart; k < source.length && k < objStart + 500; k++) {
+      if (source[k] === '{') braceDepth++;
+      if (source[k] === '}') { braceDepth--; if (braceDepth === 0) { objEnd = k + 1; break; } }
+    }
+    if (braceDepth !== 0) continue;
+
+    // 用 acorn 解析对象字面量
+    const objSnippet = '(' + source.substring(objStart, objEnd) + ')';
+    let ast;
+    try {
+      ast = acorn.parse(objSnippet, { ecmaVersion: 2022 });
+    } catch {
+      continue;
+    }
+
+    const exprStmt = ast.body[0];
+    if (!exprStmt || exprStmt.type !== 'ExpressionStatement') continue;
+    const obj = exprStmt.expression;
+    if (!obj || obj.type !== 'ObjectExpression') continue;
+
+    // 找 activate 属性 + deactivate 属性（验证是扩展 exports）
+    let activateProp = null;
+    let hasDeactivate = false;
+    for (const prop of obj.properties) {
+      if (prop.type !== 'Property') continue;
+      const key = prop.key;
+      const name = key.type === 'Identifier' ? key.name : key.type === 'Literal' ? key.value : null;
+      if (name === 'activate') activateProp = prop;
+      if (name === 'deactivate') hasDeactivate = true;
+    }
+    if (!activateProp || !hasDeactivate) continue;
+
+    // activate 的值必须是 ArrowFunctionExpression，body 是 Identifier
+    const arrow = activateProp.value;
+    if (!arrow || arrow.type !== 'ArrowFunctionExpression') continue;
+    if (!arrow.body || arrow.body.type !== 'Identifier') continue;
+
+    activateFuncName = arrow.body.name;
+    log?.(`  Export object found: activate => ${activateFuncName}`);
+    break;
+  }
+
+  if (!activateFuncName) return null;
+
+  // 2. 找到 function <activateFuncName>( 的定义位置，用 AST 验证
+  const funcNeedle = 'function ' + activateFuncName;
+  let fIdx = source.indexOf(funcNeedle);
+  while (fIdx >= 0) {
+    // 提取 function name(params){} 最小片段
+    let i = fIdx + funcNeedle.length;
+    while (i < source.length && source[i] !== '(') i++;
+    if (i >= source.length) { fIdx = source.indexOf(funcNeedle, fIdx + 1); continue; }
+
+    let parenDepth = 0;
+    for (; i < source.length; i++) {
+      if (source[i] === '(') parenDepth++;
+      if (source[i] === ')') { parenDepth--; if (parenDepth === 0) { i++; break; } }
+    }
+    while (i < source.length && source[i] !== '{') i++;
+    if (i >= source.length) { fIdx = source.indexOf(funcNeedle, fIdx + 1); continue; }
+
+    const bodyStart = i + 1;
+    const snippet = source.substring(fIdx, bodyStart) + '}';
+    let ast;
+    try {
+      ast = acorn.parse(snippet, { ecmaVersion: 2022 });
+    } catch {
+      fIdx = source.indexOf(funcNeedle, fIdx + 1);
+      continue;
+    }
+
+    const decl = ast.body[0];
+    if (!decl || decl.type !== 'FunctionDeclaration') { fIdx = source.indexOf(funcNeedle, fIdx + 1); continue; }
+    if (decl.id?.name !== activateFuncName) { fIdx = source.indexOf(funcNeedle, fIdx + 1); continue; }
+
+    log?.(`  AST match (exported): function ${activateFuncName} at ${fIdx}, body at ${bodyStart}`);
+    return { bodyStart, funcKeyword: fIdx };
+  }
+
+  log?.(`  Export found activate => ${activateFuncName}, but function definition not found`);
   return null;
 }
 
