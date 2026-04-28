@@ -39,7 +39,8 @@
  */
 
 import { logger } from '../../logger';
-import { buildRegisteredExecArgs, findToolByAlias, findToolByCursorType } from './toolRegistry';
+import type { EditPlan } from './toolkit/editPlans';
+import { buildRegisteredEditPlan, buildRegisteredExecArgs, findToolByAlias, findToolByCursorType } from './toolRegistry';
 import type { ToolExecBuildOptions } from './toolkit/types';
 
 export interface AvailableMcpTool {
@@ -143,6 +144,17 @@ export function buildExecArgs(
     if (registered) return registered;
     logger.warn({ llmToolName }, '[TOOL] unknown tool name for exec args');
     return { toolCallId: callId };
+}
+
+export function buildEditPlan(
+    llmToolName: string,
+    input: Record<string, unknown>,
+    callId: string,
+    options: ToolExecBuildOptions = {},
+): EditPlan {
+    const plan = buildRegisteredEditPlan(llmToolName, input, callId, options);
+    if (plan) return plan;
+    throw new Error(`Tool ${llmToolName} does not support edit plans`);
 }
 
 export function resolveToolCall(

@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { str } from '../shared';
-import { assertSafeForServerFs, resolveToolPath } from '../pathUtils';
+import { resolveToolPath } from '../pathUtils';
 import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const DESCRIPTION = `Performs exact string replacements in files.
@@ -73,16 +72,10 @@ type TextFileMetadata = {
     rawText: string;
     normalizedText: string;
     lineEnding: 'LF' | 'CRLF';
-    encodingHint: 'utf8' | 'utf16le';
     bom: string;
 };
 
-function readTextFileWithMetadata(filePath: string): TextFileMetadata {
-    const buffer = readFileSync(filePath);
-    const encodingHint: 'utf8' | 'utf16le' = buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe
-        ? 'utf16le'
-        : 'utf8';
-    const rawText = buffer.toString(encodingHint);
+function textMetadataFromContent(rawText: string): TextFileMetadata {
     const bom = rawText.startsWith('\uFEFF') ? '\uFEFF' : '';
     const textWithoutBom = bom ? rawText.slice(1) : rawText;
     const lineEnding = textWithoutBom.includes('\r\n') ? 'CRLF' : 'LF';
@@ -90,7 +83,6 @@ function readTextFileWithMetadata(filePath: string): TextFileMetadata {
         rawText,
         normalizedText: textWithoutBom.replace(/\r\n/g, '\n').replace(/\r/g, '\n'),
         lineEnding,
-        encodingHint,
         bom,
     };
 }
@@ -110,13 +102,14 @@ function countOccurrences(haystack: string, needle: string): number {
     return haystack.split(needle).length - 1;
 }
 
-function applyStringEdit(params: {
+export function applyStringEditToContent(params: {
     path: string;
+    beforeContent: string;
     oldString: string;
     newString: string;
     replaceAll: boolean;
-}): { fileText: string; beforeContent: string; streamContent: string; encodingHint: string } {
-    const { path, oldString, newString, replaceAll } = params;
+}): { fileText: string; streamContent: string } {
+    const { path, beforeContent, oldString, newString, replaceAll } = params;
 
     if (oldString === newString) {
         throw new Error('No changes to make: old_string and new_string are exactly the same.');
@@ -128,8 +121,7 @@ function applyStringEdit(params: {
         throw new Error('File is a Jupyter Notebook. Use EditNotebook to edit notebook cells.');
     }
 
-    assertSafeForServerFs(path, 'Edit');
-    const meta = readTextFileWithMetadata(path);
+    const meta = textMetadataFromContent(beforeContent);
     const oldNorm = normalizeEditText(oldString);
     const newNorm = normalizeEditText(newString);
     const matches = countOccurrences(meta.normalizedText, oldNorm);
@@ -148,9 +140,7 @@ function applyStringEdit(params: {
 
     return {
         fileText,
-        beforeContent: meta.rawText,
         streamContent: restoreLineEndings(newNorm, meta.lineEnding),
-        encodingHint: meta.encodingHint,
     };
 }
 
@@ -173,20 +163,23 @@ export const EditTool: ToolRegistryEntry = {
     },
     buildExecArgs: (input, callId, options) => {
         const path = resolveEditPath(input, options);
-        const result = applyStringEdit({
+        return {
             path,
             oldString: str(input.old_string),
             newString: str(input.new_string),
             replaceAll: input.replace_all === true,
-        });
-
-        return {
-            path,
-            fileText: result.fileText,
-            beforeContent: result.beforeContent,
-            streamContent: result.streamContent,
-            encodingHint: result.encodingHint,
             toolCallId: callId,
+        };
+    },
+    buildEditPlan: (input, _callId, options) => {
+        const path = resolveEditPath(input, options);
+        return {
+            kind: 'stringReplace',
+            path,
+            oldString: str(input.old_string),
+            newString: str(input.new_string),
+            replaceAll: input.replace_all === true,
+            streamContent: str(input.new_string),
         };
     },
 };

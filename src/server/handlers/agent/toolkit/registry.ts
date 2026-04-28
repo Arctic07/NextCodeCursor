@@ -1,5 +1,6 @@
 import type { LLMTool } from '../../llm/types';
 import type { ProviderType } from '../../../data/defaults';
+import type { EditPlan } from './editPlans';
 import type { ToolExecBuildOptions, ToolRegistryEntry } from './types';
 import { toProviderFamily } from './types';
 
@@ -125,4 +126,14 @@ export function buildRegisteredExecArgs(
     }
 
     return null;
+}
+
+export function buildRegisteredEditPlan(
+    llmToolName: string,
+    input: Record<string, unknown>,
+    callId: string,
+    options: ToolExecBuildOptions = {},
+): EditPlan | null {
+    const entry = findToolByAlias(llmToolName);
+    return entry?.buildEditPlan?.(input, callId, options) ?? null;
 }

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { detectEditPathFromToolInput, EditDeltaExtractor } from '../handlers/agent/conversationRuntime'
+import { detectEditPathFromToolInput, EditDeltaExtractor, normalizeDetectedEditPath } from '../handlers/agent/conversationRuntime'
 
 it('detects path for Write/Edit payloads', () => {
   expect(detectEditPathFromToolInput('Write', '{"contents":"hello","path":"src/a.ts"}')).toBe('src/a.ts')
@@ -17,6 +17,11 @@ it('detects file path from ApplyPatch patch body', () => {
 
 it('returns empty string when path not yet in accumulated input', () => {
   expect(detectEditPathFromToolInput('ApplyPatch', '{"patch":"*** Begin Patch\\n@@"}')).toBe('')
+})
+
+it('normalizes detected edit paths for partial tool call bubbles', () => {
+  expect(normalizeDetectedEditPath('src/a.ts', '/workspace/project')).toBe('/workspace/project/src/a.ts')
+  expect(normalizeDetectedEditPath('C:relative.txt', 'C:\\repo')).toBe('C:relative.txt')
 })
 
 it('extracts new_string and detects path in single chunk', () => {

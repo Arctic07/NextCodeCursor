@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
 import { str, num, bool } from '../shared';
-import { assertSafeForServerFs, resolveToolPath } from '../pathUtils';
+import { resolveToolPath } from '../pathUtils';
 import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
@@ -152,17 +151,15 @@ function resolveNotebookPath(input: Record<string, unknown>, options?: ToolExecB
     return resolveToolPath(input.target_notebook, options?.workspacePath);
 }
 
-function applyNotebookEdit(
-    notebookPath: string,
+export function applyNotebookEditToContent(
+    rawContent: string,
     cellIdx: number,
     isNewCell: boolean,
     cellLanguage: string,
     oldString: string,
     newString: string,
 ): string {
-    assertSafeForServerFs(notebookPath, 'EditNotebook');
-    const raw = readFileSync(notebookPath, 'utf8');
-    const nb = JSON.parse(raw);
+    const nb = JSON.parse(rawContent);
 
     if (!Array.isArray(nb.cells)) {
         throw new Error('Invalid notebook: missing cells array');
@@ -218,37 +215,29 @@ export const EditNotebookTool: ToolRegistryEntry = {
     },
     buildStartedArgs: (input, _callId, options) => {
         const path = resolveNotebookPath(input, options);
-        let streamContent = '';
-        streamContent = applyNotebookEdit(
-            path,
-            num(input.cell_idx),
-            bool(input.is_new_cell),
-            str(input.cell_language),
-            str(input.old_string),
-            str(input.new_string),
-        );
-        return { path, streamContent };
+        return { path, streamContent: str(input.new_string) };
     },
     buildExecArgs: (input, callId, options) => {
         const path = resolveNotebookPath(input, options);
-        const beforeContent = (() => { try { assertSafeForServerFs(path, 'EditNotebook'); return readFileSync(path, 'utf8') } catch { return '' } })();
-        let fileText = '';
-        fileText = applyNotebookEdit(
-            path,
-            num(input.cell_idx),
-            bool(input.is_new_cell),
-            str(input.cell_language),
-            str(input.old_string),
-            str(input.new_string),
-        );
         return {
             path,
-            fileText,
-            beforeContent,
             streamContent: str(input.new_string),
             toolCallId: callId,
             returnFileContentAfterWrite: true,
             fileBytes: new Uint8Array(),
+        };
+    },
+    buildEditPlan: (input, _callId, options) => {
+        const path = resolveNotebookPath(input, options);
+        return {
+            kind: 'editNotebook',
+            path,
+            cellIdx: num(input.cell_idx),
+            isNewCell: bool(input.is_new_cell),
+            cellLanguage: str(input.cell_language),
+            oldString: str(input.old_string),
+            newString: str(input.new_string),
+            streamContent: str(input.new_string),
         };
     },
 };

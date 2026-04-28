@@ -1,5 +1,6 @@
 import type { LLMTool } from '../../llm/types';
 import type { ProviderType } from '../../../data/defaults';
+import type { EditPlan } from './editPlans';
 
 export interface ToolExecBuildOptions {
     conversationId?: string;
@@ -89,4 +90,9 @@ export interface ToolRegistryEntry {
         callId: string,
         options?: ToolExecBuildOptions,
     ) => Record<string, unknown>;
+    buildEditPlan?: (
+        input: Record<string, unknown>,
+        callId: string,
+        options?: ToolExecBuildOptions,
+    ) => EditPlan;
 }

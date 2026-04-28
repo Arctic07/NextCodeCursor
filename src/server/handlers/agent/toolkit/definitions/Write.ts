@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
 import { str } from '../shared';
-import { assertSafeForServerFs, resolveToolPath } from '../pathUtils';
+import { resolveToolPath } from '../pathUtils';
 import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
@@ -88,16 +87,6 @@ function resolveWritePath(input: Record<string, unknown>, options?: ToolExecBuil
     return resolveToolPath(input.path, options?.workspacePath);
 }
 
-function readExistingContentForDiff(path: string): string {
-    try {
-        assertSafeForServerFs(path, 'Write');
-        return readFileSync(path, 'utf8');
-    }
-    catch {
-        return '';
-    }
-}
-
 export const WriteTool: ToolRegistryEntry = {
     canonicalName: 'Write',
     aliases: ["Write"],
@@ -114,14 +103,22 @@ export const WriteTool: ToolRegistryEntry = {
     buildExecArgs: (input, callId, options) => {
         const path = resolveWritePath(input, options);
         const fileText = typeof input.contents === 'string' ? input.contents : '';
-        const beforeContent = readExistingContentForDiff(path);
         return {
             path,
             fileText,
-            beforeContent,
             streamContent: fileText,
             encodingHint: 'utf8',
             toolCallId: callId,
+        };
+    },
+    buildEditPlan: (input, _callId, options) => {
+        const path = resolveWritePath(input, options);
+        const contents = typeof input.contents === 'string' ? input.contents : '';
+        return {
+            kind: 'write',
+            path,
+            contents,
+            streamContent: contents,
         };
     },
 };

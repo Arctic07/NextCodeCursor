@@ -14,6 +14,7 @@ import { flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, r
 import { buildMessages, workspaceUris } from './protocol'
 import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
+import { resolveToolPath } from './toolkit/pathUtils'
 import { runToolCall } from './toolRuntime'
 import { restoreBlobMessageToLLMMessage } from './transcript'
 import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, shouldTriggerCompaction } from './usage'
@@ -41,6 +42,16 @@ export function detectEditPathFromToolInput(toolName: string, rawInput: string):
     if (p?.[1]) return p[1].trim()
   }
   return ''
+}
+
+export function normalizeDetectedEditPath(rawPath: string, workspacePath?: string): string {
+  if (!rawPath) return ''
+  try {
+    return resolveToolPath(rawPath, workspacePath)
+  }
+  catch {
+    return rawPath
+  }
 }
 
 /**
@@ -432,6 +443,7 @@ export async function* handleConversationRun(
     const roundAssistantBlocks: LLMContentBlock[] = []
     let currentThinking = ''
     let currentText = ''
+    const workspacePath = parsed.env.workspacePaths?.[0] ?? parsed.env.projectFolder
 
     try {
       const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, undefined, parsed.mode, {
@@ -490,8 +502,9 @@ export async function* handleConversationRun(
               const frames: AgentServerMessage[] = []
               if (extractor.detectedPath && !editPathSent.has(event.id)) {
                 editPathSent.add(event.id)
-                frames.push(partialToolCall(event.id, 'editToolCall', mcid, { path: extractor.detectedPath }))
-                logger.debug({ callId: event.id, path: extractor.detectedPath, mcid }, '[EDIT_T] 2.partialToolCall{path}')
+                const normalizedPath = normalizeDetectedEditPath(extractor.detectedPath, workspacePath)
+                frames.push(partialToolCall(event.id, 'editToolCall', mcid, { path: normalizedPath }))
+                logger.debug({ callId: event.id, path: normalizedPath, rawPath: extractor.detectedPath, mcid }, '[EDIT_T] 2.partialToolCall{path}')
               }
               if (content) {
                 frames.push(editToolCallStreamDelta(event.id, content, mcid))
@@ -574,7 +587,7 @@ export async function* handleConversationRun(
           availableMcpTools: parsed.mcpTools,
           conversationId: parsed.conversationId,
           currentModelId: parsed.modelId,
-          workspacePath: parsed.env.workspacePaths?.[0] ?? parsed.env.projectFolder,
+          workspacePath,
           round,
           session,
           roundContext,

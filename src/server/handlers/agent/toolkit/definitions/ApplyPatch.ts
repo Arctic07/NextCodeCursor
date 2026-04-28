@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs'
 import { structuredPatch } from 'diff'
 import { str } from '../shared'
-import { assertSafeForServerFs, resolveToolPath } from '../pathUtils'
+import { resolveToolPath } from '../pathUtils'
 import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types'
 
 // ── Patch 解析器 (移植自 Codex apply-patch crate) ──
@@ -13,7 +12,7 @@ interface UpdateFileChunk {
   isEndOfFile: boolean
 }
 
-interface ParsedPatch {
+export interface ParsedPatch {
   action: 'add' | 'update' | 'delete'
   path: string
   movePath?: string
@@ -21,7 +20,7 @@ interface ParsedPatch {
   chunks?: UpdateFileChunk[]
 }
 
-function parsePatch(patch: string): ParsedPatch | null {
+export function parsePatch(patch: string): ParsedPatch | null {
   const lines = patch.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
   let i = 0
 
@@ -312,7 +311,7 @@ function applyReplacements(lines: string[], replacements: Array<[number, number,
   return result
 }
 
-function resolveParsedPatchPaths(patch: ParsedPatch, workspacePath?: string): ParsedPatch {
+export function resolveParsedPatchPaths(patch: ParsedPatch, workspacePath?: string): ParsedPatch {
   return {
     ...patch,
     path: resolveToolPath(patch.path, workspacePath),
@@ -320,25 +319,19 @@ function resolveParsedPatchPaths(patch: ParsedPatch, workspacePath?: string): Pa
   }
 }
 
-function applyPatch(patch: ParsedPatch): string {
+export function applyPatchToContent(patch: ParsedPatch, beforeContent: string): string {
   if (patch.action === 'add')
     return patch.addContents ?? ''
 
   if (patch.action === 'delete')
     throw new Error('ApplyPatch Delete File is not supported by editToolCall; use the Delete tool instead')
 
-  let raw: string
-  try {
-    assertSafeForServerFs(patch.path, 'ApplyPatch')
-    raw = readFileSync(patch.path, 'utf8')
-  }
-  catch (error) {
-    throw new Error(`ApplyPatch could not read target file ${patch.path}: ${error instanceof Error ? error.message : String(error)}`)
-  }
+  if (patch.movePath)
+    throw new Error('Move/Rename is not supported by ApplyPatch in BYOK yet')
 
   // EOL 规范化
-  const eol = raw.includes('\r\n') ? '\r\n' : '\n'
-  const content = raw.replace(/\r\n/g, '\n')
+  const eol = beforeContent.includes('\r\n') ? '\r\n' : '\n'
+  const content = beforeContent.replace(/\r\n/g, '\n')
   let originalLines = content.split('\n')
 
   // 去掉尾部空元素 (与 Codex 一致: split('\n') 对 "foo\n" 产生 ["foo", ""])
@@ -359,7 +352,7 @@ function applyPatch(patch: ParsedPatch): string {
 
 // ── Diff 生成 (使用 diff 库) ──
 
-function computeDiffFromContents(
+export function computeDiffFromContents(
   oldContent: string,
   newContent: string,
 ): { diffString: string, linesAdded: number, linesRemoved: number } {
@@ -459,13 +452,20 @@ export const ApplyPatchTool: ToolRegistryEntry = {
     return { path: resolveParsedPatchPaths(parsed, options?.workspacePath).path }
   },
   buildExecArgs: (input, callId, options) => {
+    const plan = ApplyPatchTool.buildEditPlan?.(input, callId, options)
+    return {
+      path: plan?.path ?? '',
+      patchText: plan?.kind === 'applyPatch' ? plan.patchText : '',
+      streamContent: plan?.streamContent ?? '',
+      toolCallId: callId,
+    }
+  },
+  buildEditPlan: (input, _callId, options) => {
     const patchStr = getPatchString(input)
     const parsedRaw = parsePatch(patchStr)
     if (!parsedRaw)
       throw new Error('Failed to parse patch: invalid format')
     const parsed = resolveParsedPatchPaths(parsedRaw, options?.workspacePath)
-    const newContent = applyPatch(parsed)
-    const beforeContent = (() => { try { assertSafeForServerFs(parsed.path, 'ApplyPatch'); return readFileSync(parsed.path, 'utf8') } catch { return '' } })()
     // streamContent = patch 格式内容（用于 editToolCallDelta）
     const normalizedPatchStr = patchStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     const patchBody = normalizedPatchStr
@@ -474,14 +474,11 @@ export const ApplyPatchTool: ToolRegistryEntry = {
       .replace(/\*\*\* End Patch\s*$/, '')
       .trim()
     return {
+      kind: 'applyPatch',
       path: parsed.path,
-      fileText: newContent,
-      beforeContent,
+      patchText: patchStr,
+      parsedPatch: parsed,
       streamContent: `${patchBody}\n*** End Patch\n`,
-      toolCallId: callId,
     }
   },
 }
-
-// 导出给 editRuntime 使用
-export { computeDiffFromContents }

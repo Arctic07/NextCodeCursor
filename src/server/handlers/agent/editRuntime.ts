@@ -1,16 +1,14 @@
 /**
  * editToolCall 运行时
  *
- * 对齐官方帧序列:
- *   1. toolCallStarted → EditArgs { path, streamContent }
- *      (保底创建 bubble — 即使 streaming 阶段没发任何 delta 也能完整显示)
- *   2. readArgs exec → 客户端读文件
- *   3. writeArgs exec → 客户端写文件
- *   4. diff 计算
- *   5. toolCallCompleted → { success: { path, diffString, ... } }
+ * 编辑类工具的权威执行流：
+ *   1. toolCallStarted → EditArgs { path, streamContent? }
+ *   2. readArgs exec → Client 读取真实 workspace 文件
+ *   3. Server 基于 client readResult 应用 EditPlan
+ *   4. writeArgs exec → Client 写入真实 workspace 文件
+ *   5. toolCallCompleted → { success/error }
  *
- * streaming 阶段的 editToolCallDelta + partialToolCall{path}
- * 由 conversationRuntime 的 onEvent 回调处理，此处不重复发送。
+ * Server 不再用本地 fs 预读/预计算。文件内容以 Client readResult 为准。
  */
 
 import type { AgentServerMessage } from '../../gen/agent_v1_pb';
@@ -20,7 +18,6 @@ import type { LLMMessage } from '../llm/types';
 import {
     execMessage,
     heartbeat,
-    toolCallCompleted,
     toolCallStarted,
 } from './stream';
 import { finalizeToolCall } from './toolLifecycle';
@@ -29,7 +26,167 @@ import {
     waitForExecClientMessageWithHeartbeat,
     waitForExecStreamCloseWithHeartbeat,
 } from './wait';
-import { computeDiffFromContents } from './toolkit/definitions/ApplyPatch';
+import type { EditPlan } from './toolkit/editPlans';
+import { applyStringEditToContent } from './toolkit/definitions/Edit';
+import { applyNotebookEditToContent } from './toolkit/definitions/EditNotebook';
+import { applyPatchToContent, computeDiffFromContents, type ParsedPatch } from './toolkit/definitions/ApplyPatch';
+
+function obj(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function str(value: unknown, fallback = ''): string {
+    return typeof value === 'string' ? value : fallback;
+}
+
+type ClientReadOutcome =
+    | { case: 'success'; content: string }
+    | { case: 'fileNotFound'; message: string }
+    | { case: 'error'; message: string };
+
+function resultOneof(value: Record<string, unknown>): { caseName: string; value: Record<string, unknown> } | null {
+    const result = obj(value.result);
+    if (typeof result.case === 'string') return { caseName: result.case, value: obj(result.value) };
+    for (const [caseName, caseValue] of Object.entries(value)) {
+        if (caseValue && typeof caseValue === 'object') return { caseName, value: obj(caseValue) };
+    }
+    return null;
+}
+
+function extractReadOutcome(execClientFrame: Record<string, unknown> | null): ClientReadOutcome {
+    if (!execClientFrame) return { case: 'error', message: 'read failed: no exec client message' };
+    const execClientMsg = obj(execClientFrame.execClientMessage);
+    const rr = obj(execClientMsg.readResult);
+    const oneof = resultOneof(rr);
+    if (!oneof) return { case: 'error', message: 'read failed: no readResult' };
+
+    if (oneof.caseName === 'success') {
+        const success = oneof.value;
+        const output = obj(success.output);
+        if (output.case === 'content') return { case: 'success', content: str(output.value) };
+        if (typeof output.content === 'string') return { case: 'success', content: output.content };
+        if (typeof success.content === 'string') return { case: 'success', content: success.content };
+        return { case: 'success', content: '' };
+    }
+
+    if (oneof.caseName === 'fileNotFound') {
+        const path = str(oneof.value.path);
+        return { case: 'fileNotFound', message: path ? `File not found: ${path}` : 'File not found' };
+    }
+
+    const message = str(oneof.value.error, str(oneof.value.message, str(oneof.value.reason, `read ${oneof.caseName}`)));
+    return { case: 'error', message };
+}
+
+function extractWriteError(execClientFrame: Record<string, unknown> | null): string | null {
+    if (!execClientFrame) return 'write failed: no exec client message';
+    const execClientMsg = obj(execClientFrame.execClientMessage);
+    const wr = obj(execClientMsg.writeResult);
+    const oneof = resultOneof(wr);
+    if (!oneof) return 'write failed: no writeResult';
+    if (oneof.caseName === 'success') return null;
+    return str(oneof.value.error, str(oneof.value.message, str(oneof.value.reason, `write ${oneof.caseName}`)));
+}
+
+function applyEditPlan(plan: EditPlan, read: ClientReadOutcome): { beforeContent: string; fileText: string; streamContent: string; message: string } {
+    if (plan.kind === 'write') {
+        if (read.case !== 'success' && read.case !== 'fileNotFound') throw new Error(read.message);
+        const beforeContent = read.case === 'success' ? read.content : '';
+        return {
+            beforeContent,
+            fileText: plan.contents,
+            streamContent: plan.streamContent,
+            message: beforeContent ? `The file ${plan.path} has been updated.` : `Wrote contents to ${plan.path}`,
+        };
+    }
+
+    if (plan.kind === 'stringReplace') {
+        if (read.case !== 'success') throw new Error(read.message);
+        const result = applyStringEditToContent({
+            path: plan.path,
+            beforeContent: read.content,
+            oldString: plan.oldString,
+            newString: plan.newString,
+            replaceAll: plan.replaceAll,
+        });
+        return {
+            beforeContent: read.content,
+            fileText: result.fileText,
+            streamContent: result.streamContent,
+            message: `The file ${plan.path} has been updated.`,
+        };
+    }
+
+    if (plan.kind === 'applyPatch') {
+        const parsed = plan.parsedPatch as ParsedPatch;
+        if (parsed.action === 'delete') {
+            throw new Error('ApplyPatch Delete File is not supported by editToolCall; use the Delete tool instead');
+        }
+        if (parsed.movePath) {
+            throw new Error('Move/Rename is not supported by ApplyPatch in BYOK yet');
+        }
+        if (parsed.action === 'add') {
+            if (read.case === 'success') throw new Error(`ApplyPatch Add File target already exists: ${plan.path}`);
+            if (read.case !== 'fileNotFound') throw new Error(read.message);
+            return {
+                beforeContent: '',
+                fileText: applyPatchToContent(parsed, ''),
+                streamContent: plan.streamContent,
+                message: `Success. Updated the following files:\nA ${plan.path}`,
+            };
+        }
+        if (read.case !== 'success') throw new Error(read.message);
+        return {
+            beforeContent: read.content,
+            fileText: applyPatchToContent(parsed, read.content),
+            streamContent: plan.streamContent,
+            message: `Success. Updated the following files:\nM ${plan.path}`,
+        };
+    }
+
+    if (plan.kind === 'editNotebook') {
+        if (read.case !== 'success') throw new Error(read.message);
+        return {
+            beforeContent: read.content,
+            fileText: applyNotebookEditToContent(
+                read.content,
+                plan.cellIdx,
+                plan.isNewCell,
+                plan.cellLanguage,
+                plan.oldString,
+                plan.newString,
+            ),
+            streamContent: plan.streamContent,
+            message: `The notebook ${plan.path} has been updated.`,
+        };
+    }
+
+    const unreachable: never = plan;
+    throw new Error(`Unsupported edit plan: ${JSON.stringify(unreachable)}`);
+}
+
+function finalizeEditResult(params: {
+    roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>;
+    messages: LLMMessage[];
+    toolName: string;
+    callId: string;
+    startedArgs: Record<string, unknown>;
+    input: Record<string, unknown>;
+    modelCallId: string;
+    rawToolResult: { result: { case: string; value: Record<string, unknown> } };
+}): AgentServerMessage {
+    return finalizeToolCall({
+        roundContext: params.roundContext,
+        messages: params.messages,
+        cursorToolType: 'editToolCall',
+        toolName: params.toolName,
+        callId: params.callId,
+        startedArgs: params.startedArgs,
+        rawToolResult: params.rawToolResult,
+        input: params.input,
+        modelCallId: params.modelCallId,
+    }).frame;
+}
 
 export async function* finalizeEditToolCall(params: {
     session: AgentSession;
@@ -38,65 +195,84 @@ export async function* finalizeEditToolCall(params: {
     modelCallId: string;
     startedArgs: Record<string, unknown>;
     input: Record<string, unknown>;
-    streamContent: string;
-    fileText: string;
-    beforeContent: string;
-    path: string;
+    plan: EditPlan;
     roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>;
     messages: LLMMessage[];
     allocateExecMessageId: () => number;
 }): AsyncGenerator<AgentServerMessage, void, void> {
-    const { callId, modelCallId, path, streamContent, fileText, beforeContent } = params;
-    const cursorToolType = 'editToolCall';
+    const { callId, modelCallId, plan } = params;
+    const path = plan.path;
+    const startedStreamContent = plan.kind === 'applyPatch' ? '' : plan.streamContent;
+    const editArgs = {
+        path,
+        ...(startedStreamContent ? { streamContent: startedStreamContent } : {}),
+    };
 
-    // 1. toolCallStarted — 保底 bubble 创建 (带 path + streamContent)
-    const editArgs = { path, streamContent };
-    logger.debug({ callId, path, streamContentLen: streamContent.length, modelCallId }, '[EDIT_T] 4.toolCallStarted');
-    yield toolCallStarted(callId, cursorToolType, editArgs, modelCallId);
+    logger.debug({ callId, path, modelCallId }, '[EDIT_T] 4.toolCallStarted');
+    yield toolCallStarted(callId, 'editToolCall', editArgs, modelCallId);
 
-    // 2. readArgs exec
     const readExecMsgId = params.allocateExecMessageId();
     yield execMessage(readExecMsgId, `${callId}-read`, 'readArgs', { path, toolCallId: callId });
-    yield* waitForExecClientMessageWithHeartbeat(params.session, readExecMsgId, null);
+    const readFrame = yield* waitForExecClientMessageWithHeartbeat(params.session, readExecMsgId, null);
     yield* waitForExecStreamCloseWithHeartbeat(params.session, readExecMsgId, null);
     yield heartbeat();
 
-    // 3. writeArgs exec
+    let applied: { beforeContent: string; fileText: string; streamContent: string; message: string };
+    try {
+        applied = applyEditPlan(plan, extractReadOutcome(readFrame));
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn({ tool: params.toolName, callId, path, error: message }, '[EDIT] apply plan failed');
+        yield finalizeEditResult({
+            ...params,
+            startedArgs: editArgs,
+            rawToolResult: { result: { case: 'error', value: { path, message } } },
+        });
+        return;
+    }
+
     const writeExecMsgId = params.allocateExecMessageId();
-    yield execMessage(writeExecMsgId, `${callId}-write`, 'writeArgs', { path, fileText, toolCallId: callId });
-    yield* waitForExecClientMessageWithHeartbeat(params.session, writeExecMsgId, null);
+    yield execMessage(writeExecMsgId, `${callId}-write`, 'writeArgs', {
+        path,
+        fileText: applied.fileText,
+        toolCallId: callId,
+        ...(plan.kind === 'editNotebook' ? { returnFileContentAfterWrite: true, fileBytes: new Uint8Array() } : {}),
+    });
+    const writeFrame = yield* waitForExecClientMessageWithHeartbeat(params.session, writeExecMsgId, null);
     yield* waitForExecStreamCloseWithHeartbeat(params.session, writeExecMsgId, null);
 
-    // 4. diff
-    const { diffString, linesAdded, linesRemoved } = computeDiffFromContents(beforeContent, fileText);
-    const message = !beforeContent ? `Wrote contents to ${path}` : `The file ${path} has been updated.`;
+    const writeError = extractWriteError(writeFrame);
+    if (writeError) {
+        logger.warn({ tool: params.toolName, callId, path, error: writeError }, '[EDIT] write failed');
+        yield finalizeEditResult({
+            ...params,
+            startedArgs: editArgs,
+            rawToolResult: { result: { case: 'error', value: { path, message: writeError } } },
+        });
+        return;
+    }
 
-    // 5. toolCallCompleted
+    const { diffString, linesAdded, linesRemoved } = computeDiffFromContents(applied.beforeContent, applied.fileText);
     const editResult = {
         result: {
             case: 'success',
             value: {
-                path, linesAdded, linesRemoved, diffString,
-                ...(beforeContent ? { beforeFullFileContent: beforeContent } : {}),
-                afterFullFileContent: fileText,
-                message,
+                path,
+                linesAdded,
+                linesRemoved,
+                diffString,
+                ...(applied.beforeContent ? { beforeFullFileContent: applied.beforeContent } : {}),
+                afterFullFileContent: applied.fileText,
+                message: applied.message,
             },
         },
     };
 
-    const finalized = finalizeToolCall({
-        roundContext: params.roundContext,
-        messages: params.messages,
-        cursorToolType,
-        toolName: params.toolName,
-        callId,
+    yield finalizeEditResult({
+        ...params,
         startedArgs: editArgs,
         rawToolResult: editResult,
-        input: params.input,
-        modelCallId,
     });
-
-    logger.debug({ callId, modelCallId }, '[EDIT_T] 5.toolCallCompleted');
-    yield finalized.frame;
     logger.info({ tool: params.toolName, path, linesAdded, linesRemoved }, '[EDIT] completed');
 }

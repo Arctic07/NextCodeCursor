@@ -1,3 +1,4 @@
+import type { AgentServerMessage } from '../gen/agent_v1_pb'
 import type { LLMMessage, LLMToolResultBlock } from '../handlers/llm/types'
 import { expect, it } from 'vitest'
 import { finalizeExecTool } from '../handlers/agent/execRuntime'
@@ -172,6 +173,389 @@ it('runToolCall dispatches local webFetch fallback without session', async () =>
     throw new Error('unexpected case')
   expect(completed.value.message.value.message.case).toBe('toolCallCompleted')
   expect(roundContext.pendingToolResults.length).toBe(1)
+})
+
+it('runToolCall edit tool uses client readResult before writeArgs', async () => {
+  const session = createEphemeralSession('edit-runtime')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        success: {
+          path: '/workspace/a.txt',
+          content: 'hello\nold\n',
+          totalLines: 2,
+          fileSize: '10',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 2,
+      writeResult: {
+        success: {
+          path: '/workspace/a.txt',
+          linesCreated: 2,
+          fileSize: 10,
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 2 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-edit-runtime',
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'old', new_string: 'new' },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(2)
+  const readFrame = execFrames[0]
+  const writeFrame = execFrames[1]
+  if (readFrame.message.case !== 'execServerMessage' || writeFrame.message.case !== 'execServerMessage')
+    throw new Error('expected exec frames')
+  expect(readFrame.message.value.message.case).toBe('readArgs')
+  expect(writeFrame.message.value.message.case).toBe('writeArgs')
+  expect((writeFrame.message.value.message.value as any).fileText).toBe('hello\nnew\n')
+
+  const completed = frames.find(frame => frame.message.case === 'interactionUpdate'
+    && frame.message.value.message.case === 'toolCallCompleted')
+  expect(completed).toBeTruthy()
+  expect(roundContext.pendingToolResults.length).toBe(1)
+  expect(roundContext.pendingToolResults[0].content).toContain('hello\nnew\n')
+})
+
+it('runToolCall ApplyPatch Add File fails when client readResult says target exists', async () => {
+  const session = createEphemeralSession('applypatch-add-exists')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        success: {
+          path: '/workspace/new.txt',
+          content: 'already here\n',
+          totalLines: 1,
+          fileSize: '13',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-patch-add-exists',
+      name: 'ApplyPatch',
+      input: {
+        patch: `*** Begin Patch
+*** Add File: new.txt
++created
+*** End Patch
+`,
+      },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'gpt-5',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(1)
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].isError).toBe(true)
+  expect(roundContext.pendingToolResults[0].content).toContain('target already exists')
+})
+
+it('runToolCall ApplyPatch Delete File is rejected before writeArgs', async () => {
+  const session = createEphemeralSession('applypatch-delete-reject')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        success: {
+          path: '/workspace/delete-me.txt',
+          content: 'delete me\n',
+          totalLines: 1,
+          fileSize: '10',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-patch-delete',
+      name: 'ApplyPatch',
+      input: {
+        patch: `*** Begin Patch
+*** Delete File: delete-me.txt
+*** End Patch
+`,
+      },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'gpt-5',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(1)
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].isError).toBe(true)
+  expect(roundContext.pendingToolResults[0].content).toContain('use the Delete tool instead')
+})
+
+it('runToolCall Write creates file when client readResult is fileNotFound', async () => {
+  const session = createEphemeralSession('write-new-file')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        fileNotFound: {
+          path: '/workspace/new.txt',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 2,
+      writeResult: {
+        success: {
+          path: '/workspace/new.txt',
+          linesCreated: 1,
+          fileSize: 8,
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 2 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-write-new',
+      name: 'Write',
+      input: { path: 'new.txt', contents: 'created\n' },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(2)
+  const writeFrame = execFrames[1]
+  if (writeFrame.message.case !== 'execServerMessage')
+    throw new Error('expected write frame')
+  expect(writeFrame.message.value.message.case).toBe('writeArgs')
+  expect((writeFrame.message.value.message.value as any).fileText).toBe('created\n')
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].content).toContain('created\n')
+})
+
+it('runToolCall Edit reports old_string not found from client content without writeArgs', async () => {
+  const session = createEphemeralSession('edit-old-string-missing')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        success: {
+          path: '/workspace/a.txt',
+          content: 'hello\n',
+          totalLines: 1,
+          fileSize: '6',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-edit-missing',
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'absent', new_string: 'new' },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(1)
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].isError).toBe(true)
+  expect(roundContext.pendingToolResults[0].content).toContain('String to replace not found')
+})
+
+it('runToolCall Edit rejects multiple matches from client content without writeArgs', async () => {
+  const session = createEphemeralSession('edit-multiple-matches')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        success: {
+          path: '/workspace/a.txt',
+          content: 'same\nsame\n',
+          totalLines: 2,
+          fileSize: '10',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-edit-multiple',
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'same', new_string: 'new' },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(1)
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].isError).toBe(true)
+  expect(roundContext.pendingToolResults[0].content).toContain('Found 2 matches')
+})
+
+it('runToolCall ApplyPatch Update File fails on fileNotFound without writeArgs', async () => {
+  const session = createEphemeralSession('applypatch-update-missing')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        fileNotFound: {
+          path: '/workspace/missing.txt',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-patch-update-missing',
+      name: 'ApplyPatch',
+      input: {
+        patch: `*** Begin Patch
+*** Update File: missing.txt
+@@
+-old
++new
+*** End Patch
+`,
+      },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'gpt-5',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(1)
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].isError).toBe(true)
+  expect(roundContext.pendingToolResults[0].content).toContain('File not found')
 })
 
 it('runToolCall injects workspace workingDirectory into shell tool args when model omits it', async () => {

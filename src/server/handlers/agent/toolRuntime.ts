@@ -16,7 +16,7 @@ import {
     buildWebSearchResult,
 } from './toolResults';
 import { finalizeToolCall } from './toolLifecycle';
-import { buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
+import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
 import type { AgentSession } from './session';
 
 export async function* runToolCall(params: {
@@ -125,19 +125,19 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     }
 
     // editToolCall (Edit/Write/ApplyPatch/EditNotebook):
-    // 官方流程: editToolCallDelta → toolCallStarted → readArgs exec → writeArgs exec → toolCallCompleted (含 diff)
+    // 官方流程: editToolCallDelta → toolCallStarted → readArgs exec → server apply plan → writeArgs exec → toolCallCompleted。
+    // 文件内容以 Client readResult 为准，Server 不再用本地 fs 预计算。
     if (cursorToolType === 'editToolCall' && params.session) {
-        let execArgs: Record<string, unknown>;
+        let plan;
         try {
-            execArgs = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
+            plan = buildEditPlan(tc.name, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: params.currentModelId,
                 workspacePath: params.workspacePath,
             });
         } catch (e) {
-
             const errorMsg = e instanceof Error ? e.message : String(e);
-            logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] editToolCall buildExecArgs failed');
+            logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] editToolCall buildEditPlan failed');
             yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
             const errorResult = { result: { case: 'error', value: { message: errorMsg } } };
             yield toolCallCompleted(tc.callId, cursorToolType, startedArgs, errorResult, modelCallId);
@@ -150,17 +150,6 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             return;
         }
 
-        const filePath = typeof execArgs.path === 'string' ? execArgs.path : '';
-        const fileText = typeof execArgs.fileText === 'string' ? execArgs.fileText : '';
-        // streamContent: Edit 返回仅被修改的内容; Write 返回全文
-        const streamContent = typeof execArgs.streamContent === 'string'
-            ? execArgs.streamContent as string
-            : fileText;
-        // beforeContent: server 端读取的原文件内容
-        const beforeContent = typeof execArgs.beforeContent === 'string'
-            ? execArgs.beforeContent as string
-            : '';
-
         yield* finalizeEditToolCall({
             session: params.session,
             toolName: tc.name,
@@ -168,10 +157,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             modelCallId,
             startedArgs,
             input: sanitizedInput,
-            streamContent,
-            fileText,
-            beforeContent,
-            path: filePath,
+            plan,
             roundContext: params.roundContext,
             messages: params.messages,
             allocateExecMessageId: params.allocateExecMessageId,
