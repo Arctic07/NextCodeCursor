@@ -7,15 +7,23 @@
  *   2. pnpm run package (check-types + lint + esbuild)
  *   3. pnpm exec vsce package
  *   4. 复制 .vsix 到 installer/vsix/
+ *
+ * 默认 extension root 是 ../Cursor++。
+ * 使用 worktree 测试时可通过环境变量覆盖：
+ *   CURSOR2PLUS_EXTENSION_ROOT=../Cursor++-client-fs-edit-runtime npm run build:all
  */
 import { execSync } from 'child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const installerRoot = join(__dirname, '..');
-const extensionRoot = join(installerRoot, '..', 'Cursor++');
+const defaultExtensionRoot = join(installerRoot, '..', 'Cursor++');
+const extensionRootEnv = process.env.CURSOR2PLUS_EXTENSION_ROOT || process.env.CURSORPP_EXTENSION_ROOT;
+const extensionRoot = extensionRootEnv
+  ? (isAbsolute(extensionRootEnv) ? extensionRootEnv : resolve(installerRoot, extensionRootEnv))
+  : defaultExtensionRoot;
 const vsixDir = join(installerRoot, 'vsix');
 
 // 清掉旧 vsix, 避免残留文件干扰
@@ -28,7 +36,10 @@ function clearVsix(dir) {
 clearVsix(extensionRoot);
 clearVsix(vsixDir);
 
-console.log('[build] Building Cursor++ extension...');
+console.log(`[build] Building Cursor++ extension from: ${extensionRoot}`);
+if (!existsSync(join(extensionRoot, 'package.json'))) {
+  throw new Error(`Invalid extension root: ${extensionRoot} (package.json not found)`);
+}
 const obf = process.argv.includes('--obf');
 execSync(obf ? 'pnpm run vsix:obf' : 'pnpm run vsix', { cwd: extensionRoot, stdio: 'inherit' });
 
