@@ -237,13 +237,46 @@ export function encodeAnthropicRequestMessages(messages: LLMMessage[]): {
   }
 }
 
+/**
+ * 规范化工具 schema — 确保顶层是 {type: "object"}
+ *
+ * MCP 工具的 inputSchema 可能不标准:
+ *   - Zod union → {anyOf: [{type:"object",...}, ...]} 顶层无 type
+ *   - 空 schema → {} 或 null
+ *
+ * Anthropic 原生 API 宽容, 但 DeepSeek 等兼容 API 严格要求 type:"object"。
+ * 此函数在进入任何 provider 编码前统一处理。
+ */
+function normalizeToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  if (!schema || typeof schema !== 'object')
+    return { type: 'object', properties: {} }
+
+  if (schema.type === 'object')
+    return schema
+
+  // anyOf / oneOf: 合并所有子 schema 的 properties (都设为可选)
+  const branches = (schema.anyOf ?? schema.oneOf) as Record<string, unknown>[] | undefined
+  if (Array.isArray(branches) && branches.length > 0) {
+    const merged: Record<string, unknown> = {}
+    for (const branch of branches) {
+      if (typeof branch === 'object' && branch?.properties) {
+        Object.assign(merged, branch.properties)
+      }
+    }
+    return { type: 'object', properties: merged }
+  }
+
+  // 其他情况: 补 type
+  return { ...schema, type: 'object', properties: schema.properties ?? {} }
+}
+
 export function encodeAnthropicTools(tools: LLMTool[] | undefined): Anthropic.MessageCreateParamsStreaming['tools'] | undefined {
   if (!tools?.length)
     return undefined
   return tools.map(tool => ({
     name: tool.name,
     description: tool.description,
-    input_schema: tool.inputSchema as Anthropic.Tool['input_schema'],
+    input_schema: normalizeToolSchema(tool.inputSchema) as Anthropic.Tool['input_schema'],
   }))
 }
 
@@ -331,7 +364,7 @@ export function encodeOpenAITools(tools: LLMTool[] | undefined): ChatCompletionC
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.inputSchema,
+      parameters: normalizeToolSchema(tool.inputSchema),
     },
   }))
 }
@@ -429,7 +462,7 @@ export function encodeGeminiTools(tools: LLMTool[] | undefined): Tool[] | undefi
   return [{ functionDeclarations: tools.map(t => ({
     name: t.name,
     description: t.description,
-    parameters: t.inputSchema,
+    parameters: normalizeToolSchema(t.inputSchema),
   })) }]
 }
 
@@ -675,7 +708,7 @@ export function encodeResponsesTools(
     type: 'function' as const,
     name: t.name,
     description: t.description,
-    parameters: t.inputSchema,
+    parameters: normalizeToolSchema(t.inputSchema),
     strict: false,
   }))
 }
