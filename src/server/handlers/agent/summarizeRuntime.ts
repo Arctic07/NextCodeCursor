@@ -23,7 +23,7 @@ export async function* handleSummarizeAction(
     const compactionPlan = planCompaction(historyEntries);
     const currentTokenDetails = clampTokenDetails(
         parsed.historyTokenDetails?.usedTokens ?? estimateMessagesTokens(historyEntries.map(entry => entry.message)),
-        parsed.historyTokenDetails?.maxTokens ?? route.contextTokenLimit,
+        parsed.historyTokenDetails?.maxTokens ?? parsed.contextTokenLimit ?? route.contextTokenLimit,
     );
     const contextUsagePercent = computeContextUsagePercent(currentTokenDetails.usedTokens, currentTokenDetails.maxTokens);
     const generationId = randomUUID();

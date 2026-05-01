@@ -14,6 +14,8 @@ function stubParsed(overrides: Record<string, unknown>): Parameters<typeof build
     mode: 'AGENT_MODE_AGENT',
     isSummarize: false,
     isSubagent: false,
+    isBackgroundTaskCompletion: false,
+    backgroundTaskCompletions: [],
     userRules: [],
     projectRules: [],
     agentSkills: [],

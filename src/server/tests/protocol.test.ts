@@ -30,6 +30,63 @@ it('parseRunRequest extracts prependUserMessages for mid-conversation replay', (
   ])
 })
 
+it('parseRunRequest converts backgroundTaskCompletionAction into simulated user text', () => {
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'conv-bg',
+      action: {
+        backgroundTaskCompletionAction: {
+          completions: [
+            {
+              taskId: 'task-1',
+              kind: 'BACKGROUND_TASK_KIND_SUBAGENT',
+              status: 'BACKGROUND_TASK_STATUS_SUCCESS',
+              title: 'Research worker',
+              detail: 'Final subagent answer',
+              threadId: 'thread-1',
+            },
+          ],
+        },
+      },
+      requestedModel: { modelId: 'model-e7r9cr' },
+    },
+  })
+
+  expect(parsed.isBackgroundTaskCompletion).toBe(true)
+  expect(parsed.backgroundTaskCompletions).toHaveLength(1)
+  expect(parsed.userText).toContain('<agent_notification>')
+  expect(parsed.userText).toContain('kind: subagent')
+  expect(parsed.userText).toContain('task_id: task-1')
+  expect(parsed.userText).toContain('Final subagent answer')
+})
+
+it('parseRunRequest extracts requested model context token limit', () => {
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'conv-context-param',
+      action: {
+        userMessageAction: {
+          userMessage: {
+            text: 'hello',
+            mode: 'AGENT_MODE_AGENT',
+          },
+          requestContext: {},
+        },
+      },
+      requestedModel: {
+        modelId: 'model-e7r9cr',
+        parameters: [
+          { id: 'thinking', value: 'true' },
+          { id: 'level', value: 'xhigh' },
+          { id: 'context', value: '272000' },
+        ],
+      },
+    },
+  })
+
+  expect(parsed.contextTokenLimit).toBe(272000)
+})
+
 it('parseRunRequest extracts summarizeAction compaction metadata from conversationState', () => {
   const encodedBlobId = Buffer.from('blob-summary').toString('base64')
   const encodedArchiveId = Buffer.from('archive-1').toString('base64')

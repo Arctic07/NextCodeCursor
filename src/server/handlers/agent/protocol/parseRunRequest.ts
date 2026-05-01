@@ -3,6 +3,82 @@ import { listKnowledgeItems } from '../../../config/knowledgeBaseStore'
 import { logger } from '../../../logger'
 import { emptyParsed } from './shared'
 
+type ParsedBackgroundTaskCompletion = {
+  taskId: string
+  kind: string
+  status: string
+  title: string
+  detail?: string
+  outputPath?: string
+  threadId?: string
+}
+
+function normalizeBackgroundTaskKind(value: unknown): string {
+  if (typeof value === 'number') {
+    if (value === 1) return 'shell'
+    if (value === 2) return 'subagent'
+  }
+  const text = String(value ?? '').toLowerCase()
+  if (text.includes('shell')) return 'shell'
+  if (text.includes('subagent')) return 'subagent'
+  return 'unspecified'
+}
+
+function normalizeBackgroundTaskStatus(value: unknown): string {
+  if (typeof value === 'number') {
+    if (value === 1) return 'success'
+    if (value === 2) return 'error'
+    if (value === 3) return 'aborted'
+  }
+  const text = String(value ?? '').toLowerCase()
+  if (text.includes('success')) return 'success'
+  if (text.includes('error')) return 'error'
+  if (text.includes('abort')) return 'aborted'
+  return text || 'unspecified'
+}
+
+function parseBackgroundTaskCompletions(action: Record<string, unknown> | undefined): ParsedBackgroundTaskCompletion[] {
+  const backgroundAction = action?.backgroundTaskCompletionAction as Record<string, unknown> | undefined
+  const completions = (backgroundAction?.completions as Array<Record<string, unknown>> | undefined) ?? []
+  return completions.map(c => ({
+    taskId: String(c.taskId ?? ''),
+    kind: normalizeBackgroundTaskKind(c.kind),
+    status: normalizeBackgroundTaskStatus(c.status),
+    title: String(c.title ?? ''),
+    ...(typeof c.detail === 'string' ? { detail: c.detail } : {}),
+    ...(typeof c.outputPath === 'string' ? { outputPath: c.outputPath } : {}),
+    ...(typeof c.threadId === 'string' ? { threadId: c.threadId } : {}),
+  }))
+}
+
+function formatBackgroundTaskCompletionMessage(completions: ParsedBackgroundTaskCompletion[]): string {
+  const blocks = completions.map((c, index) => {
+    const lines = [
+      `kind: ${c.kind}`,
+      c.taskId ? `task_id: ${c.taskId}` : undefined,
+      `status: ${c.status}`,
+      c.title ? `title: ${c.title}` : undefined,
+      c.outputPath ? `output_path: ${c.outputPath}` : undefined,
+      c.threadId ? `thread_id: ${c.threadId}` : undefined,
+      'response:',
+      '<response>',
+      c.detail?.trim() || 'No output',
+      '</response>',
+    ].filter((line): line is string => line !== undefined)
+    return completions.length > 1 ? `task_completion_${index + 1}:\n${lines.join('\n')}` : lines.join('\n')
+  })
+
+  return `<system_reminder>
+Do not reiterate or repeat the contents of this agent notification to the user unless asked to do so.
+
+Follow your instructions for Handling subagent notifications.
+</system_reminder>
+
+<agent_notification>
+${blocks.join('\n\n')}
+</agent_notification>`
+}
+
 /** 解析 runRequest protobuf → ParsedRunRequest */
 export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest {
   const runRequest = msg.runRequest as Record<string, unknown> | undefined
@@ -15,6 +91,8 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const resumeAction = action?.resumeAction as Record<string, unknown> | undefined
   const isResume = !!resumeAction
   const isSummarize = !!action?.summarizeAction
+  const backgroundTaskCompletions = parseBackgroundTaskCompletions(action)
+  const isBackgroundTaskCompletion = backgroundTaskCompletions.length > 0
   // 子代理判定: subagentTypeName 由客户端在创建 subagent RunSSE 时设置
   // conversationGroupId 在 toJson() 后被 proto 丢弃 (非 schema field)
   const subagentTypeName = runRequest.subagentTypeName as string | undefined
@@ -22,7 +100,18 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
 
   logger.debug({
     actionKeys: action ? Object.keys(action) : [],
-    isSummarize, isResume, isSubagent,
+    isSummarize, isResume, isSubagent, isBackgroundTaskCompletion,
+    backgroundTaskCompletionCount: backgroundTaskCompletions.length,
+    backgroundTaskCompletionSamples: backgroundTaskCompletions.slice(0, 3).map(c => ({
+      taskId: c.taskId,
+      kind: c.kind,
+      status: c.status,
+      title: c.title,
+      hasDetail: !!c.detail,
+      detailLen: c.detail?.length ?? 0,
+      hasOutputPath: !!c.outputPath,
+      hasThreadId: !!c.threadId,
+    })),
     runRequestTopKeys: Object.keys(runRequest).filter(k => !['conversationState', 'action', 'modelDetails', 'mcpTools'].includes(k)),
   }, '[AGENT] action diagnosis')
 
@@ -529,6 +618,9 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const planContent = (executePlanAction?.planFileContent as string) ?? ''
   const planFileUri = (executePlanAction?.planFileUri as string) ?? ''
   const baseUserText = (userMessage?.text as string) ?? ''
+  const backgroundTaskCompletionText = isBackgroundTaskCompletion
+    ? formatBackgroundTaskCompletionMessage(backgroundTaskCompletions)
+    : ''
 
   // 解析 RequestedModel.parameters[] — 客户端运行时 thinking 配置
   const requestedParams = (requestedModel?.parameters as Array<{ id: string, value: string }>) ?? []
@@ -537,6 +629,8 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const clientThinkingLevel = paramMap.get('level') || undefined
   const clientThinkingBudgetRaw = paramMap.get('budget')
   const clientThinkingBudget = clientThinkingBudgetRaw ? Number(clientThinkingBudgetRaw) : undefined
+  const clientContextTokenLimitRaw = paramMap.get('context')
+  const clientContextTokenLimit = clientContextTokenLimitRaw ? Number(clientContextTokenLimitRaw) : undefined
 
   if (requestedParams.length > 0) {
     logger.debug({ parameters: Object.fromEntries(paramMap) }, '[AGENT] client thinking parameters')
@@ -545,13 +639,20 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   return {
     userText: isExecutePlan && planContent
       ? `Execute the following plan:\n\n${planContent}`
-      : baseUserText,
+      : isBackgroundTaskCompletion
+        ? backgroundTaskCompletionText
+        : baseUserText,
     // 优先 requestedModel (新 field 9), fallback modelDetails (旧 field 3)
     modelId: (requestedModel?.modelId as string) || (modelDetails?.modelId as string) || '',
     conversationId: (runRequest.conversationId as string) ?? '',
+    contextTokenLimit: clientContextTokenLimit && Number.isFinite(clientContextTokenLimit) && clientContextTokenLimit > 0
+      ? Math.floor(clientContextTokenLimit)
+      : undefined,
     mode: (userMessage?.mode as string) ?? 'AGENT_MODE_AGENT',
     isSummarize,
     isSubagent,
+    isBackgroundTaskCompletion,
+    backgroundTaskCompletions,
     clientThinking,
     clientThinkingLevel,
     clientThinkingBudget: clientThinkingBudget && Number.isFinite(clientThinkingBudget) ? clientThinkingBudget : undefined,

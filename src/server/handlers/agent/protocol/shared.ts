@@ -14,6 +14,8 @@ export function emptyParsed(): ParsedRunRequest {
     mode: '',
     isSummarize: false,
     isSubagent: false,
+    isBackgroundTaskCompletion: false,
+    backgroundTaskCompletions: [],
     userRules: [],
     projectRules: [],
     agentSkills: [],

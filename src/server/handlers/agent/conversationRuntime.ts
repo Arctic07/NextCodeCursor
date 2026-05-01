@@ -1,4 +1,4 @@
-import type { AgentServerMessage } from '../../gen/agent_v1_pb'
+import { SimulatedMsgReason, type AgentServerMessage } from '../../gen/agent_v1_pb'
 import type { LLMContentBlock, LLMMessage } from '../llm/types'
 import type { ParsedRunRequest } from './protocol'
 import type { AgentSession } from './session'
@@ -12,7 +12,7 @@ import { emitFinalCheckpoint, emitRollingCheckpoint } from './checkpointManager'
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy'
 import { flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
 import { buildMessages, workspaceUris } from './protocol'
-import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream } from './stream'
+import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
 import { resolveToolPath } from './toolkit/pathUtils'
 import { runToolCall } from './toolRuntime'
@@ -116,18 +116,91 @@ function decodeEscape(ch: string): string {
     case '\\': return '\\'
     case '"': return '"'
     case '/': return '/'
-    case 'r': return ''
+    case 'r': return '\r'
     default: return '\\' + ch
   }
 }
 
+type EditNewlineStats = {
+  chars: number
+  crlf: number
+  lfOnly: number
+  crOnly: number
+  crcrlf: number
+  mixed: boolean
+  trailingNewline: boolean
+  maxConsecutiveBlankLines: number
+}
+
+function editNewlineStats(text: string): EditNewlineStats {
+  let crlf = 0
+  let lfOnly = 0
+  let crOnly = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\r') {
+      if (text[i + 1] === '\n') {
+        crlf++
+        i++
+      } else {
+        crOnly++
+      }
+    } else if (ch === '\n') {
+      lfOnly++
+    }
+  }
+
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  let currentBlankRun = 0
+  let maxConsecutiveBlankLines = 0
+  for (const line of normalized.split('\n')) {
+    if (line.trim().length === 0) {
+      currentBlankRun++
+      maxConsecutiveBlankLines = Math.max(maxConsecutiveBlankLines, currentBlankRun)
+    } else {
+      currentBlankRun = 0
+    }
+  }
+
+  return {
+    chars: text.length,
+    crlf,
+    lfOnly,
+    crOnly,
+    crcrlf: (text.match(/\r\r\n/g) ?? []).length,
+    mixed: crlf > 0 && (lfOnly > 0 || crOnly > 0),
+    trailingNewline: text.endsWith('\n') || text.endsWith('\r'),
+    maxConsecutiveBlankLines,
+  }
+}
+
+function editToolTargetStats(toolName: string, input: Record<string, unknown>): Record<string, EditNewlineStats> {
+  const stats: Record<string, EditNewlineStats> = {}
+  const add = (key: string) => {
+    const value = input[key]
+    if (typeof value === 'string') stats[key] = editNewlineStats(value)
+  }
+  if (toolName === 'Write') add('contents')
+  else if (toolName === 'ApplyPatch') add('patch')
+  else {
+    add('old_string')
+    add('new_string')
+  }
+  return stats
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+type EditStreamDiagnostics = {
+  deltaCount: number
+  streamContent: string
+}
+
 const editExtractors = new Map<string, EditDeltaExtractor>()
 const editPathSent = new Set<string>()
+const editStreamDiagnostics = new Map<string, EditStreamDiagnostics>()
 
 /** Auto-summarize 阈值（与客户端的 speculative summarization 70% 区分，服务端在更激进的阈值触发） */
 const AUTO_SUMMARIZE_THRESHOLD_PERCENT = 85
@@ -346,9 +419,19 @@ export async function* handleConversationRun(
   session: AgentSession | null,
 ): AsyncIterable<AgentServerMessage> {
   const route = resolveProviderRuntime(parsed.modelId)
+  const requestedContextTokenLimit = parsed.contextTokenLimit
   if (parsed.contextTokenLimit === undefined) {
     parsed.contextTokenLimit = route.contextTokenLimit
   }
+  const contextTokenLimit = parsed.contextTokenLimit ?? route.contextTokenLimit
+  logger.debug({
+    conversationId: parsed.conversationId,
+    modelId: parsed.modelId,
+    routeContextTokenLimit: route.contextTokenLimit,
+    requestedContextTokenLimit,
+    effectiveContextTokenLimit: contextTokenLimit,
+    source: requestedContextTokenLimit !== undefined ? 'requestedModel.parameters.context' : 'route.contextTokenLimit',
+  }, '[AGENT] context token limit resolved')
   const [systemMessage, preambleUserMessage, currentUserMessage] = buildMessages(parsed, route.promptProfile)
   const systemContent = typeof systemMessage.content === 'string' ? systemMessage.content : ''
   const preambleUserContent = typeof preambleUserMessage.content === 'string' ? preambleUserMessage.content : ''
@@ -403,6 +486,37 @@ export async function* handleConversationRun(
   }
 
   yield heartbeat()
+
+  if (parsed.isBackgroundTaskCompletion) {
+    const completion = parsed.backgroundTaskCompletions[0]
+    logger.info({
+      conversationId: parsed.conversationId,
+      completionCount: parsed.backgroundTaskCompletions.length,
+      completions: parsed.backgroundTaskCompletions.map(c => ({
+        taskId: c.taskId,
+        kind: c.kind,
+        status: c.status,
+        title: c.title,
+        hasDetail: !!c.detail,
+        detailLen: c.detail?.length ?? 0,
+        hasOutputPath: !!c.outputPath,
+        hasThreadId: !!c.threadId,
+      })),
+      simulatedUserTextLen: parsed.userText.length,
+    }, '[AGENT] background task completion: appending simulated user message')
+    yield userMessageAppended({
+      text: parsed.userText,
+      messageId: `background-completion-${Date.now()}`,
+      mode: parsed.mode,
+      simulatedMsgReason: SimulatedMsgReason.BACKGROUND_TASK_COMPLETION,
+      simulatedMessageMetadata: completion
+        ? {
+            ...(completion.title ? { title: completion.title } : {}),
+            ...(completion.taskId ? { taskId: completion.taskId } : {}),
+          }
+        : undefined,
+    })
+  }
 
   const rebuiltHistory = yield* rebuildConversationHistory({
     historyBlobIds: parsed.historyBlobIds,
@@ -488,13 +602,15 @@ export async function* handleConversationRun(
             inflightToolCalls.set(event.id, { name: event.name, input: '' })
             if (EDIT_TOOL_NAMES.has(event.name)) {
               editExtractors.set(event.id, new EditDeltaExtractor(event.name))
+              editStreamDiagnostics.set(event.id, { deltaCount: 0, streamContent: '' })
               logger.debug({ callId: event.id, tool: event.name }, '[EDIT_T] 1.tool_use_start → extractor created')
             }
             break
           }
           case 'tool_use_delta': {
             const current = inflightToolCalls.get(event.id) ?? { name: '', input: '' }
-            inflightToolCalls.set(event.id, { ...current, input: current.input + event.input })
+            const accumulatedInput = current.input + event.input
+            inflightToolCalls.set(event.id, { ...current, input: accumulatedInput })
             const extractor = editExtractors.get(event.id)
             if (extractor) {
               const content = extractor.feed(event.input)
@@ -505,8 +621,27 @@ export async function* handleConversationRun(
                 const normalizedPath = normalizeDetectedEditPath(extractor.detectedPath, workspacePath)
                 frames.push(partialToolCall(event.id, 'editToolCall', mcid, { path: normalizedPath }))
                 logger.debug({ callId: event.id, path: normalizedPath, rawPath: extractor.detectedPath, mcid }, '[EDIT_T] 2.partialToolCall{path}')
+                const streamDiag = editStreamDiagnostics.get(event.id)
+                logger.debug({
+                  callId: event.id,
+                  tool: current.name,
+                  path: normalizedPath,
+                  rawPath: extractor.detectedPath,
+                  streamedBeforePath: streamDiag ? {
+                    deltaCount: streamDiag.deltaCount,
+                    streamContent: editNewlineStats(streamDiag.streamContent),
+                  } : undefined,
+                  currentDelta: editNewlineStats(event.input),
+                  accumulatedInput: editNewlineStats(accumulatedInput),
+                  mcid,
+                }, '[EDIT_NL] edit path detected during stream')
               }
               if (content) {
+                const streamDiag = editStreamDiagnostics.get(event.id)
+                if (streamDiag) {
+                  streamDiag.deltaCount++
+                  streamDiag.streamContent += content
+                }
                 frames.push(editToolCallStreamDelta(event.id, content, mcid))
                 logger.debug({ callId: event.id, contentLen: content.length, hasPath: editPathSent.has(event.id), mcid }, '[EDIT_T] 3.editToolCallDelta')
               }
@@ -516,16 +651,41 @@ export async function* handleConversationRun(
           }
           case 'tool_use_done': {
             editExtractors.delete(event.id)
-            editPathSent.delete(event.id)
+            const pathWasSent = editPathSent.has(event.id)
+            const streamDiag = editStreamDiagnostics.get(event.id)
             const current = inflightToolCalls.get(event.id)
             if (current) {
               // 权威参数: done 事件携带的完整 arguments > delta 累积
               const rawArgs = event.arguments ?? current.input ?? ''
               let input: Record<string, unknown> = {}
               try { input = JSON.parse(rawArgs) } catch {}
+              if (EDIT_TOOL_NAMES.has(current.name)) {
+                logger.debug({
+                  callId: event.id,
+                  tool: current.name,
+                  pathWasSentDuringStream: pathWasSent,
+                  rawArgs: editNewlineStats(rawArgs),
+                  targetFields: editToolTargetStats(current.name, input),
+                  streamedContent: streamDiag ? {
+                    deltaCount: streamDiag.deltaCount,
+                    stats: editNewlineStats(streamDiag.streamContent),
+                    suspicious: {
+                      hasCrCrLf: /\r\r\n/.test(streamDiag.streamContent),
+                      mixedLineEndings: editNewlineStats(streamDiag.streamContent).mixed,
+                      hasLargeBlankRun: editNewlineStats(streamDiag.streamContent).maxConsecutiveBlankLines >= 3,
+                    },
+                  } : undefined,
+                }, '[EDIT_NL] final edit tool arguments newline diagnostics')
+              }
               pendingToolCalls.push({ callId: event.id, name: current.name, input })
               roundAssistantBlocks.push({ type: 'tool_use', id: event.id, name: current.name, input })
               inflightToolCalls.delete(event.id)
+              editPathSent.delete(event.id)
+              editStreamDiagnostics.delete(event.id)
+            }
+            else {
+              editPathSent.delete(event.id)
+              editStreamDiagnostics.delete(event.id)
             }
             break
           }
@@ -646,7 +806,7 @@ export async function* handleConversationRun(
         allBlobIds: allBlobIdsForCheckpoint,
         summaryArchiveIds: currentSummaryArchiveIds,
         usedTokensEstimate,
-        contextTokenLimit: route.contextTokenLimit,
+        contextTokenLimit,
         mode: parsed.mode,
         lastAssistantContent,
         usageTotals,
@@ -658,12 +818,12 @@ export async function* handleConversationRun(
 
       // 链路①: 服务端 Agent Run 内自动 summarize
       // 当 context window 使用量超过阈值时，在继续下一轮 LLM 调用前自动执行 compaction
-      if (!autoSummarizePerformed && shouldTriggerCompaction(usedTokensEstimate, route.contextTokenLimit, AUTO_SUMMARIZE_THRESHOLD_PERCENT)) {
+      if (!autoSummarizePerformed && shouldTriggerCompaction(usedTokensEstimate, contextTokenLimit, AUTO_SUMMARIZE_THRESHOLD_PERCENT)) {
         logger.info({
           conversationId: parsed.conversationId,
           round,
           usedTokensEstimate,
-          contextTokenLimit: route.contextTokenLimit,
+          contextTokenLimit,
           thresholdPercent: AUTO_SUMMARIZE_THRESHOLD_PERCENT,
         }, '[AGENT] auto-summarize: threshold exceeded, triggering inline compaction')
 
@@ -672,7 +832,7 @@ export async function* handleConversationRun(
           allBlobIds: allBlobIdsForCheckpoint,
           summaryArchiveIds: currentSummaryArchiveIds,
           usedTokensEstimate,
-          contextTokenLimit: route.contextTokenLimit,
+          contextTokenLimit,
           messages,
           route,
         })
@@ -735,7 +895,7 @@ export async function* handleConversationRun(
     allBlobIds: [...parsed.historyBlobIds, ...blobIds],
     summaryArchiveIds: currentSummaryArchiveIds,
     usedTokensEstimate,
-    contextTokenLimit: route.contextTokenLimit,
+    contextTokenLimit,
     mode: parsed.mode,
     lastAssistantContent,
     usageTotals,

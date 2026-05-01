@@ -55,6 +55,9 @@ import {
   ToolCallSchema,
   ToolCallStartedUpdateSchema,
   TrackedGitRepoSchema,
+  UserMessageAppendedUpdateSchema,
+  UserMessageSchema,
+  SimulatedMsgReason,
   UpdateTodosToolCallSchema,
   WebFetchToolCallSchema,
   WebSearchToolCallSchema,
@@ -173,6 +176,38 @@ export function textDelta(text: string): AgentServerMessage {
 /** 构造 tokenDelta 帧 */
 export function tokenDelta(tokens: number): AgentServerMessage {
   return iu({ case: 'tokenDelta', value: { tokens } })
+}
+
+/** 构造 userMessageAppended 帧（用于后台任务完成等客户端模拟消息） */
+export function userMessageAppended(params: {
+  text: string
+  messageId: string
+  mode: string
+  simulatedMsgReason?: SimulatedMsgReason
+  simulatedMessageMetadata?: { title?: string, taskId?: string }
+}): AgentServerMessage {
+  return validateFrame(create(AgentServerMessageSchema, {
+    message: {
+      case: 'interactionUpdate',
+      value: create(InteractionUpdateSchema, {
+        message: {
+          case: 'userMessageAppended',
+          value: create(UserMessageAppendedUpdateSchema, {
+            userMessage: create(UserMessageSchema, {
+              text: params.text,
+              richText: params.text,
+              messageId: params.messageId,
+              mode: resolveAgentMode(params.mode),
+              isSimulatedMsg: params.simulatedMsgReason !== undefined,
+              simulatedMsgReason: params.simulatedMsgReason,
+              simulatedMessageMetadata: params.simulatedMessageMetadata,
+              conversationStateBlobId: new Uint8Array(0),
+            }),
+          }),
+        } as any,
+      }),
+    },
+  }))
 }
 
 /** 构造 summaryStarted 帧 */

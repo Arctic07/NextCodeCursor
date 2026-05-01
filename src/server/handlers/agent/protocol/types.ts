@@ -25,6 +25,16 @@ export interface ParsedRunRequest {
   mode: string
   isSummarize: boolean
   isSubagent: boolean
+  isBackgroundTaskCompletion: boolean
+  backgroundTaskCompletions: Array<{
+    taskId: string
+    kind: string
+    status: string
+    title: string
+    detail?: string
+    outputPath?: string
+    threadId?: string
+  }>
   /** 用户设置的规则 (type: global,对应 .cursorrules / user settings rules) */
   userRules: string[]
   /** 项目/文件级别规则 (type: fileGlobbed / manuallyAttached) */
