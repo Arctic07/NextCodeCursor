@@ -19,12 +19,12 @@ export function isAgentRunAbortedError(error: unknown): error is AgentRunAborted
     return error instanceof AgentRunAbortedError;
 }
 
-function isExecClientMessageForId(msg: Record<string, unknown>, execMessageId: number): boolean {
+export function isExecClientMessageForId(msg: Record<string, unknown>, execMessageId: number): boolean {
     return 'execClientMessage' in msg
         && Number((msg.execClientMessage as Record<string, unknown>).id) === execMessageId;
 }
 
-function isExecStreamCloseForId(msg: Record<string, unknown>, execMessageId: number): boolean {
+export function isExecStreamCloseForId(msg: Record<string, unknown>, execMessageId: number): boolean {
     if (!('execClientControlMessage' in msg)) return false;
     const ctrl = msg.execClientControlMessage as Record<string, unknown>;
     const streamClose = ctrl.streamClose as Record<string, unknown> | undefined;
@@ -47,7 +47,7 @@ function buildExecAbortError(execThrow: Record<string, unknown>, execMessageId: 
     return new AgentRunAbortedError(error, { execMessageId, clientStackTrace });
 }
 
-async function waitForExecMessageMatching(
+export async function waitForExecMessageMatching(
     session: AgentSession,
     execMessageId: number,
     predicate: (msg: Record<string, unknown>) => boolean,
@@ -167,6 +167,27 @@ export async function* waitForExecStreamCloseWithHeartbeat(
         ),
         intervalMs,
     );
+}
+
+/** 等待 exec result + stream close（Promise 形式，用于 Promise.all 并发） */
+export async function awaitExecResultAndClose(
+    session: AgentSession,
+    execMessageId: number,
+    timeoutMs: number | null = null,
+): Promise<Record<string, unknown> | null> {
+    const execResult = await waitForExecMessageMatching(
+        session,
+        execMessageId,
+        msg => isExecClientMessageForId(msg, execMessageId),
+        timeoutMs,
+    );
+    await waitForExecMessageMatching(
+        session,
+        execMessageId,
+        msg => isExecStreamCloseForId(msg, execMessageId),
+        5_000,
+    ).catch(() => {});
+    return execResult;
 }
 
 export async function* waitForShellExecEventWithHeartbeat(

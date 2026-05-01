@@ -18,6 +18,17 @@ import {
 import { finalizeToolCall } from './toolLifecycle';
 import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
 import type { AgentSession } from './session';
+import { buildExecToolResult } from './toolResults';
+import { awaitExecResultAndClose } from './wait';
+
+export interface TaskLaunchContext {
+    tc: ToolCallInfo;
+    execMessageId: number;
+    modelCallId: string;
+    startedArgs: Record<string, unknown>;
+    sanitizedInput: Record<string, unknown>;
+    cursorToolType: string;
+}
 
 export async function* runToolCall(params: {
     toolCall: ToolCallInfo;
@@ -410,4 +421,122 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
         modelCallId,
     });
     yield finalized.frame;
+}
+
+// ── Task 并发支持 ──
+
+/** Phase 1: 发送 toolCallStarted + execMessage，不等待结果 */
+export async function* launchTaskTool(params: {
+    toolCall: ToolCallInfo;
+    availableMcpTools: AvailableMcpTool[];
+    conversationId: string;
+    currentModelId: string;
+    workspacePath?: string;
+    round: number;
+    allocateExecMessageId: () => number;
+}): AsyncGenerator<AgentServerMessage, TaskLaunchContext | null, void> {
+    const tc = params.toolCall;
+    const resolvedTool = resolveToolCall(tc.name, tc.input, params.availableMcpTools);
+    const cursorToolType = resolvedTool.cursorToolType;
+    const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`;
+
+    let sanitizedInput = resolvedTool.sanitizedInput;
+    const originalModel = sanitizedInput.model ?? sanitizedInput.modelId;
+    if (originalModel && originalModel !== params.currentModelId) {
+        logger.warn(
+            { requested: originalModel, forced: params.currentModelId, callId: tc.callId },
+            '[TOOL] subagent model override — BYOK mode always inherits parent conversation model',
+        );
+    }
+    sanitizedInput = { ...sanitizedInput, model: params.currentModelId, modelId: params.currentModelId };
+
+    logger.info({
+        callId: tc.callId,
+        runInBackground: sanitizedInput.run_in_background ?? sanitizedInput.runInBackground ?? '(unset)',
+        resume: sanitizedInput.resume ?? '(none)',
+        subagentType: sanitizedInput.subagent_type ?? sanitizedInput.subagentType,
+    }, '[TOOL] taskToolCall dispatching');
+
+    let startedArgs: Record<string, unknown>;
+    try {
+        startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId, {
+            conversationId: params.conversationId,
+            currentModelId: params.currentModelId,
+            workspacePath: params.workspacePath,
+        });
+    }
+    catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] taskToolCall buildStartedArgs failed');
+        return null;
+    }
+
+    yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
+
+    let args: Record<string, unknown>;
+    try {
+        args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
+            conversationId: params.conversationId,
+            currentModelId: params.currentModelId,
+            workspacePath: params.workspacePath,
+        });
+    }
+    catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        logger.warn({ tool: tc.name, callId: tc.callId, error: errorMsg }, '[TOOL] taskToolCall buildExecArgs failed');
+        return null;
+    }
+
+    const execMessageId = params.allocateExecMessageId();
+    yield execMessage(execMessageId, `${tc.callId}-exec`, 'subagentArgs', args);
+
+    return { tc, execMessageId, modelCallId, startedArgs, sanitizedInput, cursorToolType };
+}
+
+/** Phase 3: 并发 await 全部 Task 结果，生成 completedFrame */
+export function finalizeTaskResult(
+    ctx: TaskLaunchContext,
+    execResult: Record<string, unknown> | null,
+    roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>,
+    messages: LLMMessage[],
+): AgentServerMessage {
+    if (execResult && 'execClientMessage' in execResult) {
+        const ecm = execResult.execClientMessage as Record<string, unknown>;
+        const sr = ecm.subagentResult as Record<string, unknown> | undefined;
+        const success = sr?.success as Record<string, unknown> | undefined;
+        logger.info({
+            tool: ctx.tc.name,
+            callId: ctx.tc.callId,
+            agentId: success?.agentId,
+            toolCallCount: success?.toolCallCount,
+            finalMsgLen: typeof success?.finalMessage === 'string' ? success.finalMessage.length : 0,
+        }, '[TOOL] task exec result received');
+
+        const finalized = finalizeToolCall({
+            roundContext,
+            messages,
+            cursorToolType: ctx.cursorToolType,
+            toolName: ctx.tc.name,
+            callId: ctx.tc.callId,
+            startedArgs: ctx.startedArgs,
+            rawToolResult: buildExecToolResult(ctx.cursorToolType, ecm, ctx.sanitizedInput),
+            input: ctx.sanitizedInput,
+            modelCallId: ctx.modelCallId,
+        });
+        return finalized.frame;
+    }
+
+    logger.warn({ tool: ctx.tc.name, callId: ctx.tc.callId }, '[TOOL] task exec ended without result');
+    const finalized = finalizeToolCall({
+        roundContext,
+        messages,
+        cursorToolType: ctx.cursorToolType,
+        toolName: ctx.tc.name,
+        callId: ctx.tc.callId,
+        startedArgs: ctx.startedArgs,
+        rawToolResult: { result: { case: 'error', value: { message: 'no result' } } },
+        input: ctx.sanitizedInput,
+        modelCallId: ctx.modelCallId,
+    });
+    return finalized.frame;
 }

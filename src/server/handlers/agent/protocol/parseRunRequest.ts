@@ -98,20 +98,19 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const subagentTypeName = runRequest.subagentTypeName as string | undefined
   const isSubagent = typeof subagentTypeName === 'string' && subagentTypeName.length > 0
 
+  if (isBackgroundTaskCompletion) {
+    logger.info({
+      count: backgroundTaskCompletions.length,
+      completions: backgroundTaskCompletions.map(c => ({
+        taskId: c.taskId, kind: c.kind, status: c.status, detailLen: c.detail?.length ?? 0,
+      })),
+    }, '[AGENT] backgroundTaskCompletion parsed');
+  }
+
   logger.debug({
     actionKeys: action ? Object.keys(action) : [],
     isSummarize, isResume, isSubagent, isBackgroundTaskCompletion,
     backgroundTaskCompletionCount: backgroundTaskCompletions.length,
-    backgroundTaskCompletionSamples: backgroundTaskCompletions.slice(0, 3).map(c => ({
-      taskId: c.taskId,
-      kind: c.kind,
-      status: c.status,
-      title: c.title,
-      hasDetail: !!c.detail,
-      detailLen: c.detail?.length ?? 0,
-      hasOutputPath: !!c.outputPath,
-      hasThreadId: !!c.threadId,
-    })),
     runRequestTopKeys: Object.keys(runRequest).filter(k => !['conversationState', 'action', 'modelDetails', 'mcpTools'].includes(k)),
   }, '[AGENT] action diagnosis')
 

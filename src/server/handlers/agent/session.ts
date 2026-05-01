@@ -15,22 +15,29 @@ import { logger } from '../../logger';
 export interface AgentSession {
     requestId: string;
     messages: Array<Record<string, unknown>>;
+    /** @deprecated 保留向后兼容，新代码使用 listeners */
     notify: (() => void) | null;
+    listeners: Set<() => void>;
     closed: boolean;
 }
 
 export function createEphemeralSession(requestId: string): AgentSession {
-    return { requestId, messages: [], notify: null, closed: false };
+    return { requestId, messages: [], notify: null, listeners: new Set(), closed: false };
+}
+
+function notifyAll(session: AgentSession): void {
+    session.notify?.();
+    for (const fn of session.listeners) fn();
 }
 
 export function pushSessionMessage(session: AgentSession, json: Record<string, unknown>): void {
     session.messages.push(json);
-    session.notify?.();
+    notifyAll(session);
 }
 
 export function markSessionClosed(session: AgentSession): void {
     session.closed = true;
-    session.notify?.();
+    notifyAll(session);
 }
 
 const sessions = new Map<string, AgentSession>();
@@ -38,7 +45,7 @@ const sessions = new Map<string, AgentSession>();
 export function getOrCreateSession(requestId: string): AgentSession {
     let session = sessions.get(requestId);
     if (!session) {
-        session = { requestId, messages: [], notify: null, closed: false };
+        session = { requestId, messages: [], notify: null, listeners: new Set(), closed: false };
         sessions.set(requestId, session);
         logger.debug({ requestId }, '[SESSION] created');
     }
@@ -58,7 +65,7 @@ export function appendMessage(requestId: string, data: string): void {
         const keys = Object.keys(json);
         logger.info({ requestId, keys, protoBytes: bytes.length }, '[SESSION] appendMessage');
         session.messages.push(json);
-        session.notify?.();
+        notifyAll(session);
     } catch (e) {
         logger.warn({ requestId, dataLen: data.length, error: (e as Error).message }, '[SESSION] proto decode failed');
     }
@@ -92,39 +99,39 @@ export async function waitForMessageMatching(
     if (session.closed) return null;
 
     return new Promise<Record<string, unknown> | null>((resolve) => {
+        let resolved = false;
+
+        const cleanup = () => {
+            resolved = true;
+            if (timer != null)
+                clearTimeout(timer);
+            session.listeners.delete(listener);
+        };
+
         const timer = timeoutMs == null ? null : setTimeout(() => {
-            session.notify = null;
+            if (resolved)
+                return;
+            cleanup();
             logger.warn({ requestId: session.requestId, timeoutMs }, '[SESSION] waitForMessage timeout');
             resolve(null);
         }, timeoutMs);
 
-        const clearTimer = () => {
-            if (timer != null) clearTimeout(timer);
-        };
-
-        const check = () => {
+        const listener = () => {
+            if (resolved)
+                return;
             const i = session.messages.findIndex(predicate);
             if (i >= 0) {
-                clearTimer();
-                session.notify = null;
+                cleanup();
                 resolve(session.messages.splice(i, 1)[0]);
-                return true;
+                return;
             }
             if (session.closed) {
-                clearTimer();
-                session.notify = null;
+                cleanup();
                 resolve(null);
-                return true;
             }
-            return false;
         };
 
-        session.notify = () => {
-            if (!check()) {
-                // 不匹配，继续等待
-                session.notify = check as any;
-            }
-        };
+        session.listeners.add(listener);
     });
 }
 
@@ -151,7 +158,7 @@ export function closeSession(requestId: string): void {
     const session = sessions.get(requestId);
     if (session) {
         session.closed = true;
-        session.notify?.();
+        notifyAll(session);
         sessions.delete(requestId);
         logger.debug({ requestId }, '[SESSION] closed');
     }

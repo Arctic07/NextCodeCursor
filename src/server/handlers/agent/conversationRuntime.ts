@@ -15,7 +15,8 @@ import { buildMessages, workspaceUris } from './protocol'
 import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
 import { resolveToolPath } from './toolkit/pathUtils'
-import { runToolCall } from './toolRuntime'
+import { finalizeTaskResult, launchTaskTool, runToolCall, type TaskLaunchContext } from './toolRuntime'
+import { awaitExecResultAndClose, waitForPromiseWithHeartbeat } from './wait'
 import { restoreBlobMessageToLLMMessage } from './transcript'
 import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, shouldTriggerCompaction } from './usage'
 import { isAgentRunAbortedError } from './wait'
@@ -741,7 +742,33 @@ export async function* handleConversationRun(
 
       const roundContext = route.createRoundContext()
 
+      // ── Phase 1: 批量发送 Task tool 的 started + exec（不等待结果） ──
+      const taskLaunches: TaskLaunchContext[] = []
+      const nonTaskCalls: typeof pendingToolCalls = []
       for (const tc of pendingToolCalls) {
+        if ((tc.name === 'Task' || tc.name === 'Subagent') && session) {
+          const ctx = yield* launchTaskTool({
+            toolCall: tc,
+            availableMcpTools: parsed.mcpTools,
+            conversationId: parsed.conversationId,
+            currentModelId: parsed.modelId,
+            workspacePath,
+            round,
+            allocateExecMessageId: () => ++blobCounter,
+          })
+          if (ctx)
+            taskLaunches.push(ctx)
+        }
+        else {
+          nonTaskCalls.push(tc)
+        }
+      }
+
+      if (taskLaunches.length > 1)
+        logger.info({ count: taskLaunches.length, callIds: taskLaunches.map(t => t.tc.callId) }, '[AGENT] task tools launched concurrently')
+
+      // ── Phase 2: 串行执行非 Task 工具（edit, shell, glob 等） ──
+      for (const tc of nonTaskCalls) {
         yield* runToolCall({
           toolCall: tc,
           availableMcpTools: parsed.mcpTools,
@@ -755,6 +782,18 @@ export async function* handleConversationRun(
           allocateExecMessageId: () => ++blobCounter,
           allocateInteractionId: () => interactionIdCounter++,
         })
+      }
+
+      // ── Phase 3: 并发等待所有 Task 结果 ──
+      if (taskLaunches.length > 0 && session) {
+        const resultPromises = taskLaunches.map(ctx =>
+          awaitExecResultAndClose(session, ctx.execMessageId),
+        )
+        const results = yield* waitForPromiseWithHeartbeat(Promise.all(resultPromises))
+        for (let i = 0; i < taskLaunches.length; i++) {
+          const frame = finalizeTaskResult(taskLaunches[i], results[i], roundContext, messages)
+          yield frame
+        }
       }
 
       // SwitchMode 成功后立即切换 mode,让下一轮 LLM 用新工具集
