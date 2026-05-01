@@ -60,6 +60,16 @@ describe('edit/write tool path handling', () => {
         replaceAll: plan.replaceAll,
       })
       expect(result.fileText).toBe('one\r\nTWO\r\none\r\n')
+
+      const resultWithRawCrlfNewString = applyStringEditToContent({
+        path: plan.path,
+        beforeContent: 'one\r\ntwo\r\n',
+        oldString: 'two',
+        newString: 'TWO\r\nTHREE',
+        replaceAll: false,
+      })
+      expect(resultWithRawCrlfNewString.fileText).toBe('one\r\nTWO\r\nTHREE\r\n')
+      expect(resultWithRawCrlfNewString.fileText).not.toContain('\r\r\n')
     }
     finally {
       rmSync(dir, { recursive: true, force: true })

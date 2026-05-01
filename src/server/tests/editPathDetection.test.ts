@@ -60,6 +60,12 @@ it('decodes JSON escapes in extracted content', () => {
   expect(content).toBe('line1\nline2\ttab')
 })
 
+it('preserves carriage returns in streamed edit content', () => {
+  const ext = new EditDeltaExtractor('Edit')
+  const content = ext.feed('{"path":"a.ts","old_string":"x","new_string":"line1\\r\\nline2"}')
+  expect(content).toBe('line1\r\nline2')
+})
+
 it('handles backslash escape at chunk boundary', () => {
   const ext = new EditDeltaExtractor('Edit')
   // chunk 1 以裸 backslash 结尾 — 转义字符跨 chunk

@@ -39,6 +39,75 @@ function str(value: unknown, fallback = ''): string {
     return typeof value === 'string' ? value : fallback;
 }
 
+type NewlineStats = {
+    chars: number;
+    crlf: number;
+    lfOnly: number;
+    crOnly: number;
+    crcrlf: number;
+    mixed: boolean;
+    trailingNewline: boolean;
+    maxConsecutiveBlankLines: number;
+};
+
+function newlineStats(text: string): NewlineStats {
+    let crlf = 0;
+    let lfOnly = 0;
+    let crOnly = 0;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '\r') {
+            if (text[i + 1] === '\n') {
+                crlf++;
+                i++;
+            }
+            else {
+                crOnly++;
+            }
+        }
+        else if (ch === '\n') {
+            lfOnly++;
+        }
+    }
+
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let currentBlankRun = 0;
+    let maxConsecutiveBlankLines = 0;
+    for (const line of normalized.split('\n')) {
+        if (line.trim().length === 0) {
+            currentBlankRun++;
+            maxConsecutiveBlankLines = Math.max(maxConsecutiveBlankLines, currentBlankRun);
+        }
+        else {
+            currentBlankRun = 0;
+        }
+    }
+
+    return {
+        chars: text.length,
+        crlf,
+        lfOnly,
+        crOnly,
+        crcrlf: (text.match(/\r\r\n/g) ?? []).length,
+        mixed: crlf > 0 && (lfOnly > 0 || crOnly > 0),
+        trailingNewline: text.endsWith('\n') || text.endsWith('\r'),
+        maxConsecutiveBlankLines,
+    };
+}
+
+function planNewlineStats(plan: EditPlan): Record<string, NewlineStats | string> {
+    switch (plan.kind) {
+        case 'write':
+            return { kind: plan.kind, contents: newlineStats(plan.contents), streamContent: newlineStats(plan.streamContent) };
+        case 'stringReplace':
+            return { kind: plan.kind, oldString: newlineStats(plan.oldString), newString: newlineStats(plan.newString), streamContent: newlineStats(plan.streamContent) };
+        case 'applyPatch':
+            return { kind: plan.kind, patchText: newlineStats(plan.patchText), streamContent: newlineStats(plan.streamContent) };
+        case 'editNotebook':
+            return { kind: plan.kind, oldString: newlineStats(plan.oldString), newString: newlineStats(plan.newString), streamContent: newlineStats(plan.streamContent) };
+    }
+}
+
 type ClientReadOutcome =
     | { case: 'success'; content: string }
     | { case: 'fileNotFound'; message: string }
@@ -217,9 +286,20 @@ export async function* finalizeEditToolCall(params: {
     yield* waitForExecStreamCloseWithHeartbeat(params.session, readExecMsgId, null);
     yield heartbeat();
 
+    const readOutcome = extractReadOutcome(readFrame);
+    logger.debug({
+        tool: params.toolName,
+        callId,
+        path,
+        planKind: plan.kind,
+        readCase: readOutcome.case,
+        read: readOutcome.case === 'success' ? newlineStats(readOutcome.content) : { message: readOutcome.message },
+        plan: planNewlineStats(plan),
+    }, '[EDIT_NL] readResult newline diagnostics');
+
     let applied: { beforeContent: string; fileText: string; streamContent: string; message: string };
     try {
-        applied = applyEditPlan(plan, extractReadOutcome(readFrame));
+        applied = applyEditPlan(plan, readOutcome);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -231,6 +311,21 @@ export async function* finalizeEditToolCall(params: {
         });
         return;
     }
+
+    logger.debug({
+        tool: params.toolName,
+        callId,
+        path,
+        planKind: plan.kind,
+        beforeContent: newlineStats(applied.beforeContent),
+        fileText: newlineStats(applied.fileText),
+        streamContent: newlineStats(applied.streamContent),
+        suspicious: {
+            fileTextHasCrCrLf: /\r\r\n/.test(applied.fileText),
+            fileTextMixedLineEndings: newlineStats(applied.fileText).mixed,
+            fileTextHasLargeBlankRun: newlineStats(applied.fileText).maxConsecutiveBlankLines >= 3,
+        },
+    }, '[EDIT_NL] writeArgs newline diagnostics');
 
     const writeExecMsgId = params.allocateExecMessageId();
     yield execMessage(writeExecMsgId, `${callId}-write`, 'writeArgs', {

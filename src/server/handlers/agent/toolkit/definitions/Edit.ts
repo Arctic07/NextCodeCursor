@@ -92,9 +92,10 @@ function normalizeEditText(value: string): string {
 }
 
 function restoreLineEndings(value: string, lineEnding: 'LF' | 'CRLF'): string {
+    const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     return lineEnding === 'CRLF'
-        ? value.replace(/\r\n/g, '\n').split('\n').join('\r\n')
-        : value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        ? normalized.split('\n').join('\r\n')
+        : normalized;
 }
 
 function countOccurrences(haystack: string, needle: string): number {

@@ -331,7 +331,7 @@ export function applyPatchToContent(patch: ParsedPatch, beforeContent: string): 
 
   // EOL 规范化
   const eol = beforeContent.includes('\r\n') ? '\r\n' : '\n'
-  const content = beforeContent.replace(/\r\n/g, '\n')
+  const content = beforeContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   let originalLines = content.split('\n')
 
   // 去掉尾部空元素 (与 Codex 一致: split('\n') 对 "foo\n" 产生 ["foo", ""])
