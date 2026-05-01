@@ -16,7 +16,7 @@
  *   repo42 (不拦截)    — repo/*
  *   api3 (不拦截)      — completion/CmdKService
  *   geoCpp (不拦截)    — completion/FileSyncService
- *   bcProxy (不拦截)   — core/BackgroundComposerService
+ *   bcProxy (BYOK stub) — core/BackgroundComposerService
  */
 import type { ConnectRouter } from '@connectrpc/connect';
 
