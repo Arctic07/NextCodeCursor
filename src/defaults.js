@@ -79,6 +79,12 @@ export const BYOK_REDIRECT = [
   'aiserver.v1.HealthService',
   'aiserver.v1.InAppAdService',
 
+  // ── BackgroundComposerService (逐方法 stub — 启动轮询 + UI 初始化) ──
+  'aiserver.v1.BackgroundComposerService/ListBackgroundComposers',
+  'aiserver.v1.BackgroundComposerService/GetBackgroundComposerUserSettings',
+  'aiserver.v1.BackgroundComposerService/ListTeamEnvironments',
+  'aiserver.v1.BackgroundComposerService/ListPersonalEnvironments',
+
   // ── REST endpoints (BYOK 流程下需要的假账号 stub) ──
   'REST:/auth/has_valid_payment_method',
   'REST:/auth/poll',
