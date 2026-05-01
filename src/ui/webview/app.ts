@@ -406,24 +406,30 @@ export function initApp(Alpine: AlpineType) {
       this.post('saveProviders', { providers: JSON.parse(JSON.stringify(merged)) })
     },
 
-    saveProvider(pid: string) {
+    saveProvider(_pid: string) {
       try {
-        const v = this.validate(pid)
-        if (!v.ok) {
-          const p = this.getDraft(pid)
+        let allOk = true
+        for (const p of this.providers) {
+          const v = this.validate(p.id)
+          if (v.ok)
+            continue
+          allOk = false
+          const providerName = p.name || 'Provider'
           for (const [, msg] of Object.entries(v.errors))
-            this.toast(`${p.name || 'Provider'}: ${msg}`, 'error', 6000)
+            this.toast(`${providerName}: ${msg}`, 'error', 6000)
           for (const [mid, errs] of Object.entries(v.modelErrors) as [string, Record<string, string>][]) {
             const m = (p.models || []).find((x: any) => x.id === mid)
             const modelLabel = m?.displayName || m?.apiModel || mid
             for (const [, msg] of Object.entries(errs))
-              this.toast(`${modelLabel}: ${msg}`, 'error', 6000)
-            if (!this.modelExpanded[pid])
-              this.modelExpanded[pid] = {}
-            this.modelExpanded[pid][mid] = true
+              this.toast(`${providerName}: ${modelLabel} — ${msg}`, 'error', 6000)
+            this.expanded[p.id] = true
+            if (!this.modelExpanded[p.id])
+              this.modelExpanded[p.id] = {}
+            this.modelExpanded[p.id][mid] = true
           }
-          return
         }
+        if (!allOk)
+          return
         const data = JSON.parse(JSON.stringify(this.providers))
         this.post('saveProviders', { providers: data })
       }

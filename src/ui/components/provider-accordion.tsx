@@ -4,23 +4,23 @@ import { ProviderFields } from './provider-fields'
 /** 单个 Provider 折叠面板 — 在 x-for="p in ..." 作用域内使用 */
 export function ProviderAccordion() {
   return (
-    <div class="acc" x-bind:class="{ 'dirty': $store.app.isDirty(p.id) }">
+    <div class="acc" {...{ 'x-bind:class': '{ \'dirty\': $store.app.isDirty(p.id) }' }}>
       {/* Head — 始终可见 */}
-      <div class="acc-head" x-on:click="$store.app.toggleExpand(p.id)">
-        <span class="acc-caret" x-text="$store.app.expanded[p.id] ? '▼' : '▶'"></span>
-        <span class="acc-title" x-text="$store.app.getDraftOrOriginal(p.id).name || '(unnamed)'"></span>
-        <span class="acc-type" x-text="$store.app.getDraftOrOriginal(p.id).type"></span>
-        <span class="acc-meta" x-text="($store.app.getDraftOrOriginal(p.id).models || []).length + ' model' + (($store.app.getDraftOrOriginal(p.id).models || []).length === 1 ? '' : 's')"></span>
-        <span class="acc-dot" x-show="$store.app.isDirty(p.id)"></span>
+      <div class="acc-head" {...{ 'x-on:click': '$store.app.toggleExpand(p.id)' }}>
+        <span class="acc-caret" {...{ 'x-text': '$store.app.expanded[p.id] ? \'▼\' : \'▶\'' }}></span>
+        <span class="acc-title" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).name || \'(unnamed)\'' }}></span>
+        <span class="acc-type" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).type' }}></span>
+        <span class="acc-meta" {...{ 'x-text': '($store.app.getDraftOrOriginal(p.id).models || []).length + \' model\' + (($store.app.getDraftOrOriginal(p.id).models || []).length === 1 ? \'\' : \'s\')' }}></span>
+        <span class="acc-dot" {...{ 'x-show': '$store.app.isDirty(p.id)' }}></span>
       </div>
       {/* Body — 可折叠 */}
-      <div class="acc-body" x-show="$store.app.expanded[p.id]" x-cloak>
+      <div class="acc-body" {...{ 'x-show': '$store.app.expanded[p.id]' }} x-cloak>
         <ProviderFields />
         <ModelsSection />
         <div class="actions-bar">
-          <button class="danger" x-on:click="$store.app.deleteProvider(p.id)">Delete</button>
-          <button class="ghost" x-on:click="$store.app.resetProvider(p.id)">Reset</button>
-          <button x-on:click="$store.app.saveProvider(p.id)" x-bind:disabled="!$store.app.validate(p.id).ok">Save</button>
+          <button class="danger" {...{ 'x-on:click': '$store.app.deleteProvider(p.id)' }}>Delete</button>
+          <button class="ghost" {...{ 'x-on:click': '$store.app.resetProvider(p.id)' }}>Reset</button>
+          <button {...{ 'x-on:click': '$store.app.saveProvider(p.id)' }}>Save</button>
         </div>
       </div>
     </div>
