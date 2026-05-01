@@ -14,9 +14,13 @@
  *     → sink[level](msg)    (server owner LogOutputChannel)
  *     → broadcastFn(entry)  (SSE 广播给所有窗口)
  */
+import type { Writable as WritableType } from 'node:stream'
+
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import { Writable } from 'node:stream'
 import pino from 'pino'
+import { getLogsDir } from './config/paths'
 
 export const LOG_FILE = '(embedded)'
 export const STREAM_LOG_FILE = '(embedded)'
@@ -38,6 +42,33 @@ let broadcastFn: ((entry: LogEntry) => void) | null = null
 
 /** SSE per-window 推送 — 仅发给指定 windowId 的连接 */
 let pushFn: ((windowId: number, entry: LogEntry) => void) | null = null
+
+/** 查询 windowId 是否有 SSE 订阅者 */
+let hasSubscriberFn: ((windowId: number) => boolean) | null = null
+
+// ── Agent Window orphan 日志 (无 SSE 订阅者的 windowId 直接落盘) ──
+const orphanStreams = new Map<number, WritableType>()
+
+function getOrphanStream(windowId: number): WritableType {
+  let s = orphanStreams.get(windowId)
+  if (s)
+    return s
+  const dir = getLogsDir()
+  if (!existsSync(dir))
+    mkdirSync(dir, { recursive: true })
+  s = createWriteStream(`${dir}/agent-${windowId}.log`, { flags: 'a' })
+  orphanStreams.set(windowId, s)
+  return s
+}
+
+function writeOrphanLog(windowId: number, entry: LogEntry): void {
+  const ts = new Date().toISOString()
+  const line = `${ts} [${entry.level.toUpperCase()}] ${entry.msg}\n`
+  try {
+    getOrphanStream(windowId).write(line)
+  }
+  catch {}
+}
 
 /** 请求上下文 — 通过 AsyncLocalStorage 贯穿整条处理链 */
 interface LogContext {
@@ -102,6 +133,9 @@ const channelStream = new Writable({
     if (ctx && pushFn) {
       // 请求上下文内 → per-window 推送
       pushFn(ctx.windowId, { level, msg })
+      // 无 SSE 订阅者 (Agent Window) → 直接落盘
+      if (hasSubscriberFn && !hasSubscriberFn(ctx.windowId))
+        writeOrphanLog(ctx.windowId, { level, msg })
     }
     else {
       // 请求外 (启动/配置变更/未映射请求) → sink + broadcast
@@ -136,4 +170,9 @@ export function setLogBroadcast(fn: (entry: LogEntry) => void): void {
 /** 设置 per-window SSE 推送回调 — server 启动后调用 */
 export function setLogPush(fn: (windowId: number, entry: LogEntry) => void): void {
   pushFn = fn
+}
+
+/** 设置订阅者查询回调 — 用于区分 Editor (有 SSE) vs Agent Window (无 SSE, 落盘) */
+export function setLogSubscriberCheck(fn: (windowId: number) => boolean): void {
+  hasSubscriberFn = fn
 }

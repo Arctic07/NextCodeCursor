@@ -11,7 +11,7 @@ import Fastify from 'fastify'
 import { ensureProvidersFile } from './config/providersStore'
 import { ensureRoutesFile } from './config/routesStore'
 import { closeAgentDatabase, initDatabase } from './database/sqlite'
-import { enterWindowContext, logger, setLogBroadcast, setLogPush } from './logger'
+import { enterWindowContext, logger, setLogBroadcast, setLogPush, setLogSubscriberCheck } from './logger'
 import { initRuntimeConfig } from './runtime-config'
 import routes from './services'
 
@@ -40,6 +40,12 @@ let app: any = null
 
 /** windowId → SSE response set (extension host 订阅) */
 const logStreams = new Map<number, Set<any>>()
+
+/** 查询 windowId 是否有 SSE 订阅者 (Editor 窗口有, Agent Window 没有) */
+export function hasLogSubscriber(windowId: number): boolean {
+  const s = logStreams.get(windowId)
+  return !!s && s.size > 0
+}
 
 /** 向指定 windowId 的所有 SSE 连接推送结构化日志 */
 export function pushLog(windowId: number, entry: LogEntry): void {
@@ -298,6 +304,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   // 日志分发回调: 请求内 → pushLog (per-window), 请求外 → broadcastLog (所有窗口)
   setLogBroadcast(broadcastLog)
   setLogPush(pushLog)
+  setLogSubscriberCheck(hasLogSubscriber)
 
   await server.listen({ port, host })
   app = server
