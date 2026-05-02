@@ -468,8 +468,13 @@ export function initApp(Alpine: AlpineType) {
         m.contextTokenLimit = entry.contextLimit
         m.contextTokenLimitForMaxMode = entry.contextLimit
       }
-      if (!m.thinking)
-        m.thinking = entry.reasoning
+      if (!m.thinking && entry.reasoning) {
+        m.thinking = true
+        if (!m.thinkingLevel && !m.thinkingBudgetTokens) {
+          const pType = (this.getDraft(pid) as any).type
+          m.thinkingLevel = pType === 'anthropic' ? 'high' : 'medium'
+        }
+      }
       if ((m.maxOutputTokens === undefined || m.maxOutputTokens === null) && entry.outputLimit)
         m.maxOutputTokens = entry.outputLimit
       if (m.supportsAgent === undefined)
