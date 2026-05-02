@@ -33,6 +33,7 @@ export function initApp(Alpine: AlpineType) {
     expanded: {} as Record<string, boolean>,
     modelExpanded: {} as Record<string, Record<string, boolean>>,
     headersInvalid: {} as Record<string, boolean>,
+    remoteModels: {} as Record<string, { loading: boolean, models?: any[], error?: string }>,
 
     // ── Toast ──
     toasts: [] as Array<{ id: number, text: string, level: string }>,
@@ -508,6 +509,44 @@ export function initApp(Alpine: AlpineType) {
       this.ac = null
     },
 
+    // ── Remote Models (GET /v1/models) ──
+    fetchRemoteModels(pid: string) {
+      if (this.remoteModels[pid]?.loading)
+        return
+      const draft = this.getDraft(pid)
+      if (!draft.baseUrl?.trim()) {
+        this.toast('Please set Base URL first', 'warn')
+        return
+      }
+      if (!draft.auth?.value?.trim()) {
+        this.toast('Please set Auth value first', 'warn')
+        return
+      }
+      this.remoteModels = { ...this.remoteModels, [pid]: { loading: true } }
+      this.post('fetchRemoteModels', { pid, draft: JSON.parse(JSON.stringify(draft)) })
+    },
+
+    dismissRemoteModels(pid: string) {
+      const { [pid]: _, ...rest } = this.remoteModels
+      this.remoteModels = rest
+    },
+
+    applyRemoteModel(pid: string, modelId: string) {
+      this.addModel(pid)
+      const d = this.getDraft(pid)
+      const models = d.models || []
+      const lastModel = models[models.length - 1]
+      if (lastModel) {
+        lastModel.apiModel = modelId
+        // 展开新 model 面板
+        if (!this.modelExpanded[pid])
+          this.modelExpanded[pid] = {}
+        this.modelExpanded[pid][lastModel.id] = true
+        // 触发 catalog fuzzy search 自动补全
+        queueMicrotask(() => this.searchCatalog(pid, lastModel.id, modelId))
+      }
+    },
+
     /** apiModel blur — id 保持不变,不再同步覆盖 */
     syncModelId(_pid: string, _mid: string) {
       // id 是 addModel 生成的随机值,作为全局唯一 key,不随 apiModel 变化
@@ -549,6 +588,16 @@ export function initApp(Alpine: AlpineType) {
         if (base && JSON.stringify(base) === JSON.stringify(s.drafts[pid])) {
           delete s.drafts[pid]
         }
+      }
+    }
+    else if (msg?.type === 'remoteModelsResult') {
+      const pid = msg.pid as string
+      if (msg.error) {
+        s.remoteModels = { ...s.remoteModels, [pid]: { loading: false, error: msg.error } }
+        s.toast(`Fetch models failed: ${msg.error}`, 'error', 6000)
+      }
+      else {
+        s.remoteModels = { ...s.remoteModels, [pid]: { loading: false, models: msg.models || [] } }
       }
     }
     else if (msg?.type === 'catalogResults') {

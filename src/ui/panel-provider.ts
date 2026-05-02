@@ -23,6 +23,7 @@ import { renderHtml } from './components/layout'
 import { getState, onStateChange, refreshState } from './state'
 
 let webviewJsCache: string | null = null
+const RE_TRAILING_SLASH = /\/+$/
 
 function getWebviewJs(extensionPath: string): string {
   if (!webviewJsCache) {
@@ -92,6 +93,47 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             requestId: msg.requestId,
             results,
           })
+          break
+        }
+        case 'fetchRemoteModels': {
+          const pid = msg.pid as string
+          console.log('[FETCH_MODELS] received', pid)
+          const providers = getState().providers || []
+          const draft = msg.draft as any
+          const p = draft || providers.find((x: any) => x.id === pid)
+          if (!p?.auth?.value) {
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: 'Auth value not set' })
+            break
+          }
+          const baseUrl = (p.baseUrl || '').trim()
+          if (!baseUrl) {
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: 'Base URL not set' })
+            break
+          }
+          const url = `${baseUrl.replace(RE_TRAILING_SLASH, '')}/models`
+          try {
+            const headers: Record<string, string> = p.type === 'anthropic'
+              ? { 'x-api-key': p.auth.value, 'anthropic-version': '2023-06-01' }
+              : { Authorization: `Bearer ${p.auth.value}` }
+            const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })
+            if (!resp.ok) {
+              const body = await resp.text().catch(() => '')
+              this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: `${resp.status} ${resp.statusText}: ${body.slice(0, 200)}` })
+              break
+            }
+            const json = await resp.json() as any
+            const models = (json.data || json.models || []).map((m: any) => ({
+              id: m.id || m.model || '',
+              created: m.created || 0,
+              ownedBy: m.owned_by || '',
+            })).filter((m: any) => m.id)
+            models.sort((a: any, b: any) => (b.created || 0) - (a.created || 0))
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models })
+          }
+          catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: errMsg })
+          }
           break
         }
         case 'saveProviders': {

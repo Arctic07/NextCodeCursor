@@ -203,6 +203,16 @@ export const styles = /* css */ `
   .footer { margin-top: 14px; display: flex; gap: 4px; }
   [x-cloak] { display: none !important; }
 
+  .models-header-actions { display: flex; gap: 4px; align-items: center; }
+  .models-loading-overlay { position: absolute; inset: 0; z-index: 10; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; border-radius: 4px; backdrop-filter: blur(2px); }
+  .models-loading-spinner { font-size: 12px; opacity: .9; letter-spacing: .3px; }
+  .remote-models-panel { margin: 6px 0; border: 1px solid var(--vscode-panel-border, rgba(255,255,255,.1)); border-radius: 4px; overflow: hidden; }
+  .remote-models-header { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: var(--vscode-sideBar-background, rgba(255,255,255,.03)); }
+  .remote-models-title { font-size: 11px; opacity: .7; }
+  .remote-models-list { max-height: 200px; overflow-y: auto; }
+  .remote-model-item { padding: 3px 8px; font-size: 12px; font-family: var(--vscode-editor-font-family, monospace); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .remote-model-item:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.06)); }
+
   .toast-container { position: fixed; bottom: 12px; left: 12px; right: 12px; z-index: 999; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
   .toast { pointer-events: auto; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.4; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   .toast-error { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100); color: var(--vscode-errorForeground, #f48771); }
