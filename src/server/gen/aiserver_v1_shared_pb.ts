@@ -2,15 +2,15 @@
 // @generated from file aiserver_v1_shared.proto (package aiserver.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file aiserver_v1_shared.proto.
  */
 export const file_aiserver_v1_shared: GenFile = /*@__PURE__*/
-  fileDesc("ChhhaXNlcnZlcl92MV9zaGFyZWQucHJvdG8SC2Fpc2VydmVyLnYxIm8KD0JpZGlQb2xsUmVxdWVzdBIuCgpyZXF1ZXN0X2lkGAEgASgLMhouYWlzZXJ2ZXIudjEuQmlkaVJlcXVlc3RJZBIaCg1zdGFydF9yZXF1ZXN0GAIgASgISACIAQFCEAoOX3N0YXJ0X3JlcXVlc3QiSQoQQmlkaVBvbGxSZXNwb25zZRINCgVzZXFubxgBIAEoAxIMCgRkYXRhGAIgASgJEhAKA2VvZhgDIAEoCEgAiAEBQgYKBF9lb2YiIwoNQmlkaVJlcXVlc3RJZBISCgpyZXF1ZXN0X2lkGAEgASgJIo8ECglDb2RlQmxvY2sSHwoXcmVsYXRpdmVfd29ya3NwYWNlX3BhdGgYASABKAkSGgoNZmlsZV9jb250ZW50cxgCIAEoCUgAiAEBEiEKFGZpbGVfY29udGVudHNfbGVuZ3RoGAkgASgFSAGIAQESJwoFcmFuZ2UYAyABKAsyGC5haXNlcnZlci52MS5DdXJzb3JSYW5nZRIQCghjb250ZW50cxgEIAEoCRI1CgpzaWduYXR1cmVzGAUgASgLMiEuYWlzZXJ2ZXIudjEuQ29kZUJsb2NrLlNpZ25hdHVyZXMSHgoRb3ZlcnJpZGVfY29udGVudHMYBiABKAlIAogBARIeChFvcmlnaW5hbF9jb250ZW50cxgHIAEoCUgDiAEBEjEKDmRldGFpbGVkX2xpbmVzGAggAygLMhkuYWlzZXJ2ZXIudjEuRGV0YWlsZWRMaW5lEi4KEGZpbGVfZ2l0X2NvbnRleHQYCiABKAsyFC5haXNlcnZlci52MS5GaWxlR2l0GjYKClNpZ25hdHVyZXMSKAoGcmFuZ2VzGAEgAygLMhguYWlzZXJ2ZXIudjEuQ3Vyc29yUmFuZ2VCEAoOX2ZpbGVfY29udGVudHNCFwoVX2ZpbGVfY29udGVudHNfbGVuZ3RoQhQKEl9vdmVycmlkZV9jb250ZW50c0IUChJfb3JpZ2luYWxfY29udGVudHMiRwoKQ29kZVJlc3VsdBIqCgpjb2RlX2Jsb2NrGAEgASgLMhYuYWlzZXJ2ZXIudjEuQ29kZUJsb2NrEg0KBXNjb3JlGAIgASgCIi4KDkN1cnNvclBvc2l0aW9uEgwKBGxpbmUYASABKAUSDgoGY29sdW1uGAIgASgFInUKC0N1cnNvclJhbmdlEjMKDnN0YXJ0X3Bvc2l0aW9uGAEgASgLMhsuYWlzZXJ2ZXIudjEuQ3Vyc29yUG9zaXRpb24SMQoMZW5kX3Bvc2l0aW9uGAIgASgLMhsuYWlzZXJ2ZXIudjEuQ3Vyc29yUG9zaXRpb24iRwoMRGV0YWlsZWRMaW5lEgwKBHRleHQYASABKAkSEwoLbGluZV9udW1iZXIYAiABKAISFAoMaXNfc2lnbmF0dXJlGAMgASgIIjIKB0ZpbGVHaXQSJwoHY29tbWl0cxgBIAMoCzIWLmFpc2VydmVyLnYxLkdpdENvbW1pdCJKCglHaXRDb21taXQSDgoGY29tbWl0GAEgASgJEg4KBmF1dGhvchgCIAEoCRIMCgRkYXRlGAMgASgJEg8KB21lc3NhZ2UYBCABKAliBnByb3RvMw");
+  fileDesc("ChhhaXNlcnZlcl92MV9zaGFyZWQucHJvdG8SC2Fpc2VydmVyLnYxIm8KD0JpZGlQb2xsUmVxdWVzdBIuCgpyZXF1ZXN0X2lkGAEgASgLMhouYWlzZXJ2ZXIudjEuQmlkaVJlcXVlc3RJZBIaCg1zdGFydF9yZXF1ZXN0GAIgASgISACIAQFCEAoOX3N0YXJ0X3JlcXVlc3QiSQoQQmlkaVBvbGxSZXNwb25zZRINCgVzZXFubxgBIAEoAxIMCgRkYXRhGAIgASgJEhAKA2VvZhgDIAEoCEgAiAEBQgYKBF9lb2YiIwoNQmlkaVJlcXVlc3RJZBISCgpyZXF1ZXN0X2lkGAEgASgJIo8ECglDb2RlQmxvY2sSHwoXcmVsYXRpdmVfd29ya3NwYWNlX3BhdGgYASABKAkSGgoNZmlsZV9jb250ZW50cxgCIAEoCUgAiAEBEiEKFGZpbGVfY29udGVudHNfbGVuZ3RoGAkgASgFSAGIAQESJwoFcmFuZ2UYAyABKAsyGC5haXNlcnZlci52MS5DdXJzb3JSYW5nZRIQCghjb250ZW50cxgEIAEoCRI1CgpzaWduYXR1cmVzGAUgASgLMiEuYWlzZXJ2ZXIudjEuQ29kZUJsb2NrLlNpZ25hdHVyZXMSHgoRb3ZlcnJpZGVfY29udGVudHMYBiABKAlIAogBARIeChFvcmlnaW5hbF9jb250ZW50cxgHIAEoCUgDiAEBEjEKDmRldGFpbGVkX2xpbmVzGAggAygLMhkuYWlzZXJ2ZXIudjEuRGV0YWlsZWRMaW5lEi4KEGZpbGVfZ2l0X2NvbnRleHQYCiABKAsyFC5haXNlcnZlci52MS5GaWxlR2l0GjYKClNpZ25hdHVyZXMSKAoGcmFuZ2VzGAEgAygLMhguYWlzZXJ2ZXIudjEuQ3Vyc29yUmFuZ2VCEAoOX2ZpbGVfY29udGVudHNCFwoVX2ZpbGVfY29udGVudHNfbGVuZ3RoQhQKEl9vdmVycmlkZV9jb250ZW50c0IUChJfb3JpZ2luYWxfY29udGVudHMiRwoKQ29kZVJlc3VsdBIqCgpjb2RlX2Jsb2NrGAEgASgLMhYuYWlzZXJ2ZXIudjEuQ29kZUJsb2NrEg0KBXNjb3JlGAIgASgCIi4KDkN1cnNvclBvc2l0aW9uEgwKBGxpbmUYASABKAUSDgoGY29sdW1uGAIgASgFInUKC0N1cnNvclJhbmdlEjMKDnN0YXJ0X3Bvc2l0aW9uGAEgASgLMhsuYWlzZXJ2ZXIudjEuQ3Vyc29yUG9zaXRpb24SMQoMZW5kX3Bvc2l0aW9uGAIgASgLMhsuYWlzZXJ2ZXIudjEuQ3Vyc29yUG9zaXRpb24iRwoMRGV0YWlsZWRMaW5lEgwKBHRleHQYASABKAkSEwoLbGluZV9udW1iZXIYAiABKAISFAoMaXNfc2lnbmF0dXJlGAMgASgIIogDCghGaWxlRGlmZhINCgVhZGRlZBgEIAEoBRIPCgdyZW1vdmVkGAUgASgFEgwKBGZyb20YASABKAkSCgoCdG8YAiABKAkSKwoGY2h1bmtzGAMgAygLMhsuYWlzZXJ2ZXIudjEuRmlsZURpZmYuQ2h1bmsSIQoUYmVmb3JlX2ZpbGVfY29udGVudHMYBiABKAlIAIgBARIgChNhZnRlcl9maWxlX2NvbnRlbnRzGAcgASgJSAGIAQESGQoMaXNfZ2VuZXJhdGVkGAggASgISAKIAQEacwoFQ2h1bmsSDwoHY29udGVudBgBIAEoCRINCgVsaW5lcxgCIAMoCRIRCglvbGRfc3RhcnQYAyABKAUSEQoJb2xkX2xpbmVzGAQgASgFEhEKCW5ld19zdGFydBgFIAEoBRIRCgluZXdfbGluZXMYBiABKAVCFwoVX2JlZm9yZV9maWxlX2NvbnRlbnRzQhYKFF9hZnRlcl9maWxlX2NvbnRlbnRzQg8KDV9pc19nZW5lcmF0ZWQiMgoHRmlsZUdpdBInCgdjb21taXRzGAEgAygLMhYuYWlzZXJ2ZXIudjEuR2l0Q29tbWl0IrgECg5HZXREaWZmUmVxdWVzdBILCgNjd2QYASABKAkSCwoDcmVmGAIgASgJEhAKCGJhc2VfcmVmGAMgASgJEhIKCm1lcmdlX2Jhc2UYBCABKAgSFAoMdGFyZ2V0X3BhdGhzGAUgAygJEiIKFXVuaWZpZWRfY29udGV4dF9saW5lcxgGIAEoBUgAiAEBEhsKE21heF91bnRyYWNrZWRfZmlsZXMYByABKAUSHwoXc3VibW9kdWxlX3JlY3Vyc2VfZGVwdGgYCSABKAUSHQoVaW5jbHVkZV9zcGFjZV9jaGFuZ2VzGAogASgIEhYKDmNvbW1pdHRlZF9vbmx5GAsgASgIEkQKDW91dHB1dF9mb3JtYXQYCCABKA4yKC5haXNlcnZlci52MS5HZXREaWZmUmVxdWVzdC5PdXRwdXRGb3JtYXRIAYgBASLEAQoMT3V0cHV0Rm9ybWF0Eh0KGU9VVFBVVF9GT1JNQVRfVU5TUEVDSUZJRUQQABIdChlPVVRQVVRfRk9STUFUX05BTUVfU1RBVFVTEAESKQolT1VUUFVUX0ZPUk1BVF9OQU1FX1NUQVRVU19BTkRfTlVNU1RBVBACEhwKGE9VVFBVVF9GT1JNQVRfRklMRV9ESUZGUxADEi0KKU9VVFBVVF9GT1JNQVRfRElGRlNfV0lUSF9CRUZPUkVfQU5EX0FGVEVSEARCGAoWX3VuaWZpZWRfY29udGV4dF9saW5lc0IQCg5fb3V0cHV0X2Zvcm1hdCLXAQoPR2V0RGlmZlJlc3BvbnNlEiIKBGRpZmYYASABKAsyFC5haXNlcnZlci52MS5HaXREaWZmEkMKD3N1Ym1vZHVsZV9kaWZmcxgCIAMoCzIqLmFpc2VydmVyLnYxLkdldERpZmZSZXNwb25zZS5TdWJtb2R1bGVEaWZmGlsKDVN1Ym1vZHVsZURpZmYSFQoNcmVsYXRpdmVfcGF0aBgBIAEoCRIiCgRkaWZmGAIgASgLMhQuYWlzZXJ2ZXIudjEuR2l0RGlmZhIPCgdlcnJvcmVkGAMgASgIIkoKCUdpdENvbW1pdBIOCgZjb21taXQYASABKAkSDgoGYXV0aG9yGAIgASgJEgwKBGRhdGUYAyABKAkSDwoHbWVzc2FnZRgEIAEoCSLMAQoHR2l0RGlmZhIkCgVkaWZmcxgBIAMoCzIVLmFpc2VydmVyLnYxLkZpbGVEaWZmEjAKCWRpZmZfdHlwZRgCIAEoDjIdLmFpc2VydmVyLnYxLkdpdERpZmYuRGlmZlR5cGUiaQoIRGlmZlR5cGUSGQoVRElGRl9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRElGRl9UWVBFX0RJRkZfVE9fSEVBRBABEiYKIkRJRkZfVFlQRV9ESUZGX0ZST01fQlJBTkNIX1RPX01BSU4QAmIGcHJvdG8z");
 
 /**
  * @generated from message aiserver.v1.BidiPollRequest
@@ -251,6 +251,100 @@ export const DetailedLineSchema: GenMessage<DetailedLine> = /*@__PURE__*/
   messageDesc(file_aiserver_v1_shared, 7);
 
 /**
+ * @generated from message aiserver.v1.FileDiff
+ */
+export type FileDiff = Message<"aiserver.v1.FileDiff"> & {
+  /**
+   * @generated from field: int32 added = 4;
+   */
+  added: number;
+
+  /**
+   * @generated from field: int32 removed = 5;
+   */
+  removed: number;
+
+  /**
+   * @generated from field: string from = 1;
+   */
+  from: string;
+
+  /**
+   * @generated from field: string to = 2;
+   */
+  to: string;
+
+  /**
+   * @generated from field: repeated aiserver.v1.FileDiff.Chunk chunks = 3;
+   */
+  chunks: FileDiff_Chunk[];
+
+  /**
+   * @generated from field: optional string before_file_contents = 6;
+   */
+  beforeFileContents?: string;
+
+  /**
+   * @generated from field: optional string after_file_contents = 7;
+   */
+  afterFileContents?: string;
+
+  /**
+   * @generated from field: optional bool is_generated = 8;
+   */
+  isGenerated?: boolean;
+};
+
+/**
+ * Describes the message aiserver.v1.FileDiff.
+ * Use `create(FileDiffSchema)` to create a new message.
+ */
+export const FileDiffSchema: GenMessage<FileDiff> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 8);
+
+/**
+ * @generated from message aiserver.v1.FileDiff.Chunk
+ */
+export type FileDiff_Chunk = Message<"aiserver.v1.FileDiff.Chunk"> & {
+  /**
+   * @generated from field: string content = 1;
+   */
+  content: string;
+
+  /**
+   * @generated from field: repeated string lines = 2;
+   */
+  lines: string[];
+
+  /**
+   * @generated from field: int32 old_start = 3;
+   */
+  oldStart: number;
+
+  /**
+   * @generated from field: int32 old_lines = 4;
+   */
+  oldLines: number;
+
+  /**
+   * @generated from field: int32 new_start = 5;
+   */
+  newStart: number;
+
+  /**
+   * @generated from field: int32 new_lines = 6;
+   */
+  newLines: number;
+};
+
+/**
+ * Describes the message aiserver.v1.FileDiff.Chunk.
+ * Use `create(FileDiff_ChunkSchema)` to create a new message.
+ */
+export const FileDiff_ChunkSchema: GenMessage<FileDiff_Chunk> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 8, 0);
+
+/**
  * @generated from message aiserver.v1.FileGit
  */
 export type FileGit = Message<"aiserver.v1.FileGit"> & {
@@ -265,7 +359,159 @@ export type FileGit = Message<"aiserver.v1.FileGit"> & {
  * Use `create(FileGitSchema)` to create a new message.
  */
 export const FileGitSchema: GenMessage<FileGit> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 8);
+  messageDesc(file_aiserver_v1_shared, 9);
+
+/**
+ * @generated from message aiserver.v1.GetDiffRequest
+ */
+export type GetDiffRequest = Message<"aiserver.v1.GetDiffRequest"> & {
+  /**
+   * @generated from field: string cwd = 1;
+   */
+  cwd: string;
+
+  /**
+   * @generated from field: string ref = 2;
+   */
+  ref: string;
+
+  /**
+   * @generated from field: string base_ref = 3;
+   */
+  baseRef: string;
+
+  /**
+   * @generated from field: bool merge_base = 4;
+   */
+  mergeBase: boolean;
+
+  /**
+   * @generated from field: repeated string target_paths = 5;
+   */
+  targetPaths: string[];
+
+  /**
+   * @generated from field: optional int32 unified_context_lines = 6;
+   */
+  unifiedContextLines?: number;
+
+  /**
+   * @generated from field: int32 max_untracked_files = 7;
+   */
+  maxUntrackedFiles: number;
+
+  /**
+   * @generated from field: int32 submodule_recurse_depth = 9;
+   */
+  submoduleRecurseDepth: number;
+
+  /**
+   * @generated from field: bool include_space_changes = 10;
+   */
+  includeSpaceChanges: boolean;
+
+  /**
+   * @generated from field: bool committed_only = 11;
+   */
+  committedOnly: boolean;
+
+  /**
+   * @generated from field: optional aiserver.v1.GetDiffRequest.OutputFormat output_format = 8;
+   */
+  outputFormat?: GetDiffRequest_OutputFormat;
+};
+
+/**
+ * Describes the message aiserver.v1.GetDiffRequest.
+ * Use `create(GetDiffRequestSchema)` to create a new message.
+ */
+export const GetDiffRequestSchema: GenMessage<GetDiffRequest> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 10);
+
+/**
+ * @generated from enum aiserver.v1.GetDiffRequest.OutputFormat
+ */
+export enum GetDiffRequest_OutputFormat {
+  /**
+   * @generated from enum value: OUTPUT_FORMAT_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: OUTPUT_FORMAT_NAME_STATUS = 1;
+   */
+  NAME_STATUS = 1,
+
+  /**
+   * @generated from enum value: OUTPUT_FORMAT_NAME_STATUS_AND_NUMSTAT = 2;
+   */
+  NAME_STATUS_AND_NUMSTAT = 2,
+
+  /**
+   * @generated from enum value: OUTPUT_FORMAT_FILE_DIFFS = 3;
+   */
+  FILE_DIFFS = 3,
+
+  /**
+   * @generated from enum value: OUTPUT_FORMAT_DIFFS_WITH_BEFORE_AND_AFTER = 4;
+   */
+  DIFFS_WITH_BEFORE_AND_AFTER = 4,
+}
+
+/**
+ * Describes the enum aiserver.v1.GetDiffRequest.OutputFormat.
+ */
+export const GetDiffRequest_OutputFormatSchema: GenEnum<GetDiffRequest_OutputFormat> = /*@__PURE__*/
+  enumDesc(file_aiserver_v1_shared, 10, 0);
+
+/**
+ * @generated from message aiserver.v1.GetDiffResponse
+ */
+export type GetDiffResponse = Message<"aiserver.v1.GetDiffResponse"> & {
+  /**
+   * @generated from field: aiserver.v1.GitDiff diff = 1;
+   */
+  diff?: GitDiff;
+
+  /**
+   * @generated from field: repeated aiserver.v1.GetDiffResponse.SubmoduleDiff submodule_diffs = 2;
+   */
+  submoduleDiffs: GetDiffResponse_SubmoduleDiff[];
+};
+
+/**
+ * Describes the message aiserver.v1.GetDiffResponse.
+ * Use `create(GetDiffResponseSchema)` to create a new message.
+ */
+export const GetDiffResponseSchema: GenMessage<GetDiffResponse> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 11);
+
+/**
+ * @generated from message aiserver.v1.GetDiffResponse.SubmoduleDiff
+ */
+export type GetDiffResponse_SubmoduleDiff = Message<"aiserver.v1.GetDiffResponse.SubmoduleDiff"> & {
+  /**
+   * @generated from field: string relative_path = 1;
+   */
+  relativePath: string;
+
+  /**
+   * @generated from field: aiserver.v1.GitDiff diff = 2;
+   */
+  diff?: GitDiff;
+
+  /**
+   * @generated from field: bool errored = 3;
+   */
+  errored: boolean;
+};
+
+/**
+ * Describes the message aiserver.v1.GetDiffResponse.SubmoduleDiff.
+ * Use `create(GetDiffResponse_SubmoduleDiffSchema)` to create a new message.
+ */
+export const GetDiffResponse_SubmoduleDiffSchema: GenMessage<GetDiffResponse_SubmoduleDiff> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 11, 0);
 
 /**
  * @generated from message aiserver.v1.GitCommit
@@ -297,5 +543,53 @@ export type GitCommit = Message<"aiserver.v1.GitCommit"> & {
  * Use `create(GitCommitSchema)` to create a new message.
  */
 export const GitCommitSchema: GenMessage<GitCommit> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 9);
+  messageDesc(file_aiserver_v1_shared, 12);
+
+/**
+ * @generated from message aiserver.v1.GitDiff
+ */
+export type GitDiff = Message<"aiserver.v1.GitDiff"> & {
+  /**
+   * @generated from field: repeated aiserver.v1.FileDiff diffs = 1;
+   */
+  diffs: FileDiff[];
+
+  /**
+   * @generated from field: aiserver.v1.GitDiff.DiffType diff_type = 2;
+   */
+  diffType: GitDiff_DiffType;
+};
+
+/**
+ * Describes the message aiserver.v1.GitDiff.
+ * Use `create(GitDiffSchema)` to create a new message.
+ */
+export const GitDiffSchema: GenMessage<GitDiff> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 13);
+
+/**
+ * @generated from enum aiserver.v1.GitDiff.DiffType
+ */
+export enum GitDiff_DiffType {
+  /**
+   * @generated from enum value: DIFF_TYPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: DIFF_TYPE_DIFF_TO_HEAD = 1;
+   */
+  DIFF_TO_HEAD = 1,
+
+  /**
+   * @generated from enum value: DIFF_TYPE_DIFF_FROM_BRANCH_TO_MAIN = 2;
+   */
+  DIFF_FROM_BRANCH_TO_MAIN = 2,
+}
+
+/**
+ * Describes the enum aiserver.v1.GitDiff.DiffType.
+ */
+export const GitDiff_DiffTypeSchema: GenEnum<GitDiff_DiffType> = /*@__PURE__*/
+  enumDesc(file_aiserver_v1_shared, 13, 0);
 
