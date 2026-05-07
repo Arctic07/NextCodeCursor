@@ -641,7 +641,6 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
       : isBackgroundTaskCompletion
         ? backgroundTaskCompletionText
         : baseUserText,
-    // 优先 requestedModel (新 field 9), fallback modelDetails (旧 field 3)
     modelId: (requestedModel?.modelId as string) || (modelDetails?.modelId as string) || '',
     conversationId: (runRequest.conversationId as string) ?? '',
     contextTokenLimit: clientContextTokenLimit && Number.isFinite(clientContextTokenLimit) && clientContextTokenLimit > 0

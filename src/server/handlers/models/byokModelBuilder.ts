@@ -196,7 +196,7 @@ function buildAvailableModelFromByok(
     supportsPlanMode: model.supportsPlanMode ?? true,
     supportsSandboxing: model.supportsSandboxing ?? false,
     clientDisplayName: model.displayName,
-    serverModelName: model.apiModel,
+    serverModelName: model.id,
     // inputboxShortModelName 省略 — Cursor 客户端 fallback 链为:
     //   variant.displayNameOutsidePicker → variant.displayName → inputboxShortModelName → clientDisplayName → name
     // 我们已设 clientDisplayName, 所有 UI 路径自动命中, 无需独立的 short 名字段
