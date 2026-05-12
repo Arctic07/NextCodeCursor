@@ -124,13 +124,16 @@ it('summary lifecycle builders emit Cursor-compatible interaction updates', () =
 })
 
 it('checkpoint carries non-zero tokenDetails used by Cursor compaction heuristics', () => {
-  const frame = checkpoint(['blob-1'], 1536, 131072, 'AGENT_MODE_AGENT', { text: 'hello' })
+  const frame = checkpoint(['blob-1'], 1536, 131072, 'AGENT_MODE_AGENT', { text: 'hello' }, {
+    turnBlobIds: ['turn-1'],
+  })
   expect(frame.message.case).toBe('conversationCheckpointUpdate')
   if (frame.message.case !== 'conversationCheckpointUpdate')
     throw new Error('unexpected case')
   const tokenDetails = frame.message.value.tokenDetails
   expect(tokenDetails?.usedTokens).toBe(1536)
   expect(tokenDetails?.maxTokens).toBe(131072)
+  expect(frame.message.value.turns.map((id: Uint8Array) => Buffer.from(id).toString('utf-8'))).toEqual(['turn-1'])
 })
 
 it('checkpoint can carry summary archive blob references for compaction state', () => {
@@ -381,6 +384,7 @@ it('conversation checkpoints persist to sqlite and round-trip summary archives',
       kind: 'committed',
       conversationId: 'conv-sqlite-1',
       rootBlobIds: ['blob-a', 'blob-b'],
+      turnBlobIds: ['turn-a'],
       summaryArchiveIds: ['archive-1'],
       tokenDetails: { usedTokens: 321, maxTokens: 200000 },
       mode: 'AGENT_MODE_AGENT',
@@ -391,6 +395,7 @@ it('conversation checkpoints persist to sqlite and round-trip summary archives',
       kind: 'committed',
       conversationId: 'conv-sqlite-1',
       rootBlobIds: ['blob-a', 'blob-b'],
+      turnBlobIds: ['turn-a'],
       summaryArchiveIds: ['archive-1'],
       tokenDetails: { usedTokens: 321, maxTokens: 200000 },
       mode: 'AGENT_MODE_AGENT',

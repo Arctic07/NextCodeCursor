@@ -196,11 +196,15 @@ export interface ParsedRunRequest {
   readLintsEnabled: boolean
   /** rootPromptMessagesJson — 对话历史 blob IDs (system + messages 链) */
   historyBlobIds: string[]
-  /** turns — 每轮的 blob IDs */
+  /** turns — ConversationTurnStructure blob IDs */
+  historyTurnBlobIds: string[]
+  /** @deprecated 历史兼容别名；新代码使用 historyTurnBlobIds */
   historyTurns: string[]
   /** summary_archives — 已压缩历史的 archive blob IDs */
   historySummaryArchiveIds: string[]
   historyTokenDetails?: { usedTokens: number, maxTokens: number }
+  /** 当前轮原始 UserMessage (仅 userMessageAction 有；用于 turns.user_message 复刻) */
+  rawUserMessage?: Record<string, unknown>
   /** 用户消息附带的图片 (来自 SelectedContext.selectedImages) */
   selectedImages: Array<{ mimeType: string, data: string }>
   /** replay / mid-conversation resend 时客户端额外附带的前序用户消息 */

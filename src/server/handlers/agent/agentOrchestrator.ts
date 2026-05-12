@@ -46,8 +46,8 @@ export async function* handleRunRequest(
         // 预热: 将历史 blobs 从 DB 加载到内存缓存, 确保后续 generator 中 getCachedBlob 同步命中。
         // 合并 historyBlobIds + extraContextEntries 的 blob 引用, 一次 warmup 避免多轮磁盘 IO。
         const extraContextBlobIds = collectExtraContextBlobIds(parsed);
-        const blobsToWarmup = parsed.historyBlobIds.length > 0 || extraContextBlobIds.length > 0
-            ? [...parsed.historyBlobIds, ...extraContextBlobIds]
+        const blobsToWarmup = parsed.historyBlobIds.length > 0 || parsed.historyTurnBlobIds.length > 0 || extraContextBlobIds.length > 0
+            ? [...parsed.historyBlobIds, ...parsed.historyTurnBlobIds, ...extraContextBlobIds]
             : [];
         if (blobsToWarmup.length > 0) {
             await warmupBlobsAsync(blobsToWarmup);

@@ -737,7 +737,36 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
       }
       return ids
     })(),
-    historyTurns: ((conversationState?.turns as string[]) ?? []),
+    historyTurnBlobIds: (() => {
+      const raw = conversationState?.turns
+      if (!raw || !Array.isArray(raw))
+        return []
+      return raw.map((v: unknown) => {
+        if (typeof v !== 'string')
+          return String(v)
+        try {
+          return Buffer.from(v, 'base64').toString('utf-8')
+        }
+        catch {
+          return v
+        }
+      })
+    })(),
+    historyTurns: (() => {
+      const raw = conversationState?.turns
+      if (!raw || !Array.isArray(raw))
+        return []
+      return raw.map((v: unknown) => {
+        if (typeof v !== 'string')
+          return String(v)
+        try {
+          return Buffer.from(v, 'base64').toString('utf-8')
+        }
+        catch {
+          return v
+        }
+      })
+    })(),
     historySummaryArchiveIds: (() => {
       const raw = conversationState?.summaryArchives
       if (!raw || !Array.isArray(raw))
@@ -763,6 +792,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
         return undefined
       return { usedTokens, maxTokens }
     })(),
+    rawUserMessage: userMessage ? { ...userMessage } : undefined,
     selectedImages,
     prependUserMessages: prependUserMessagesRaw
       .map(entry => ({

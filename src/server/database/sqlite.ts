@@ -294,6 +294,7 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
       conversation_id TEXT NOT NULL,
       kind TEXT NOT NULL DEFAULT 'committed',
       root_blob_ids_json TEXT NOT NULL,
+      turn_blob_ids_json TEXT NOT NULL DEFAULT '[]',
       summary_archive_ids_json TEXT NOT NULL,
       used_tokens INTEGER NOT NULL,
       max_tokens INTEGER NOT NULL,
@@ -339,6 +340,7 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
         conversation_id TEXT NOT NULL,
         kind TEXT NOT NULL DEFAULT 'committed',
         root_blob_ids_json TEXT NOT NULL,
+        turn_blob_ids_json TEXT NOT NULL DEFAULT '[]',
         summary_archive_ids_json TEXT NOT NULL,
         used_tokens INTEGER NOT NULL,
         max_tokens INTEGER NOT NULL,
@@ -347,10 +349,21 @@ async function initializeSchema(database: AsyncDatabase): Promise<void> {
         PRIMARY KEY (conversation_id, kind)
       );
       INSERT INTO conversation_checkpoints
-        SELECT conversation_id, 'committed', root_blob_ids_json, summary_archive_ids_json,
+        SELECT conversation_id, 'committed', root_blob_ids_json, '[]', summary_archive_ids_json,
                used_tokens, max_tokens, mode, updated_at
         FROM conversation_checkpoints_old;
       DROP TABLE conversation_checkpoints_old;
+    `)
+  }
+
+  // ── Schema 迁移: conversation_checkpoints 新增 turn_blob_ids_json 列 ──
+  try {
+    await database.get(`SELECT turn_blob_ids_json FROM conversation_checkpoints LIMIT 1`)
+  }
+  catch {
+    await database.exec(`
+      ALTER TABLE conversation_checkpoints
+      ADD COLUMN turn_blob_ids_json TEXT NOT NULL DEFAULT '[]';
     `)
   }
 }

@@ -6,6 +6,7 @@ export interface PersistedConversationCheckpoint {
     conversationId: string;
     kind: CheckpointKind;
     rootBlobIds: string[];
+    turnBlobIds: string[];
     summaryArchiveIds: string[];
     tokenDetails: { usedTokens: number; maxTokens: number };
     mode: string;
@@ -16,6 +17,7 @@ interface CheckpointRow {
     conversation_id: string;
     kind: string;
     root_blob_ids_json: string;
+    turn_blob_ids_json: string;
     summary_archive_ids_json: string;
     used_tokens: number;
     max_tokens: number;
@@ -38,6 +40,7 @@ export async function persistConversationCheckpoint(checkpoint: PersistedConvers
             conversation_id,
             kind,
             root_blob_ids_json,
+            turn_blob_ids_json,
             summary_archive_ids_json,
             used_tokens,
             max_tokens,
@@ -47,6 +50,7 @@ export async function persistConversationCheckpoint(checkpoint: PersistedConvers
             $conversationId,
             $kind,
             $rootBlobIdsJson,
+            $turnBlobIdsJson,
             $summaryArchiveIdsJson,
             $usedTokens,
             $maxTokens,
@@ -57,6 +61,7 @@ export async function persistConversationCheckpoint(checkpoint: PersistedConvers
         $conversationId: checkpoint.conversationId,
         $kind: checkpoint.kind,
         $rootBlobIdsJson: JSON.stringify(checkpoint.rootBlobIds),
+        $turnBlobIdsJson: JSON.stringify(checkpoint.turnBlobIds),
         $summaryArchiveIdsJson: JSON.stringify(checkpoint.summaryArchiveIds),
         $usedTokens: checkpoint.tokenDetails.usedTokens,
         $maxTokens: checkpoint.tokenDetails.maxTokens,
@@ -76,7 +81,7 @@ export async function getPersistedConversationCheckpoint(
     if (!conversationId) return null;
 
     const row = await getAgentDatabase().get<CheckpointRow>(`
-        SELECT conversation_id, kind, root_blob_ids_json, summary_archive_ids_json, used_tokens, max_tokens, mode, updated_at
+        SELECT conversation_id, kind, root_blob_ids_json, turn_blob_ids_json, summary_archive_ids_json, used_tokens, max_tokens, mode, updated_at
         FROM conversation_checkpoints
         WHERE conversation_id = ? AND kind = ?
     `, [conversationId, kind]);
@@ -86,6 +91,7 @@ export async function getPersistedConversationCheckpoint(
         conversationId: row.conversation_id,
         kind: row.kind as CheckpointKind,
         rootBlobIds: parseStringArray(row.root_blob_ids_json),
+        turnBlobIds: parseStringArray(row.turn_blob_ids_json),
         summaryArchiveIds: parseStringArray(row.summary_archive_ids_json),
         tokenDetails: {
             usedTokens: row.used_tokens,

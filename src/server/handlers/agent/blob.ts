@@ -12,12 +12,20 @@
  */
 import { createHash } from 'crypto';
 
+function finalizeBlobData(blobData: string): { blobId: string; blobData: string } {
+    const blobId = createHash('sha256').update(blobData).digest('base64');
+    return { blobId, blobData };
+}
+
 /** 将 JSON 对象编码为 blob (base64) 并计算 blobId (sha256) */
 export function encodeBlob(data: unknown): { blobId: string; blobData: string } {
     const json = JSON.stringify(data);
-    const blobData = Buffer.from(json).toString('base64');
-    const blobId = createHash('sha256').update(blobData).digest('base64');
-    return { blobId, blobData };
+    return finalizeBlobData(Buffer.from(json).toString('base64'));
+}
+
+/** 将 protobuf / binary 数据编码为 blob (base64) 并计算 blobId (sha256) */
+export function encodeBinaryBlob(bytes: Uint8Array): { blobId: string; blobData: string } {
+    return finalizeBlobData(Buffer.from(bytes).toString('base64'));
 }
 
 /** 解码 blob base64 → JSON */

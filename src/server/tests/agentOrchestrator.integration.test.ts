@@ -90,7 +90,7 @@ describe('agent orchestrator / history rebuild integration', () => {
     capturedParsed = []
   })
 
-  it('restores sqlite checkpoint when client sends empty conversationState during model switch', async () => {
+  it('trusts empty client conversationState and does not restore sqlite checkpoint history', async () => {
     await withTempAgentDatabase(async () => {
       const { system, preamble, assistant, legacyUserToolResults } = buildLegacyAnthropicHistoryBlobs()
       for (const blob of [system, preamble, assistant, legacyUserToolResults]) {
@@ -101,6 +101,7 @@ describe('agent orchestrator / history rebuild integration', () => {
         kind: 'committed',
         conversationId: 'conv-switch',
         rootBlobIds: [system.blobId, preamble.blobId, assistant.blobId, legacyUserToolResults.blobId],
+        turnBlobIds: [],
         summaryArchiveIds: ['archive-1'],
         tokenDetails: { usedTokens: 1234, maxTokens: 200000 },
         mode: 'AGENT_MODE_AGENT',
@@ -123,14 +124,10 @@ describe('agent orchestrator / history rebuild integration', () => {
       }))
 
       expect(capturedParsed).toHaveLength(1)
-      expect(capturedParsed[0]?.historyBlobIds).toEqual([
-        system.blobId,
-        preamble.blobId,
-        assistant.blobId,
-        legacyUserToolResults.blobId,
-      ])
-      expect(capturedParsed[0]?.historySummaryArchiveIds).toEqual(['archive-1'])
-      expect(capturedParsed[0]?.historyTokenDetails).toEqual({ usedTokens: 1234, maxTokens: 200000 })
+      expect(capturedParsed[0]?.historyBlobIds).toEqual([])
+      expect(capturedParsed[0]?.historyTurnBlobIds).toEqual([])
+      expect(capturedParsed[0]?.historySummaryArchiveIds).toEqual([])
+      expect(capturedParsed[0]?.historyTokenDetails).toBeUndefined()
     })
   })
 

@@ -89,6 +89,7 @@ it('parseRunRequest extracts requested model context token limit', () => {
 
 it('parseRunRequest extracts summarizeAction compaction metadata from conversationState', () => {
   const encodedBlobId = Buffer.from('blob-summary').toString('base64')
+  const encodedTurnId = Buffer.from('turn-1').toString('base64')
   const encodedArchiveId = Buffer.from('archive-1').toString('base64')
   const parsed = parseRunRequest({
     runRequest: {
@@ -99,6 +100,7 @@ it('parseRunRequest extracts summarizeAction compaction metadata from conversati
       modelDetails: { modelId: 'claude-sonnet-4' },
       conversationState: {
         rootPromptMessagesJson: [encodedBlobId],
+        turns: [encodedTurnId],
         summaryArchives: [encodedArchiveId],
         tokenDetails: {
           usedTokens: 2048,
@@ -110,6 +112,7 @@ it('parseRunRequest extracts summarizeAction compaction metadata from conversati
 
   expect(parsed.isSummarize).toBe(true)
   expect(parsed.historyBlobIds).toEqual(['blob-summary'])
+  expect(parsed.historyTurnBlobIds).toEqual(['turn-1'])
   expect(parsed.historySummaryArchiveIds).toEqual(['archive-1'])
   expect(parsed.historyTokenDetails).toEqual({ usedTokens: 2048, maxTokens: 8192 })
 })

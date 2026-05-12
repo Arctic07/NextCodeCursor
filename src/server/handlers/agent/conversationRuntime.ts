@@ -7,7 +7,7 @@ import { clearDraftCheckpoint, persistConversationCheckpoint } from '../../datab
 import { logger } from '../../logger'
 import { resolveProviderRuntime } from '../llm'
 import { decodeBlob } from './blob'
-import { getCachedBlob } from './blobStore'
+import { cacheBlob, getCachedBlob } from './blobStore'
 import { emitFinalCheckpoint, emitRollingCheckpoint } from './checkpointManager'
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy'
 import { flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
@@ -18,6 +18,7 @@ import { resolveToolPath } from './toolkit/pathUtils'
 import { finalizeTaskResult, launchTaskTool, runToolCall, type TaskLaunchContext } from './toolRuntime'
 import { awaitExecResultAndClose, waitForPromiseWithHeartbeat } from './wait'
 import { restoreBlobMessageToLLMMessage } from './transcript'
+import { ActiveTurnTracker, createCurrentTurnUserMessageBlob } from './turnTracker'
 import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, shouldTriggerCompaction } from './usage'
 import { isAgentRunAbortedError } from './wait'
 import { makeProviderError, makeToolError } from '../errors'
@@ -194,6 +195,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+function cacheAndBuildKvBlob(id: number, blob: { blobId: string, blobData: string }): AgentServerMessage {
+  cacheBlob(blob.blobId, blob.blobData)
+  return kvMessage(id, blob.blobId, blob.blobData)
+}
+
+function recordAssistantBlocksIntoTurn(turn: ActiveTurnTracker | null, blocks: LLMContentBlock[]): Array<{ blobId: string, blobData: string }> {
+  if (!turn)
+    return []
+  const emitted: Array<{ blobId: string, blobData: string }> = []
+  for (const block of blocks) {
+    if (block.type === 'thinking') {
+      const blob = turn.addThinking(block.text)
+      if (blob)
+        emitted.push(blob)
+      continue
+    }
+    if (block.type === 'text') {
+      const blob = turn.addAssistantText(block.text)
+      if (blob)
+        emitted.push(blob)
+    }
+  }
+  return emitted
+}
+
+function extractCompletedToolCall(frame: AgentServerMessage) {
+  if (frame.message.case !== 'interactionUpdate')
+    return undefined
+  const msg = frame.message.value.message
+  if (msg.case !== 'toolCallCompleted')
+    return undefined
+  return msg.value.toolCall
+}
+
 type EditStreamDiagnostics = {
   deltaCount: number
   streamContent: string
@@ -349,6 +384,7 @@ async function* performInlineAutoSummarize(params: {
   persistConversationCheckpoint({ kind: 'committed',
     conversationId: parsed.conversationId,
     rootBlobIds: artifacts.nextRootBlobIds,
+    turnBlobIds: parsed.historyTurnBlobIds,
     summaryArchiveIds: artifacts.nextSummaryArchiveIds,
     tokenDetails: compactedTokenDetails,
     mode: parsed.mode,
@@ -362,6 +398,7 @@ async function* performInlineAutoSummarize(params: {
     parsed.mode,
     undefined,
     {
+      turnBlobIds: parsed.historyTurnBlobIds,
       summaryArchiveIds: artifacts.nextSummaryArchiveIds,
       workspaceUris: workspaceUris(parsed),
       readPaths: [],
@@ -470,9 +507,16 @@ export async function* handleConversationRun(
   let blobCounter = 0
   let interactionIdCounter = 1
   let blobIds: string[] = []
+  let turnBlobIds = [...parsed.historyTurnBlobIds]
   let messages: LLMMessage[] = []
   let currentSummaryArchiveIds = [...parsed.historySummaryArchiveIds]
   let autoSummarizePerformed = false
+  const syntheticUserMessageId = parsed.isBackgroundTaskCompletion
+    ? `background-completion-${Date.now()}`
+    : parsed.rawUserMessage?.messageId && typeof parsed.rawUserMessage.messageId === 'string'
+      ? parsed.rawUserMessage.messageId
+      : `turn-${Date.now()}`
+  let activeTurn: ActiveTurnTracker | null = null
 
   const sendSystemScaffoldBlob = function* (
     data: { role: string, content: unknown, toolCallId?: string, toolName?: string, isError?: boolean },
@@ -507,7 +551,7 @@ export async function* handleConversationRun(
     }, '[AGENT] background task completion: appending simulated user message')
     yield userMessageAppended({
       text: parsed.userText,
-      messageId: `background-completion-${Date.now()}`,
+      messageId: syntheticUserMessageId,
       mode: parsed.mode,
       simulatedMsgReason: SimulatedMsgReason.BACKGROUND_TASK_COMPLETION,
       simulatedMessageMetadata: completion
@@ -517,6 +561,27 @@ export async function* handleConversationRun(
           }
         : undefined,
     })
+  }
+
+  if (parsed.isResume) {
+    if (turnBlobIds.length > 0) {
+      const resumed = ActiveTurnTracker.fromTurnBlobId(turnBlobIds[turnBlobIds.length - 1]!)
+      if (resumed) {
+        activeTurn = resumed
+        turnBlobIds = turnBlobIds.slice(0, -1)
+      }
+      else {
+        logger.warn({ conversationId: parsed.conversationId, lastTurnBlobId: turnBlobIds[turnBlobIds.length - 1] }, '[TURN] failed to resume last turn baseline; future checkpoints will omit turns for this resume')
+      }
+    }
+  }
+  else {
+    const { blob, messageId } = createCurrentTurnUserMessageBlob({
+      parsed,
+      fallbackMessageId: syntheticUserMessageId,
+    })
+    activeTurn = new ActiveTurnTracker(blob.blobId, [], messageId)
+    yield cacheAndBuildKvBlob(++blobCounter, blob)
   }
 
   const rebuiltHistory = yield* rebuildConversationHistory({
@@ -729,8 +794,12 @@ export async function* handleConversationRun(
 
     if (pendingToolCalls.length === 0) {
       const transition = route.transitionRound(messages, roundAssistantBlocks)
-      if (transition.assistantAdded)
+      if (transition.assistantAdded) {
         lastAssistantContent = roundAssistantBlocks
+        const turnBlobs = recordAssistantBlocksIntoTurn(activeTurn, roundAssistantBlocks)
+        for (const blob of turnBlobs)
+          yield cacheAndBuildKvBlob(++blobCounter, blob)
+      }
       break
     }
 
@@ -739,6 +808,9 @@ export async function* handleConversationRun(
     try {
       const assistantContent = roundAssistantBlocks
       lastAssistantContent = assistantContent
+      const turnBlobs = recordAssistantBlocksIntoTurn(activeTurn, assistantContent)
+      for (const blob of turnBlobs)
+        yield cacheAndBuildKvBlob(++blobCounter, blob)
 
       const roundContext = route.createRoundContext()
 
@@ -769,7 +841,7 @@ export async function* handleConversationRun(
 
       // ── Phase 2: 串行执行非 Task 工具（edit, shell, glob 等） ──
       for (const tc of nonTaskCalls) {
-        yield* runToolCall({
+        const toolFrames = runToolCall({
           toolCall: tc,
           availableMcpTools: parsed.mcpTools,
           conversationId: parsed.conversationId,
@@ -782,6 +854,14 @@ export async function* handleConversationRun(
           allocateExecMessageId: () => ++blobCounter,
           allocateInteractionId: () => interactionIdCounter++,
         })
+        for await (const frame of toolFrames) {
+          const completedToolCall = extractCompletedToolCall(frame)
+          if (activeTurn && completedToolCall) {
+            const toolBlob = activeTurn.addCompletedToolCall(completedToolCall)
+            yield cacheAndBuildKvBlob(++blobCounter, toolBlob)
+          }
+          yield frame
+        }
       }
 
       // ── Phase 3: 并发等待所有 Task 结果 ──
@@ -792,6 +872,11 @@ export async function* handleConversationRun(
         const results = yield* waitForPromiseWithHeartbeat(Promise.all(resultPromises))
         for (let i = 0; i < taskLaunches.length; i++) {
           const frame = finalizeTaskResult(taskLaunches[i], results[i], roundContext, messages)
+          const completedToolCall = extractCompletedToolCall(frame)
+          if (activeTurn && completedToolCall) {
+            const toolBlob = activeTurn.addCompletedToolCall(completedToolCall)
+            yield cacheAndBuildKvBlob(++blobCounter, toolBlob)
+          }
           yield frame
         }
       }
@@ -838,11 +923,15 @@ export async function* handleConversationRun(
       usedTokensEstimate = Math.max(usedTokensEstimate, estimateMessagesTokens(messages))
 
       const allBlobIdsForCheckpoint = [...parsed.historyBlobIds, ...blobIds]
+      const materializedTurnBlob = activeTurn?.materializeTurnBlob()
+      if (materializedTurnBlob)
+        yield cacheAndBuildKvBlob(++blobCounter, materializedTurnBlob)
       yield emitRollingCheckpoint({
         conversationId: parsed.conversationId,
         round,
         nextBlobbedMessageIndex,
         allBlobIds: allBlobIdsForCheckpoint,
+        turnBlobIds: materializedTurnBlob ? [...turnBlobIds, materializedTurnBlob.blobId] : turnBlobIds,
         summaryArchiveIds: currentSummaryArchiveIds,
         usedTokensEstimate,
         contextTokenLimit,
@@ -929,9 +1018,14 @@ export async function* handleConversationRun(
 
   usedTokensEstimate = Math.max(usedTokensEstimate, estimateMessagesTokens(messages))
 
+  const finalTurnBlob = activeTurn?.materializeTurnBlob()
+  if (finalTurnBlob)
+    yield cacheAndBuildKvBlob(++blobCounter, finalTurnBlob)
+
   yield emitFinalCheckpoint({
     conversationId: parsed.conversationId,
     allBlobIds: [...parsed.historyBlobIds, ...blobIds],
+    turnBlobIds: finalTurnBlob ? [...turnBlobIds, finalTurnBlob.blobId] : turnBlobIds,
     summaryArchiveIds: currentSummaryArchiveIds,
     usedTokensEstimate,
     contextTokenLimit,

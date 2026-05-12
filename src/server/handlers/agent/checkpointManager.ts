@@ -11,6 +11,7 @@ export function emitRollingCheckpoint(params: {
     round: number;
     nextBlobbedMessageIndex: number;
     allBlobIds: string[];
+    turnBlobIds: string[];
     summaryArchiveIds: string[];
     usedTokensEstimate: number;
     contextTokenLimit: number;
@@ -49,6 +50,7 @@ export function emitRollingCheckpoint(params: {
         conversationId: params.conversationId,
         kind: 'draft',
         rootBlobIds: params.allBlobIds,
+        turnBlobIds: params.turnBlobIds,
         summaryArchiveIds: params.summaryArchiveIds,
         tokenDetails: rollingTokenDetails,
         mode: params.mode,
@@ -62,6 +64,7 @@ export function emitRollingCheckpoint(params: {
         params.mode,
         rollingAssistantSummary,
         {
+            turnBlobIds: params.turnBlobIds,
             summaryArchiveIds: params.summaryArchiveIds,
             workspaceUris: params.workspaceUris,
             readPaths: params.readPaths,
@@ -74,6 +77,7 @@ export function emitRollingCheckpoint(params: {
 export function emitFinalCheckpoint(params: {
     conversationId: string;
     allBlobIds: string[];
+    turnBlobIds: string[];
     summaryArchiveIds: string[];
     usedTokensEstimate: number;
     contextTokenLimit: number;
@@ -108,6 +112,7 @@ export function emitFinalCheckpoint(params: {
         conversationId: params.conversationId,
         kind: 'committed',
         rootBlobIds: params.allBlobIds,
+        turnBlobIds: params.turnBlobIds,
         summaryArchiveIds: params.summaryArchiveIds,
         tokenDetails,
         mode: params.mode,
@@ -121,6 +126,7 @@ export function emitFinalCheckpoint(params: {
         params.mode,
         assistantSummary,
         {
+            turnBlobIds: params.turnBlobIds,
             summaryArchiveIds: params.summaryArchiveIds,
             workspaceUris: params.workspaceUris,
             readPaths: params.readPaths,

@@ -71,6 +71,7 @@ export async function* handleSummarizeAction(
             kind: 'committed',
             conversationId: parsed.conversationId,
             rootBlobIds: parsed.historyBlobIds,
+            turnBlobIds: parsed.historyTurnBlobIds,
             summaryArchiveIds: parsed.historySummaryArchiveIds,
             tokenDetails: currentTokenDetails,
             mode: parsed.mode,
@@ -84,6 +85,7 @@ export async function* handleSummarizeAction(
             parsed.mode,
             undefined,
             {
+                turnBlobIds: parsed.historyTurnBlobIds,
                 summaryArchiveIds: parsed.historySummaryArchiveIds,
                 workspaceUris: workspaceUris(parsed),
                 readPaths: [],
@@ -100,6 +102,7 @@ export async function* handleSummarizeAction(
             kind: 'committed',
             conversationId: parsed.conversationId,
             rootBlobIds: parsed.historyBlobIds,
+            turnBlobIds: parsed.historyTurnBlobIds,
             summaryArchiveIds: parsed.historySummaryArchiveIds,
             tokenDetails: currentTokenDetails,
             mode: parsed.mode,
@@ -114,6 +117,7 @@ export async function* handleSummarizeAction(
             parsed.mode,
             undefined,
             {
+                turnBlobIds: parsed.historyTurnBlobIds,
                 summaryArchiveIds: parsed.historySummaryArchiveIds,
                 workspaceUris: workspaceUris(parsed),
                 readPaths: [],
@@ -210,6 +214,7 @@ export async function* handleSummarizeAction(
         kind: 'committed',
         conversationId: parsed.conversationId,
         rootBlobIds: artifacts.nextRootBlobIds,
+        turnBlobIds: parsed.historyTurnBlobIds,
         summaryArchiveIds: artifacts.nextSummaryArchiveIds,
         tokenDetails: compactedUsedTokens,
         mode: parsed.mode,
@@ -223,6 +228,7 @@ export async function* handleSummarizeAction(
         parsed.mode,
         undefined,
         {
+            turnBlobIds: parsed.historyTurnBlobIds,
             summaryArchiveIds: artifacts.nextSummaryArchiveIds,
             workspaceUris: workspaceUris(parsed),
             readPaths: [],

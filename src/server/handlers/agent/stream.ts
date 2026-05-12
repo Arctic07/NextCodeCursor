@@ -480,7 +480,7 @@ export function kvMessage(id: number | undefined, blobId: string, blobData: stri
  * 格式: [JSON.stringify({ id, role: "assistant", content: [{type:"reasoning",text:...},{type:"text",text:...}] })]
  *
  * 字段对齐 (详见 analysis/checkpoint-revert-protocol.md):
- *  - turns                  : 空占位 []，真实构造依赖 blob 粒度重构 (P5)
+ *  - turns                  : ConversationTurnStructure blob IDs（客户端 hydrate / restore 主路径）
  *  - readPaths              : 空占位 []，未跟踪 Read 工具访问文件 (P5)
  *  - mode                   : AGENT_MODE_* enum
  *  - previousWorkspaceUris  : 当前工作区 file:// URI 列表
@@ -498,6 +498,7 @@ export function checkpoint(
   mode: string,
   assistantMessage?: { thinking?: string, text?: string },
   extras?: {
+    turnBlobIds?: string[]
     summaryArchiveIds?: string[]
     workspaceUris?: string[]
     readPaths?: string[]
@@ -558,6 +559,7 @@ export function checkpoint(
 
   logger.debug({
     rpmCount: blobIds.length,
+    turnsCount: extras?.turnBlobIds?.length ?? 0,
     mode,
     agentMode,
     usedTokens,
@@ -574,8 +576,7 @@ export function checkpoint(
       case: 'conversationCheckpointUpdate',
       value: create(ConversationStateStructureSchema, {
         rootPromptMessagesJson: blobIds.map(id => encoder.encode(id)),
-        // turns 暂时发空占位 (详见 P5 blob 粒度重构任务)
-        turns: [],
+        turns: (extras?.turnBlobIds ?? []).map(id => encoder.encode(id)),
         pendingToolCalls,
         tokenDetails: { usedTokens, maxTokens } as any,
         summaryArchives: (extras?.summaryArchiveIds ?? []).map(id => encoder.encode(id)),

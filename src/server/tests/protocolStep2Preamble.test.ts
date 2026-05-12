@@ -34,6 +34,7 @@ function stubParsed(overrides: Record<string, unknown>): Parameters<typeof build
     webFetchEnabled: false,
     readLintsEnabled: false,
     historyBlobIds: [],
+    historyTurnBlobIds: [],
     historyTurns: [],
     historySummaryArchiveIds: [],
     selectedImages: [],
