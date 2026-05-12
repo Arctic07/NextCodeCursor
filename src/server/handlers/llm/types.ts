@@ -62,6 +62,10 @@ export interface LLMStreamRequest {
   thinkingBudgetTokens?: number
   /** 会话 ID — OpenAI prompt_cache_key (同会话共享前缀缓存) */
   conversationId?: string
+  /** OpenAI service_tier: "priority" 启用优先推理 */
+  serviceTier?: 'priority' | 'default'
+  /** Anthropic beta headers — 如 context-1m, interleaved-thinking 等 */
+  anthropicBetas?: string[]
 }
 
 /** Provider 接口 — 各 SDK 实现此接口 */

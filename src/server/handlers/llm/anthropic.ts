@@ -129,7 +129,16 @@ export class AnthropicProvider implements LLMProvider {
             }
         }
 
-        const stream = this.client.messages.stream(params);
+        // 构建 beta headers: thinking → interleaved-thinking, 1M context 等按需追加
+        const betas: string[] = [];
+        if (request.thinking)
+            betas.push('interleaved-thinking-2025-05-14');
+        if (request.anthropicBetas)
+            betas.push(...request.anthropicBetas.filter(b => !betas.includes(b)));
+
+        const stream = betas.length > 0
+            ? this.client.beta.messages.stream({ ...params, betas } as any)
+            : this.client.messages.stream(params);
         const contentBlocks = new Map<number, { type: string; id?: string; name?: string; signature?: string }>();
 
         for await (const event of stream) {

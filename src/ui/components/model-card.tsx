@@ -116,6 +116,10 @@ export function ModelCard() {
             <input type="checkbox" x-bind:checked="m.supportsAutoContext !== false" x-on:change="$store.app.updateModelField(p.id, m.id, 'supportsAutoContext', $event.target.checked)" />
             {' Auto Ctx'}
           </label>
+          <label class="check" title="Fast mode (OpenAI: service_tier=priority / Anthropic: fast-mode beta)">
+            <input type="checkbox" x-bind:checked="m.fastMode === true" x-on:change="$store.app.updateModelField(p.id, m.id, 'fastMode', $event.target.checked || undefined)" />
+            {' Fast'}
+          </label>
           <label class="check thinking-cell" title="Enables extended reasoning">
             <input type="checkbox" x-bind:checked="m.thinking === true" x-on:change="$store.app.updateModelField(p.id, m.id, 'thinking', $event.target.checked)" />
             {' Thinking'}

@@ -212,6 +212,8 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                     thinkingBudgetTokens,
                     maxTokens,
                     conversationId,
+                    ...(resolved.serviceTier ? { serviceTier: resolved.serviceTier } : {}),
+                    ...(resolved.anthropicBetas?.length ? { anthropicBetas: resolved.anthropicBetas } : {}),
                 },
             };
         },

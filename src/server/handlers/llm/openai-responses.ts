@@ -65,6 +65,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       input: encoded.items,
       max_output_tokens: request.maxTokens ?? 8192,
       ...(request.conversationId ? { prompt_cache_key: request.conversationId } : {}),
+      ...(request.serviceTier ? { service_tier: request.serviceTier } : {}),
     }
 
     if (encoded.instructions) {

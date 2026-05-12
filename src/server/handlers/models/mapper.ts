@@ -39,6 +39,8 @@ export interface ResolvedModel extends ModelContextMetadata {
   thinkingLevel?: ThinkingLevel
   thinkingBudgetTokens?: number
   maxOutputTokens: number
+  serviceTier?: 'priority'
+  anthropicBetas?: string[]
 }
 
 // 不再提供 provider 级默认 contextTokenLimit —— 用户必须在 ProviderModel 上显式填写。
@@ -65,6 +67,13 @@ export function resolveModel(modelId: string): ResolvedModel {
     thinkingLevel: hit.model.thinkingLevel,
     thinkingBudgetTokens: hit.model.thinkingBudgetTokens,
     maxOutputTokens: hit.model.maxOutputTokens ?? 8192,
+    ...(hit.model.fastMode && hit.provider.type !== 'anthropic' ? { serviceTier: 'priority' as const } : {}),
+    ...(hit.provider.type === 'anthropic' ? (() => {
+      const betas: string[] = []
+      if ((hit.model.contextTokenLimit ?? 0) >= 1_000_000) betas.push('context-1m-2025-08-07')
+      if (hit.model.fastMode) betas.push('fast-mode-2026-02-01')
+      return betas.length > 0 ? { anthropicBetas: betas } : {}
+    })() : {}),
     ...inferModelContextMetadata(modelId, hit.provider.type, hit.model),
   }
 }

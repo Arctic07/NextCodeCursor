@@ -98,20 +98,22 @@ function buildThinkingSegment(model: ProviderModel): string | null {
   return ':icon-brain:'
 }
 
-/** 组合 thinking + context 片段 → 完整后缀文本 */
+/** 组合 thinking + context + feature 片段 → 完整后缀文本 */
 function buildVariantSuffix(model: ProviderModel): string | null {
-  const thinkingSeg = buildThinkingSegment(model)
-  const ctxSeg = model.contextTokenLimit !== undefined
-    ? formatContextLabel(model.contextTokenLimit)
-    : null
+  const segments: string[] = []
 
-  if (thinkingSeg && ctxSeg)
-    return `${thinkingSeg} ${ctxSeg}`
+  const thinkingSeg = buildThinkingSegment(model)
   if (thinkingSeg)
-    return thinkingSeg
-  if (ctxSeg)
-    return ctxSeg
-  return null
+    segments.push(thinkingSeg)
+  if (model.fastMode)
+    segments.push(':icon-lightning: Fast')
+  if (model.contextTokenLimit !== undefined && model.contextTokenLimit > 0) {
+    const label = formatContextLabel(model.contextTokenLimit)
+    if (label)
+      segments.push(label)
+  }
+
+  return segments.length > 0 ? segments.join(' ') : null
 }
 
 /** 包装 variant.displayName, 把后缀裹进灰色 span */
@@ -214,6 +216,7 @@ function buildAvailableModelFromByok(
         isDefaultNonMaxConfig: model.defaultOn ?? false,
         variantStringRepresentation: buildVariantStringRepresentation(model),
         parameterValues: buildParameterValues(model),
+        tooltipData: tooltipData,
       }),
     ],
   })

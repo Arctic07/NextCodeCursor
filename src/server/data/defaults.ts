@@ -161,6 +161,8 @@ export interface ProviderModel {
   supportsPlanMode?: boolean
   supportsSandboxing?: boolean
   defaultOn?: boolean
+  /** Fast 模式 — OpenAI: service_tier=priority / Anthropic: fast-mode beta */
+  fastMode?: boolean
   /** 模型选择器里 hover 显示的 markdown tooltip (非 max mode) */
   tooltipMarkdown?: string
   /** 模型选择器里 hover 显示的 markdown tooltip (max mode 开启时) */
