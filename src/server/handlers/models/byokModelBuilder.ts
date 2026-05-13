@@ -163,10 +163,6 @@ function buildAvailableModelFromByok(
   model: ProviderModel,
 ): AvailableModelsResponse_AvailableModel {
   const contextLimit = model.contextTokenLimit ?? 200000
-  const contextLimitMax = model.contextTokenLimitForMaxMode ?? contextLimit
-  // autoContextMaxTokens 用户不配置, 直接从 contextTokenLimit 派生 (与官方行为一致)
-  const autoContextMax = contextLimit
-  const autoContextExtMax = contextLimitMax
 
   const tooltipData = model.tooltipMarkdown
     ? create(AvailableModelsResponse_TooltipDataSchema, { markdownContent: model.tooltipMarkdown })
@@ -187,15 +183,18 @@ function buildAvailableModelFromByok(
     supportsThinking: model.thinking,
     supportsImages: model.supportsImages ?? true,
     supportsCmdK: model.supportsCmdK ?? true,
-    supportsAutoContext: model.supportsAutoContext ?? true,
-    autoContextMaxTokens: autoContextMax,
-    autoContextExtendedMaxTokens: autoContextExtMax,
-    // Max Mode 在 BYOK 场景下无意义 (我们不计费,context 全量透传),默认关闭让 toggle 从 UI 消失
+    // supportsAutoContext / autoContextMaxTokens / autoContextExtendedMaxTokens:
+    // 客户端零消费 (3.3.30 验证)，auto context 由 server config 控制。保留默认值兼容 proto。
+    supportsAutoContext: true,
+    autoContextMaxTokens: contextLimit,
+    autoContextExtendedMaxTokens: contextLimit,
     supportsMaxMode: model.supportsMaxMode ?? false,
     supportsNonMaxMode: model.supportsNonMaxMode ?? true,
     contextTokenLimit: contextLimit,
-    contextTokenLimitForMaxMode: contextLimitMax,
-    supportsPlanMode: model.supportsPlanMode ?? true,
+    // contextTokenLimitForMaxMode: 客户端零消费 (3.3.30 验证)，填 contextLimit 兼容 proto
+    contextTokenLimitForMaxMode: contextLimit,
+    // supportsPlanMode: 客户端零消费 — Plan Mode 由 feature flag 门控，非模型属性
+    supportsPlanMode: true,
     supportsSandboxing: model.supportsSandboxing ?? false,
     clientDisplayName: model.displayName,
     serverModelName: model.id,

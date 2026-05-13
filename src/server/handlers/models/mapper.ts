@@ -26,9 +26,7 @@ export class ModelNotFoundError extends Error {
 }
 
 export interface ModelContextMetadata {
-  supportsAutoContext: boolean
   contextTokenLimit: number
-  contextTokenLimitForMaxMode: number
 }
 
 export interface ResolvedModel extends ModelContextMetadata {
@@ -87,12 +85,6 @@ export function inferModelContextMetadata(
   if (contextTokenLimit === UNSET_CONTEXT_LIMIT && entry) {
     logger.warn({ modelId }, '[MODEL] contextTokenLimit not set — progress bar will be inaccurate')
   }
-  const contextTokenLimitForMaxMode = entry?.contextTokenLimitForMaxMode ?? contextTokenLimit
-  const supportsAutoContext = entry?.supportsAutoContext ?? true
 
-  return {
-    supportsAutoContext,
-    contextTokenLimit,
-    contextTokenLimitForMaxMode,
-  }
+  return { contextTokenLimit }
 }

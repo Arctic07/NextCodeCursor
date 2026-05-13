@@ -34,7 +34,6 @@ const TEST_PROVIDERS: ProvidersConfig = {
           displayName: 'GPT 5.4 Medium',
           thinking: false,
           contextTokenLimit: 400000,
-          supportsAutoContext: true,
         },
         {
           id: 'qwen3.6-plus',
@@ -42,7 +41,6 @@ const TEST_PROVIDERS: ProvidersConfig = {
           displayName: 'Qwen3.6 Plus',
           thinking: false,
           contextTokenLimit: 1000000,
-          supportsAutoContext: true,
         },
       ],
     },
@@ -59,7 +57,6 @@ const TEST_PROVIDERS: ProvidersConfig = {
           displayName: 'Gemini 3.1 Pro',
           thinking: false,
           contextTokenLimit: 1000000,
-          supportsAutoContext: true,
         },
       ],
     },
@@ -76,7 +73,6 @@ const TEST_PROVIDERS: ProvidersConfig = {
           displayName: 'Claude Sonnet 4',
           thinking: false,
           contextTokenLimit: 200000,
-          supportsAutoContext: true,
         },
         {
           id: 'qwen3.5-plus',
@@ -84,7 +80,6 @@ const TEST_PROVIDERS: ProvidersConfig = {
           displayName: 'Qwen3.5 Plus',
           thinking: false,
           contextTokenLimit: 1000000,
-          supportsAutoContext: true,
         },
         {
           id: 'glm-5',
@@ -92,7 +87,6 @@ const TEST_PROVIDERS: ProvidersConfig = {
           displayName: 'GLM 5',
           thinking: false,
           contextTokenLimit: 200000,
-          supportsAutoContext: true,
         },
       ],
     },

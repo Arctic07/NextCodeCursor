@@ -59,8 +59,6 @@ export interface ProviderRuntime {
     model: string;
     thinking: boolean;
     contextTokenLimit: number;
-    contextTokenLimitForMaxMode: number;
-    supportsAutoContext: boolean;
     prepareConversation(messages: LLMMessage[]): PreparedProviderConversation;
     prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean): PreparedProviderRequest;
     /** 模型配置的最大输出 token 数 */
@@ -156,8 +154,6 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         thinking: resolved.thinking,
         maxOutputTokens: resolved.maxOutputTokens,
         contextTokenLimit: resolved.contextTokenLimit,
-        contextTokenLimitForMaxMode: resolved.contextTokenLimitForMaxMode,
-        supportsAutoContext: resolved.supportsAutoContext,
         prepareConversation,
         prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false): PreparedProviderRequest {
             const conversation = prepareConversation(messages);

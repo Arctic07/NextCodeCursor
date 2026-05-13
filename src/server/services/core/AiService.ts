@@ -28,6 +28,7 @@ import { create } from '@bufbuild/protobuf'
 import {
   AiService,
   AvailableModelsResponse_FeatureModelConfigSchema,
+  AvailableModelsResponse_ModelPickerDisplayConfigurationSchema,
   AvailableModelsResponseSchema,
 } from '../../gen/aiserver_v1_pb'
 import {
@@ -56,6 +57,10 @@ async function handleAvailableModels() {
     composerModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
     cmdKModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
     backgroundComposerModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
+    // displayConfiguration 显式返回空对象 — 覆盖客户端 localStorage 缓存的官方配置,
+    // 使 Auto toggle 隐藏 (routedModelViewToNamedViewToggle 不存在 → Hec() = false)。
+    // BYOK OFF 时此 handler 不被调用, 官方 server 返回含 Auto 的配置, 自动恢复。
+    displayConfiguration: create(AvailableModelsResponse_ModelPickerDisplayConfigurationSchema, {}),
     useModelParameters: false,
   })
 }

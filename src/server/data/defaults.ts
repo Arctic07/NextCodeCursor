@@ -145,20 +145,14 @@ export interface ProviderModel {
   /** 精确思考预算 (token 数) — 适用于老 Claude 4.x (legacy thinking.enabled) 和 Gemini 精确覆盖 */
   thinkingBudgetTokens?: number
   supportsAgent?: boolean
+  /** 控制图片上传按钮显隐 — 客户端粘贴不受限，但上传按钮会隐藏 */
   supportsImages?: boolean
   supportsCmdK?: boolean
-  supportsAutoContext?: boolean
-  // autoContextMaxTokens / autoContextExtendedMaxTokens 已移除:
-  // 客户端不消费,官方 server 返回值也全等于 contextTokenLimit,
-  // BYOK server 的 auto-summarize 只看 contextTokenLimit × 85% 阈值。
-  // byokModelBuilder 里自动从 contextTokenLimit 派生填入 proto 响应。
   supportsMaxMode?: boolean
   supportsNonMaxMode?: boolean
   contextTokenLimit?: number
-  contextTokenLimitForMaxMode?: number
   /** 单次输出最大 token 数 — 不填默认 8192 */
   maxOutputTokens?: number
-  supportsPlanMode?: boolean
   supportsSandboxing?: boolean
   defaultOn?: boolean
   /** Fast 模式 — OpenAI: service_tier=priority / Anthropic: fast-mode beta */

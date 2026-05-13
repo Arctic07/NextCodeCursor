@@ -162,18 +162,13 @@ it('kvMessage uses default id=0 for system-style scaffold blobs and id=1 for fir
 it('resolveModel and inferred model metadata expose context window information', () => {
   const qwen = resolveModel('qwen3.5-plus')
   expect(qwen.contextTokenLimit).toBe(1000000)
-  expect(qwen.supportsAutoContext).toBe(true)
 
   const glm = resolveModel('glm-5')
   expect(glm.provider).toBe('anthropic')
   expect(glm.contextTokenLimit).toBe(200000)
-  expect(glm.supportsAutoContext).toBe(true)
 
-  // inferModelContextMetadata 只负责 contextTokenLimitForMaxMode 等派生字段的默认填充。
-  // autoContextMaxTokens 已移除 — 从 contextTokenLimit 自动派生, 不再暴露。
   const inferredClaude = inferModelContextMetadata('claude-sonnet-4', 'anthropic', { contextTokenLimit: 200000 })
   expect(inferredClaude.contextTokenLimit).toBe(200000)
-  expect(inferredClaude.contextTokenLimitForMaxMode).toBe(200000)
 })
 
 it('routeModel exposes conversation codec aligned with prompt profile', () => {
