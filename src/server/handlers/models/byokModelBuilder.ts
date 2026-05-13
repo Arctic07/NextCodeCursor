@@ -106,7 +106,7 @@ function buildVariantSuffix(model: ProviderModel): string | null {
   if (thinkingSeg)
     segments.push(thinkingSeg)
   if (model.fastMode)
-    segments.push(':icon-lightning: Fast')
+    segments.push('Fast')
   if (model.contextTokenLimit !== undefined && model.contextTokenLimit > 0) {
     const label = formatContextLabel(model.contextTokenLimit)
     if (label)
