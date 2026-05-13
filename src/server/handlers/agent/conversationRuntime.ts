@@ -72,6 +72,7 @@ export class EditDeltaExtractor {
   private esc = false
   private buf = ''
   private readonly target: string
+  private pendingOutputCR = false
   detectedPath = ''
 
   constructor(private readonly toolName: string) {
@@ -95,7 +96,34 @@ export class EditDeltaExtractor {
       }
       if (this.state === 'DONE') break
     }
-    return out || null
+    const normalizedOut = this.normalizeOutputDelta(out, this.state === 'DONE')
+    return normalizedOut || null
+  }
+
+  private normalizeOutputDelta(text: string, flushPendingCR: boolean): string {
+    if (!text) {
+      if (flushPendingCR && this.pendingOutputCR) {
+        this.pendingOutputCR = false
+        return '\n'
+      }
+      return ''
+    }
+
+    let value = text
+    let prefix = ''
+    if (this.pendingOutputCR) {
+      this.pendingOutputCR = false
+      if (value.startsWith('\n'))
+        value = value.slice(1)
+      prefix = '\n'
+    }
+
+    if (!flushPendingCR && value.endsWith('\r')) {
+      this.pendingOutputCR = true
+      value = value.slice(0, -1)
+    }
+
+    return prefix + value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   }
 }
 

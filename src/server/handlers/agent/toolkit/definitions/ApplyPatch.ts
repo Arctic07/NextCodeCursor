@@ -170,6 +170,10 @@ function parseUpdateFileChunk(
 
 // ── seekSequence: 4 级降级匹配 (移植自 Codex) ──
 
+function normalizeTextForCursorWrite(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
 function normalizeUnicode(s: string): string {
   return s.trim().replace(/./g, (c) => {
     switch (c) {
@@ -321,7 +325,7 @@ export function resolveParsedPatchPaths(patch: ParsedPatch, workspacePath?: stri
 
 export function applyPatchToContent(patch: ParsedPatch, beforeContent: string): string {
   if (patch.action === 'add')
-    return patch.addContents ?? ''
+    return normalizeTextForCursorWrite(patch.addContents ?? '')
 
   if (patch.action === 'delete')
     throw new Error('ApplyPatch Delete File is not supported by editToolCall; use the Delete tool instead')
@@ -329,9 +333,10 @@ export function applyPatchToContent(patch: ParsedPatch, beforeContent: string): 
   if (patch.movePath)
     throw new Error('Move/Rename is not supported by ApplyPatch in BYOK yet')
 
-  // EOL 规范化
-  const eol = beforeContent.includes('\r\n') ? '\r\n' : '\n'
-  const content = beforeContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  // Cursor agent-exec 文本协议使用 LF canonical text：
+  // client read 会把 CRLF 归一化成 LF，client write 会按目标文件格式把 LF 恢复为 CRLF。
+  // 因此 server 侧 ApplyPatch 结果必须保持 LF，不能按原文件 CRLF join，否则会被客户端二次转换为 \r\r\n。
+  const content = normalizeTextForCursorWrite(beforeContent)
   let originalLines = content.split('\n')
 
   // 去掉尾部空元素 (与 Codex 一致: split('\n') 对 "foo\n" 产生 ["foo", ""])
@@ -347,7 +352,7 @@ export function applyPatchToContent(patch: ParsedPatch, beforeContent: string): 
   if (newLines.length === 0 || newLines[newLines.length - 1] !== '')
     newLines.push('')
 
-  return newLines.join(eol)
+  return normalizeTextForCursorWrite(newLines.join('\n'))
 }
 
 // ── Diff 生成 (使用 diff 库) ──

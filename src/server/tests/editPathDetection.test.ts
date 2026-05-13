@@ -60,10 +60,16 @@ it('decodes JSON escapes in extracted content', () => {
   expect(content).toBe('line1\nline2\ttab')
 })
 
-it('preserves carriage returns in streamed edit content', () => {
+it('normalizes carriage returns in streamed edit content', () => {
   const ext = new EditDeltaExtractor('Edit')
   const content = ext.feed('{"path":"a.ts","old_string":"x","new_string":"line1\\r\\nline2"}')
-  expect(content).toBe('line1\r\nline2')
+  expect(content).toBe('line1\nline2')
+})
+
+it('normalizes CRLF split across streamed chunks', () => {
+  const ext = new EditDeltaExtractor('Edit')
+  expect(ext.feed('{"path":"a.ts","old_string":"x","new_string":"line1\\r')).toBe('line1')
+  expect(ext.feed('\\nline2"}')).toBe('\nline2')
 })
 
 it('handles backslash escape at chunk boundary', () => {

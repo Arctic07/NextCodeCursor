@@ -22,7 +22,7 @@ describe('tool path resolution', () => {
 })
 
 describe('edit/write tool path handling', () => {
-  it('resolves Edit paths, preserves CRLF, and rejects ambiguous replacements', () => {
+  it('resolves Edit paths, uses LF canonical text, and rejects ambiguous replacements', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cursor-edit-'))
     try {
       const file = join(dir, 'sample.txt')
@@ -59,7 +59,7 @@ describe('edit/write tool path handling', () => {
         newString: plan.newString,
         replaceAll: plan.replaceAll,
       })
-      expect(result.fileText).toBe('one\r\nTWO\r\none\r\n')
+      expect(result.fileText).toBe('one\nTWO\none\n')
 
       const resultWithRawCrlfNewString = applyStringEditToContent({
         path: plan.path,
@@ -68,8 +68,8 @@ describe('edit/write tool path handling', () => {
         newString: 'TWO\r\nTHREE',
         replaceAll: false,
       })
-      expect(resultWithRawCrlfNewString.fileText).toBe('one\r\nTWO\r\nTHREE\r\n')
-      expect(resultWithRawCrlfNewString.fileText).not.toContain('\r\r\n')
+      expect(resultWithRawCrlfNewString.fileText).toBe('one\nTWO\nTHREE\n')
+      expect(resultWithRawCrlfNewString.fileText).not.toContain('\r')
     }
     finally {
       rmSync(dir, { recursive: true, force: true })
@@ -92,9 +92,10 @@ describe('edit/write tool path handling', () => {
       throw new Error('expected applyPatch plan')
     expect(plan.path).toBe('/workspace/sample.txt')
     expect(applyPatchToContent(plan.parsedPatch as ParsedPatch, 'old\n')).toBe('new\n')
+    expect(applyPatchToContent(plan.parsedPatch as ParsedPatch, 'old\r\n')).toBe('new\n')
   })
 
-  it('does not normalize Write contents and still resolves relative paths', () => {
+  it('normalizes Write contents to LF canonical text and still resolves relative paths', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cursor-write-'))
     try {
       const args = buildExecArgs('Write', {
@@ -103,7 +104,7 @@ describe('edit/write tool path handling', () => {
       }, 'call-write', { workspacePath: dir })
 
       expect(args.path).toBe(join(dir, 'created.txt'))
-      expect(args.fileText).toBe('a\r\nb')
+      expect(args.fileText).toBe('a\nb')
     }
     finally {
       rmSync(dir, { recursive: true, force: true })

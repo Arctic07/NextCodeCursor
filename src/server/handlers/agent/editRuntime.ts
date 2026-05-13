@@ -39,6 +39,10 @@ function str(value: unknown, fallback = ''): string {
     return typeof value === 'string' ? value : fallback;
 }
 
+function normalizeTextForCursorWrite(text: string): string {
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 type NewlineStats = {
     chars: number;
     crlf: number;
@@ -132,9 +136,9 @@ function extractReadOutcome(execClientFrame: Record<string, unknown> | null): Cl
     if (oneof.caseName === 'success') {
         const success = oneof.value;
         const output = obj(success.output);
-        if (output.case === 'content') return { case: 'success', content: str(output.value) };
-        if (typeof output.content === 'string') return { case: 'success', content: output.content };
-        if (typeof success.content === 'string') return { case: 'success', content: success.content };
+        if (output.case === 'content') return { case: 'success', content: normalizeTextForCursorWrite(str(output.value)) };
+        if (typeof output.content === 'string') return { case: 'success', content: normalizeTextForCursorWrite(output.content) };
+        if (typeof success.content === 'string') return { case: 'success', content: normalizeTextForCursorWrite(success.content) };
         return { case: 'success', content: '' };
     }
 
@@ -327,10 +331,11 @@ export async function* finalizeEditToolCall(params: {
         },
     }, '[EDIT_NL] writeArgs newline diagnostics');
 
+    const clientFileText = normalizeTextForCursorWrite(applied.fileText);
     const writeExecMsgId = params.allocateExecMessageId();
     yield execMessage(writeExecMsgId, `${callId}-write`, 'writeArgs', {
         path,
-        fileText: applied.fileText,
+        fileText: clientFileText,
         toolCallId: callId,
         ...(plan.kind === 'editNotebook' ? { returnFileContentAfterWrite: true, fileBytes: new Uint8Array() } : {}),
     });

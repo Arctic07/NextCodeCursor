@@ -71,31 +71,21 @@ const GEMINI = {
 type TextFileMetadata = {
     rawText: string;
     normalizedText: string;
-    lineEnding: 'LF' | 'CRLF';
     bom: string;
 };
 
 function textMetadataFromContent(rawText: string): TextFileMetadata {
     const bom = rawText.startsWith('\uFEFF') ? '\uFEFF' : '';
     const textWithoutBom = bom ? rawText.slice(1) : rawText;
-    const lineEnding = textWithoutBom.includes('\r\n') ? 'CRLF' : 'LF';
     return {
         rawText,
-        normalizedText: textWithoutBom.replace(/\r\n/g, '\n').replace(/\r/g, '\n'),
-        lineEnding,
+        normalizedText: normalizeEditText(textWithoutBom),
         bom,
     };
 }
 
 function normalizeEditText(value: string): string {
     return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-function restoreLineEndings(value: string, lineEnding: 'LF' | 'CRLF'): string {
-    const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    return lineEnding === 'CRLF'
-        ? normalized.split('\n').join('\r\n')
-        : normalized;
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -137,11 +127,13 @@ export function applyStringEditToContent(params: {
     const edited = replaceAll
         ? meta.normalizedText.split(oldNorm).join(newNorm)
         : meta.normalizedText.replace(oldNorm, newNorm);
-    const fileText = meta.bom + restoreLineEndings(edited, meta.lineEnding);
+    // Cursor agent-exec 文本协议使用 LF canonical text：client write 会按目标文件格式恢复 CRLF。
+    // 因此这里不能恢复为 CRLF，否则客户端会二次转换成 \r\r\n。
+    const fileText = meta.bom + edited;
 
     return {
         fileText,
-        streamContent: restoreLineEndings(newNorm, meta.lineEnding),
+        streamContent: newNorm,
     };
 }
 
@@ -180,7 +172,7 @@ export const EditTool: ToolRegistryEntry = {
             oldString: str(input.old_string),
             newString: str(input.new_string),
             replaceAll: input.replace_all === true,
-            streamContent: str(input.new_string),
+            streamContent: normalizeEditText(str(input.new_string)),
         };
     },
 };

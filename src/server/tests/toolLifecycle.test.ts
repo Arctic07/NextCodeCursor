@@ -506,6 +506,80 @@ it('runToolCall Edit rejects multiple matches from client content without writeA
   expect(roundContext.pendingToolResults[0].content).toContain('Found 2 matches')
 })
 
+it('runToolCall ApplyPatch normalizes CRLF client content to LF writeArgs', async () => {
+  const session = createEphemeralSession('applypatch-crlf-normalize')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      readResult: {
+        success: {
+          path: '/workspace/a.txt',
+          content: 'old\r\nkeep\r\n',
+          totalLines: 2,
+          fileSize: '11',
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 2,
+      writeResult: {
+        success: {
+          path: '/workspace/a.txt',
+          linesCreated: 2,
+          fileSize: 9,
+        },
+      },
+    },
+  })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 2 } } })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-patch-crlf',
+      name: 'ApplyPatch',
+      input: {
+        patch: `*** Begin Patch
+*** Update File: a.txt
+@@
+-old
++new
+*** End Patch
+`,
+      },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'gpt-5',
+    workspacePath: '/workspace',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator) frames.push(frame)
+
+  const execFrames = frames.filter(frame => frame.message.case === 'execServerMessage')
+  expect(execFrames).toHaveLength(2)
+  const writeFrame = execFrames[1]
+  if (writeFrame.message.case !== 'execServerMessage')
+    throw new Error('expected write frame')
+  expect(writeFrame.message.value.message.case).toBe('writeArgs')
+  const writeArgs = writeFrame.message.value.message.value as any
+  expect(writeArgs.fileText).toBe('new\nkeep\n')
+  expect(writeArgs.fileText).not.toContain('\r')
+  expect(roundContext.pendingToolResults[0].content).toContain('new\nkeep\n')
+})
+
 it('runToolCall ApplyPatch Update File fails on fileNotFound without writeArgs', async () => {
   const session = createEphemeralSession('applypatch-update-missing')
   pushSessionMessage(session, {

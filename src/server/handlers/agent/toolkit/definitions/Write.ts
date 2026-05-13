@@ -87,6 +87,10 @@ function resolveWritePath(input: Record<string, unknown>, options?: ToolExecBuil
     return resolveToolPath(input.path, options?.workspacePath);
 }
 
+function normalizeTextForCursorWrite(text: string): string {
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 export const WriteTool: ToolRegistryEntry = {
     canonicalName: 'Write',
     aliases: ["Write"],
@@ -102,7 +106,7 @@ export const WriteTool: ToolRegistryEntry = {
     }),
     buildExecArgs: (input, callId, options) => {
         const path = resolveWritePath(input, options);
-        const fileText = typeof input.contents === 'string' ? input.contents : '';
+        const fileText = normalizeTextForCursorWrite(typeof input.contents === 'string' ? input.contents : '');
         return {
             path,
             fileText,
@@ -113,7 +117,7 @@ export const WriteTool: ToolRegistryEntry = {
     },
     buildEditPlan: (input, _callId, options) => {
         const path = resolveWritePath(input, options);
-        const contents = typeof input.contents === 'string' ? input.contents : '';
+        const contents = normalizeTextForCursorWrite(typeof input.contents === 'string' ? input.contents : '');
         return {
             kind: 'write',
             path,
