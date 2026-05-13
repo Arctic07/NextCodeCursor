@@ -256,6 +256,91 @@ function captureAiServiceRef(code, log) {
   return result;
 }
 
+/**
+ * MAX Mode toggle 数据驱动隐藏 (AST 精确匹配)。
+ *
+ * 目标: MaxModeToggle 组件 (名为 Kec 等, 混淆后不固定)。
+ * 识别方式: function 体内包含 `setMaxMode` + `"MAX Mode"` + 从 PY() 解构 state。
+ *
+ * 补丁: 在函数体开头注入 models 检查 guard —
+ *   const{models:_ms}=PY();if(!_ms.some(_m=>_m._supportsMaxMode))return null;
+ *
+ * PY() 是 React context hook, 多次调用无副作用。
+ * _supportsMaxMode 是 picker 内部 model 对象的属性 (从 proto supportsMaxMode 派生)。
+ *
+ * 效果: BYOK ON (所有模型 supportsMaxMode=false) → 组件返回 null → toggle 隐藏
+ *        BYOK OFF (官方模型, 部分 supportsMaxMode=true) → 正常渲染
+ */
+function patchMaxModeToggle(code, log) {
+  const BODY_ANCHOR = '"MAX Mode"';
+  const anchorIdx = code.indexOf(BODY_ANCHOR);
+  if (anchorIdx === -1) {
+    log?.('  [max-mode-toggle] anchor "MAX Mode" not found — skipping');
+    return code;
+  }
+
+  // 向前找到包含 "MAX Mode" 和 setMaxMode 的函数
+  const funcStarts = findFunctionStarts(code, Math.max(0, anchorIdx - 3000), 3000);
+  let targetFn = null;
+  for (const fStart of funcStarts) {
+    const bounds = extractFunction(code, fStart);
+    if (!bounds || bounds.end < anchorIdx) continue;
+    if (bounds.start > anchorIdx) break;
+    const body = code.slice(bounds.start, bounds.end);
+    if (body.includes(BODY_ANCHOR) && body.includes('setMaxMode')) {
+      targetFn = bounds;
+      break;
+    }
+  }
+  if (!targetFn) {
+    log?.('  [max-mode-toggle] MaxModeToggle function not found — skipping');
+    return code;
+  }
+
+  // AST 验证: 确认是 FunctionDeclaration, 参数为 0 个, 体内包含 PY() 调用
+  const fnSource = code.slice(targetFn.start, targetFn.end);
+  let ast;
+  try { ast = acorn.parse(fnSource, { ecmaVersion: 2022, sourceType: 'script' }); } catch (e) {
+    log?.(`  [max-mode-toggle] AST parse failed: ${e.message} — skipping`);
+    return code;
+  }
+  const fnDecl = ast.body[0];
+  if (!fnDecl || fnDecl.type !== 'FunctionDeclaration' || !fnDecl.id?.name) {
+    log?.('  [max-mode-toggle] unexpected AST shape — skipping');
+    return code;
+  }
+  // 从 AST 提取 context hook 调用名 — 查找 { setMaxMode: ... } = <callee>()
+  // callee 是混淆变量名 (如 PY), 每版本不同, 必须动态提取
+  let contextHookName = null;
+  function walkForContextHook(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'VariableDeclarator' && node.id?.type === 'ObjectPattern' && node.init?.type === 'CallExpression') {
+      const hasSetMaxMode = node.id.properties?.some(p => p.key?.name === 'setMaxMode');
+      if (hasSetMaxMode && node.init.callee?.type === 'Identifier') {
+        contextHookName = node.init.callee.name;
+      }
+    }
+    for (const key of Object.keys(node)) {
+      if (contextHookName) return;
+      const child = node[key];
+      if (Array.isArray(child)) child.forEach(c => { if (c && c.type) walkForContextHook(c); });
+      else if (child && child.type) walkForContextHook(child);
+    }
+  }
+  walkForContextHook(fnDecl);
+  if (!contextHookName) {
+    log?.('  [max-mode-toggle] context hook (setMaxMode destructor) not found via AST — skipping');
+    return code;
+  }
+
+  // 找到函数体 '{' 的位置, 在其后注入 guard
+  const bodyStart = targetFn.start + fnDecl.body.start + 1; // +1 跳过 '{'
+  const guard = `const{models:_ms}=${contextHookName}();if(!_ms.some(_m=>_m.name!=="default"&&_m.supportsMaxMode))return null;`;
+  const result = code.slice(0, bodyStart) + guard + code.slice(bodyStart);
+  log?.(`  [max-mode-toggle] injected guard into ${fnDecl.id.name}() via ${contextHookName}(): return null when no model supports Max Mode`);
+  return result;
+}
+
 export function patchInject(paths, log) {
   log?.('[inject] Patching workbench.js...');
   const code = readFileSync(paths.workbenchJs, 'utf-8');
@@ -278,6 +363,11 @@ export function patchInject(paths, log) {
   // 3. 注入 hook payload (放最前面优先执行)
   const payload = buildHookPayload();
   patched = `/* CURSOR-BYOK-HOOK-START */${payload}/* CURSOR-BYOK-HOOK-END */;${patched}`;
+  // 4. MAX Mode toggle: 数据驱动隐藏
+  //    原始: S = !i   (i = hideMaxToggle prop, 始终 false → toggle 始终显示)
+  //    补丁: S = !i && o.some(...)  (o = models 数组, 无 supportsMaxMode 时隐藏)
+  //    锚定: 同一行包含 '"max mode".includes(d)' 的唯一行
+  patched = patchMaxModeToggle(patched, log);
 
   if (!patched.includes(HOOK_MARKER)) throw new Error('Verification failed');
 
