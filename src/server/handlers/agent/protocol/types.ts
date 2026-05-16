@@ -186,10 +186,11 @@ export interface ParsedRunRequest {
     path: string
     overview?: string
   }>
-  /** 客户端运行时 thinking 参数 (来自 RequestedModel.parameters[]) */
+  /** 客户端 Edit 面板参数 (来自 RequestedModel.parameters[]) */
   clientThinking?: boolean
   clientThinkingLevel?: string
   clientThinkingBudget?: number
+  clientFast?: boolean
   /** 功能开关 */
   webSearchEnabled: boolean
   webFetchEnabled: boolean

@@ -621,18 +621,26 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     ? formatBackgroundTaskCompletionMessage(backgroundTaskCompletions)
     : ''
 
-  // 解析 RequestedModel.parameters[] — 客户端运行时 thinking 配置
+  // 解析 RequestedModel.parameters[] — 客户端 Edit 面板选中的参数值
   const requestedParams = (requestedModel?.parameters as Array<{ id: string, value: string }>) ?? []
   const paramMap = new Map(requestedParams.map(p => [p.id, p.value]))
-  const clientThinking = paramMap.has('thinking') ? paramMap.get('thinking') === 'true' : undefined
-  const clientThinkingLevel = paramMap.get('level') || undefined
+
+  // reasoning (OpenAI 复合: none=off, 其他=thinking+level) / effort (Anthropic: →level 别名)
+  let clientThinking = paramMap.has('thinking') ? paramMap.get('thinking') === 'true' : undefined
+  let clientThinkingLevel: string | undefined = paramMap.get('level') || paramMap.get('effort') || undefined
+  const clientReasoning = paramMap.get('reasoning')
+  if (clientReasoning !== undefined) {
+    clientThinking = clientReasoning !== 'none'
+    clientThinkingLevel = clientReasoning !== 'none' ? clientReasoning : undefined
+  }
   const clientThinkingBudgetRaw = paramMap.get('budget')
   const clientThinkingBudget = clientThinkingBudgetRaw ? Number(clientThinkingBudgetRaw) : undefined
   const clientContextTokenLimitRaw = paramMap.get('context')
   const clientContextTokenLimit = clientContextTokenLimitRaw ? Number(clientContextTokenLimitRaw) : undefined
+  const clientFast = paramMap.has('fast') ? paramMap.get('fast') === 'true' : undefined
 
   if (requestedParams.length > 0) {
-    logger.debug({ parameters: Object.fromEntries(paramMap) }, '[AGENT] client thinking parameters')
+    logger.debug({ parameters: Object.fromEntries(paramMap) }, '[AGENT] client parameters')
   }
 
   return {
@@ -654,6 +662,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     clientThinking,
     clientThinkingLevel,
     clientThinkingBudget: clientThinkingBudget && Number.isFinite(clientThinkingBudget) ? clientThinkingBudget : undefined,
+    clientFast,
     userRules,
     projectRules,
     agentSkills: agentSkillsFromRules,

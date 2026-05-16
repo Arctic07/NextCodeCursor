@@ -180,6 +180,33 @@ export const styles = /* css */ `
   .model-switch:hover .model-switch-track { border-color: var(--vscode-focusBorder, #007fd4); }
 
   .actions-bar { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--vscode-widget-border, var(--vscode-editorWidget-border)); }
+
+  .qs-section { margin-top: 8px; border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border)); border-radius: 3px; }
+  .qs-header { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; font-size: 11px; font-weight: 600; text-align: left; min-width: auto; }
+  .qs-header:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.04)); }
+  .qs-caret { font-size: 10px; opacity: .7; width: 10px; }
+  .qs-hint { margin-left: auto; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--vscode-widget-border); display: flex; align-items: center; justify-content: center; font-size: 9px; opacity: .5; font-weight: 400; cursor: help; }
+  .qs-hint:hover { opacity: 1; }
+  .qs-body { padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .qs-item { border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border)); border-radius: 3px; overflow: hidden; }
+  .qs-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; }
+  .qs-label { font-size: 11px; font-weight: 500; }
+  .qs-item-body { padding: 4px 8px 6px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border)); }
+  .qs-switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; opacity: 1; margin: 0; text-transform: none; }
+  .qs-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .qs-switch-track { width: 28px; height: 14px; border-radius: 7px; background: var(--vscode-widget-border, rgba(255,255,255,.2)); transition: background .15s; }
+  .qs-switch input:checked + .qs-switch-track { background: var(--vscode-button-background, #d4875a); }
+  .qs-switch-knob { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: left .15s; pointer-events: none; }
+  .qs-switch input:checked ~ .qs-switch-knob { left: 16px; }
+  .qs-group { display: flex; flex-direction: column; gap: 4px; }
+  .qs-chips { display: flex; flex-wrap: wrap; gap: 3px; padding-left: 18px; }
+  .qs-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; padding: 1px 6px; border: 1px solid var(--vscode-widget-border); border-radius: 10px; cursor: pointer; user-select: none; }
+  .qs-chip input { width: auto; margin: 0; }
+  .qs-chip:has(input:checked) { background: var(--vscode-button-secondaryBackground, rgba(255,255,255,.1)); border-color: var(--vscode-focusBorder, #007fd4); }
+  .qs-tags { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; padding-left: 18px; }
+  .qs-tag { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; padding: 1px 6px; background: var(--vscode-badge-background, rgba(255,255,255,.15)); border-radius: 3px; font-weight: 600; }
+  .qs-tag-x { background: none; border: none; color: var(--vscode-errorForeground, #f48771); cursor: pointer; font-size: 12px; padding: 0 2px; min-width: auto; line-height: 1; }
+  .qs-tag-input { font-size: 10px; padding: 1px 4px; width: 100px; height: 18px; border: 1px dashed var(--vscode-widget-border); background: transparent; color: var(--vscode-input-foreground); border-radius: 3px; }
   .empty { font-size: 11px; opacity: 0.6; padding: 12px 0; text-align: center; }
   .check { display: flex; align-items: center; gap: 4px; font-size: 10px; margin: 0; white-space: nowrap; }
   .check input { width: auto; }

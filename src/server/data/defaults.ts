@@ -161,6 +161,40 @@ export interface ProviderModel {
   tooltipMarkdown?: string
   /** 模型选择器里 hover 显示的 markdown tooltip (max mode 开启时) */
   tooltipMarkdownForMaxMode?: string
+
+  /**
+   * Edit 面板参数选项 — 不填则无 Edit 按钮（完全向后兼容）。
+   *
+   * 按 provider.type 自动选择生成模式:
+   *   - anthropic / gemini: thinking (bool toggle) + effort (enum)
+   *   - openai-*:           reasoning (enum, None=关闭)
+   *
+   * effort / reasoning / budget 三者互斥。
+   */
+  parameters?: {
+    /** Anthropic/Gemini: 显式 thinking 开关 */
+    thinking?: boolean
+    /** Anthropic/Gemini: effort 档位选项 (与 reasoning/budget 互斥) */
+    effort?: ThinkingLevel[]
+    /** OpenAI: 单一 reasoning 枚举 — None=关闭 (与 effort/budget 互斥) */
+    reasoning?: ThinkingLevel[]
+    /** 旧模型 budget 预设 (与 effort/reasoning 互斥) */
+    budget?: number[]
+    /** Context 容量选项 */
+    context?: number[]
+    /** Fast 模式开关 */
+    fast?: boolean
+    /** 用户自定义参数 */
+    custom?: Array<{
+      id: string
+      name: string
+      type: 'boolean' | 'enum'
+      values?: string[]
+      displayNames?: string[]
+      default?: string
+      tooltip?: string
+    }>
+  }
 }
 
 export interface ProviderEntry {

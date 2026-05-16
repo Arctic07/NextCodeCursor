@@ -85,6 +85,10 @@ export function initApp(Alpine: AlpineType) {
     },
 
     // ── Draft 管理 ──
+    getModel(pid: string, mid: string): any {
+      const d = this.getDraft(pid)
+      return (d.models || []).find((x: any) => x.id === mid)
+    },
     getDraft(pid: string): any {
       if (!this.drafts[pid]) {
         const base = (this.state?.providers || []).find((p: any) => p.id === pid)
@@ -298,7 +302,6 @@ export function initApp(Alpine: AlpineType) {
           delete m.thinkingBudgetTokens
         }
         else {
-          // 按 provider type 自动初始化默认 level
           const pType = (this.getDraft(pid) as any).type
           if (!m.thinkingLevel && !m.thinkingBudgetTokens) {
             if (pType === 'anthropic')
@@ -312,9 +315,10 @@ export function initApp(Alpine: AlpineType) {
         m[field] = value
       }
 
-      // id = apiModel 同步 — 仅在 blur 时触发, 不在每次 input 时触发
-      // 避免 x-for key 变化导致 DOM 销毁重建 + 输入脱焦
-      // 实际同步由 syncModelId() 在 blur 事件中调用
+      // QS 联动: thinking/thinkingLevel 变更时自动开启对应 QS 开关
+      if (field === 'thinking' || field === 'thinkingLevel') {
+        this._syncQsFromDefaults(pid, mid)
+      }
     },
 
     setThinkingMode(pid: string, mid: string, mode: 'level' | 'budget') {
@@ -387,6 +391,91 @@ export function initApp(Alpine: AlpineType) {
       d.models = (d.models || []).filter((x: any) => x.id !== mid)
       if (this.modelExpanded[pid])
         delete this.modelExpanded[pid][mid]
+    },
+
+    // ── QuickSwitch auto-link ──
+
+    _syncQsFromDefaults(pid: string, mid: string) {
+      const d = this.getDraft(pid)
+      const m = (d.models || []).find((x: any) => x.id === mid)
+      if (!m)
+        return
+      const pType = d.type as string
+      const isOpenAI = pType === 'openai-chat' || pType === 'openai-responses'
+
+      if (m.thinking && m.thinkingLevel) {
+        if (!m.parameters)
+          m.parameters = {}
+        if (isOpenAI) {
+          if (!Array.isArray(m.parameters.reasoning))
+            m.parameters.reasoning = this._qsLevelsForType(pType)
+        }
+        else {
+          if (m.parameters.thinking !== true)
+            m.parameters.thinking = true
+          if (!Array.isArray(m.parameters.effort))
+            m.parameters.effort = this._qsLevelsForType(pType)
+        }
+      }
+    },
+
+    _qsLevelsForType(pType: string): string[] {
+      if (pType === 'anthropic')
+        return ['low', 'medium', 'high', 'xhigh', 'max']
+      if (pType === 'gemini')
+        return ['minimal', 'low', 'medium', 'high']
+      return ['minimal', 'low', 'medium', 'high', 'xhigh']
+    },
+
+    // ── Edit Panel parameters helpers ──
+
+    setEditParam(pid: string, mid: string, key: string, value: any) {
+      const m = this.getModel(pid, mid)
+      if (!m)
+        return
+      if (!m.parameters)
+        m.parameters = {}
+      if (value === undefined || value === false)
+        delete (m.parameters as any)[key]
+      else
+        (m.parameters as any)[key] = value
+      if (Object.keys(m.parameters).length === 0)
+        delete m.parameters
+    },
+
+    toggleEditParamArrayItem(pid: string, mid: string, key: string, item: string, checked: boolean) {
+      const m = this.getModel(pid, mid)
+      if (!m?.parameters)
+        return
+      const arr: string[] = (m.parameters as any)[key]
+      if (!Array.isArray(arr))
+        return
+      if (checked && !arr.includes(item))
+        arr.push(item)
+      else if (!checked)
+        (m.parameters as any)[key] = arr.filter((v: string) => v !== item)
+    },
+
+    removeEditParamArrayIndex(pid: string, mid: string, key: string, index: number) {
+      const m = this.getModel(pid, mid)
+      if (!m?.parameters)
+        return
+      const arr: any[] = (m.parameters as any)[key]
+      if (!Array.isArray(arr))
+        return
+      arr.splice(index, 1)
+    },
+
+    addEditParamContextValue(pid: string, mid: string, value: number) {
+      const m = this.getModel(pid, mid)
+      if (!m?.parameters || !Array.isArray(m.parameters.context))
+        return
+      if (!value || value <= 0 || !Number.isFinite(value))
+        return
+      if (!m.parameters.context.includes(value)) {
+        m.parameters.context.push(value)
+        m.parameters.context.sort((a: number, b: number) => a - b)
+      }
     },
 
     resetProvider(pid: string) {

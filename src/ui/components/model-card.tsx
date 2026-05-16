@@ -22,6 +22,9 @@ const THINKING_LEVELS_GEMINI = [
   { value: 'medium', label: 'medium' },
   { value: 'high', label: 'high' },
 ]
+const QS_LEVELS_ANTHROPIC = THINKING_LEVELS_ANTHROPIC.map(l => l.value)
+const QS_LEVELS_OPENAI = THINKING_LEVELS_OPENAI.map(l => l.value)
+const QS_LEVELS_GEMINI = THINKING_LEVELS_GEMINI.map(l => l.value)
 
 /**
  * 单个 Model 卡片 — 在 x-for="m in ..." 作用域内使用
@@ -239,6 +242,162 @@ export function ModelCard() {
             placeholder="**Model name**<br/>Short description"
           >
           </textarea>
+        </div>
+
+        {/* ── QuickSwitch Options (accordion) ── */}
+        <div class="qs-section" x-data="{ qsOpen: false }">
+          <button class="qs-header" x-on:click="qsOpen = !qsOpen" type="button">
+            <span class="qs-caret" x-text="qsOpen ? '▼' : '▶'"></span>
+            <span>QuickSwitch Options</span>
+            <span class="qs-hint" title="Checked options appear in Cursor's model picker Edit panel for runtime switching.">?</span>
+          </button>
+          <div class="qs-body" x-show="qsOpen" x-cloak>
+
+            {/* ── Anthropic: Thinking Toggle + Effort Levels ── */}
+            <template x-if="p.type === 'anthropic'">
+              <div class="qs-item" title="Expose Thinking on/off toggle in Edit panel">
+                <div class="qs-row">
+                  <span class="qs-label">Thinking Toggle</span>
+                  <label class="qs-switch">
+                    <input type="checkbox" x-bind:checked="m.parameters?.thinking === true" x-on:change="$store.app.setEditParam(p.id, m.id, 'thinking', $event.target.checked || undefined)" />
+                    <span class="qs-switch-track"></span>
+                    <span class="qs-switch-knob"></span>
+                  </label>
+                </div>
+              </div>
+            </template>
+            <template x-if="p.type === 'anthropic'">
+              <div class="qs-item" title="Expose effort level selector in Edit panel">
+                <div class="qs-row">
+                  <span class="qs-label">Effort Levels</span>
+                  <label class="qs-switch">
+                    <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.effort)" x-on:change={`$store.app.setEditParam(p.id, m.id, 'effort', $event.target.checked ? ${JSON.stringify(QS_LEVELS_ANTHROPIC)} : undefined)`} />
+                    <span class="qs-switch-track"></span>
+                    <span class="qs-switch-knob"></span>
+                  </label>
+                </div>
+                <template x-if="Array.isArray(m.parameters?.effort)">
+                  <div class="qs-item-body">
+                    <div class="qs-chips">
+                      {QS_LEVELS_ANTHROPIC.map(lv => (
+                        <label class="qs-chip" key={lv}>
+                          <input type="checkbox" x-bind:checked={`m.parameters?.effort?.includes('${lv}')`} x-on:change={`$store.app.toggleEditParamArrayItem(p.id, m.id, 'effort', '${lv}', $event.target.checked)`} />
+                          <span>{lv}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            {/* ── Gemini: Thinking Toggle + Effort Levels (different set) ── */}
+            <template x-if="p.type === 'gemini'">
+              <div class="qs-item" title="Expose Thinking on/off toggle in Edit panel">
+                <div class="qs-row">
+                  <span class="qs-label">Thinking Toggle</span>
+                  <label class="qs-switch">
+                    <input type="checkbox" x-bind:checked="m.parameters?.thinking === true" x-on:change="$store.app.setEditParam(p.id, m.id, 'thinking', $event.target.checked || undefined)" />
+                    <span class="qs-switch-track"></span>
+                    <span class="qs-switch-knob"></span>
+                  </label>
+                </div>
+              </div>
+            </template>
+            <template x-if="p.type === 'gemini'">
+              <div class="qs-item" title="Expose effort level selector in Edit panel">
+                <div class="qs-row">
+                  <span class="qs-label">Effort Levels</span>
+                  <label class="qs-switch">
+                    <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.effort)" x-on:change={`$store.app.setEditParam(p.id, m.id, 'effort', $event.target.checked ? ${JSON.stringify(QS_LEVELS_GEMINI)} : undefined)`} />
+                    <span class="qs-switch-track"></span>
+                    <span class="qs-switch-knob"></span>
+                  </label>
+                </div>
+                <template x-if="Array.isArray(m.parameters?.effort)">
+                  <div class="qs-item-body">
+                    <div class="qs-chips">
+                      {QS_LEVELS_GEMINI.map(lv => (
+                        <label class="qs-chip" key={lv}>
+                          <input type="checkbox" x-bind:checked={`m.parameters?.effort?.includes('${lv}')`} x-on:change={`$store.app.toggleEditParamArrayItem(p.id, m.id, 'effort', '${lv}', $event.target.checked)`} />
+                          <span>{lv}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            {/* ── OpenAI: Reasoning Levels (single enum, None auto-prepended) ── */}
+            <template x-if="p.type === 'openai-chat' || p.type === 'openai-responses'">
+              <div class="qs-item" title="Expose reasoning level selector in Edit panel (None = off)">
+                <div class="qs-row">
+                  <span class="qs-label">Reasoning Levels</span>
+                  <label class="qs-switch">
+                    <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.reasoning)" x-on:change={`$store.app.setEditParam(p.id, m.id, 'reasoning', $event.target.checked ? ${JSON.stringify(QS_LEVELS_OPENAI)} : undefined)`} />
+                    <span class="qs-switch-track"></span>
+                    <span class="qs-switch-knob"></span>
+                  </label>
+                </div>
+                <template x-if="Array.isArray(m.parameters?.reasoning)">
+                  <div class="qs-item-body">
+                    <div class="qs-chips">
+                      {QS_LEVELS_OPENAI.map(lv => (
+                        <label class="qs-chip" key={lv}>
+                          <input type="checkbox" x-bind:checked={`m.parameters?.reasoning?.includes('${lv}')`} x-on:change={`$store.app.toggleEditParamArrayItem(p.id, m.id, 'reasoning', '${lv}', $event.target.checked)`} />
+                          <span>{lv}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            {/* Context options */}
+            <div class="qs-item" title="Expose context window size selector in Edit panel">
+              <div class="qs-row">
+                <span class="qs-label">Context Options</span>
+                <label class="qs-switch">
+                  <input type="checkbox" x-bind:checked="Array.isArray(m.parameters?.context)" x-on:change="$store.app.setEditParam(p.id, m.id, 'context', $event.target.checked ? [m.contextTokenLimit || 200000] : undefined)" />
+                  <span class="qs-switch-track"></span>
+                  <span class="qs-switch-knob"></span>
+                </label>
+              </div>
+              <template x-if="Array.isArray(m.parameters?.context)">
+                <div class="qs-item-body">
+                  <div class="qs-tags">
+                    <template x-for="(cv, ci) in (m.parameters?.context || [])">
+                      <span class="qs-tag">
+                        <span x-text="cv >= 1000000 ? (cv/1000000)+'M' : Math.round(cv/1000)+'K'"></span>
+                        <button class="qs-tag-x" x-on:click="$store.app.removeEditParamArrayIndex(p.id, m.id, 'context', ci)">&times;</button>
+                      </span>
+                    </template>
+                    <input
+                      type="number"
+                      class="qs-tag-input"
+                      placeholder="+ token count"
+                      {...{ 'x-on:keydown.enter.prevent': '$store.app.addEditParamContextValue(p.id, m.id, parseInt($event.target.value)); $event.target.value = ""' }}
+                    />
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            {/* Fast toggle */}
+            <div class="qs-item" title="Expose Fast mode toggle in Edit panel">
+              <div class="qs-row">
+                <span class="qs-label">Fast Toggle</span>
+                <label class="qs-switch">
+                  <input type="checkbox" x-bind:checked="m.parameters?.fast === true" x-on:change="$store.app.setEditParam(p.id, m.id, 'fast', $event.target.checked || undefined)" />
+                  <span class="qs-switch-track"></span>
+                  <span class="qs-switch-knob"></span>
+                </label>
+              </div>
+            </div>
+
+          </div>
         </div>
 
         <div class="actions-bar">

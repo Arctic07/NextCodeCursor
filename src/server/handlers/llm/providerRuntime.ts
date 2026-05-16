@@ -60,7 +60,7 @@ export interface ProviderRuntime {
     thinking: boolean;
     contextTokenLimit: number;
     prepareConversation(messages: LLMMessage[]): PreparedProviderConversation;
-    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean): PreparedProviderRequest;
+    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean, fastOverride?: boolean): PreparedProviderRequest;
     /** 模型配置的最大输出 token 数 */
     maxOutputTokens: number;
     listRuntimeTools(extraTools?: LLMTool[], mode?: string, isSubagent?: boolean): LLMTool[];
@@ -155,7 +155,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         maxOutputTokens: resolved.maxOutputTokens,
         contextTokenLimit: resolved.contextTokenLimit,
         prepareConversation,
-        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false): PreparedProviderRequest {
+        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean): PreparedProviderRequest {
             const conversation = prepareConversation(messages);
             // 客户端运行时参数覆盖静态配置 (undefined = 不覆盖, 保留 providers.json 值)
             const thinking = thinkingOverride?.thinking ?? resolved.thinking;
@@ -197,6 +197,18 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                     }
                 }
             }
+            // fast override: clientFast 覆盖静态 fastMode 配置
+            const effectiveFast = fastOverride ?? !!resolved.serviceTier
+            const serviceTier = effectiveFast && resolved.provider !== 'anthropic' ? 'priority' as const : resolved.serviceTier
+            const anthropicBetas = (() => {
+              const base = resolved.anthropicBetas ? [...resolved.anthropicBetas] : []
+              if (fastOverride === true && resolved.provider === 'anthropic' && !base.some(b => b.startsWith('fast-mode')))
+                base.push('fast-mode-2026-02-01')
+              if (fastOverride === false && resolved.provider === 'anthropic')
+                return base.filter(b => !b.startsWith('fast-mode'))
+              return base
+            })()
+
             return {
                 conversation,
                 request: {
@@ -208,8 +220,8 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                     thinkingBudgetTokens,
                     maxTokens,
                     conversationId,
-                    ...(resolved.serviceTier ? { serviceTier: resolved.serviceTier } : {}),
-                    ...(resolved.anthropicBetas?.length ? { anthropicBetas: resolved.anthropicBetas } : {}),
+                    ...(serviceTier ? { serviceTier } : {}),
+                    ...(anthropicBetas.length ? { anthropicBetas } : {}),
                 },
             };
         },
