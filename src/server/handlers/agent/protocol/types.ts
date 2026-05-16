@@ -211,6 +211,8 @@ export interface ParsedRunRequest {
   /** replay / mid-conversation resend 时客户端额外附带的前序用户消息 */
   prependUserMessages: Array<{ text: string, messageId?: string }>
   isResume: boolean
+  /** 中断时已完成的 shell/task 结果 (3.4.20+) */
+  interruptedResolutions: Array<{ toolCallId: string, shellResult?: Record<string, unknown>, taskResult?: Record<string, unknown> }>
   /** Build 按钮触发的 Plan 执行 (来自 action.executePlanAction) */
   isExecutePlan: boolean
   executePlanContent?: string

@@ -40,6 +40,7 @@ function stubParsed(overrides: Record<string, unknown>): Parameters<typeof build
     selectedImages: [],
     prependUserMessages: [],
     isResume: false,
+    interruptedResolutions: [],
     isExecutePlan: false,
     conversationNotesListing: '',
     sharedNotesListing: '',

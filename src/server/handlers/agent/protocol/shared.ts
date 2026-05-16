@@ -49,6 +49,7 @@ export function emptyParsed(): ParsedRunRequest {
     selectedImages: [],
     prependUserMessages: [],
     isResume: false,
+    interruptedResolutions: [],
     isExecutePlan: false,
     isGitRepo: false,
     conversationNotesListing: '',

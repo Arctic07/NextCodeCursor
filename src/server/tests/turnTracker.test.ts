@@ -48,6 +48,7 @@ describe('turnTracker', () => {
         selectedImages: [],
         prependUserMessages: [],
         isResume: false,
+        interruptedResolutions: [],
         isExecutePlan: false,
         conversationNotesListing: '',
         sharedNotesListing: '',

@@ -120,7 +120,29 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   const isExecutePlan = !!executePlanAction
 
   const userAction = action?.userMessageAction as Record<string, unknown> | undefined
+  const cancelAction = action?.cancelAction as Record<string, unknown> | undefined
   const userMessage = userAction?.userMessage as Record<string, unknown> | undefined
+
+  // InterruptedPendingToolCallResolutions — 用户中断时已完成的 shell/task 结果
+  // 来自 userMessageAction (resume 后重发) 或 cancelAction (中断时附带)
+  const interruptedResolutionsRaw = (
+    userAction?.interruptedPendingToolCallResolutions
+    ?? cancelAction?.interruptedPendingToolCallResolutions
+  ) as Record<string, unknown> | undefined
+  const interruptedResolutions: Array<{ toolCallId: string, shellResult?: Record<string, unknown>, taskResult?: Record<string, unknown> }> = (() => {
+    const raw = interruptedResolutionsRaw?.resolutions
+    if (!Array.isArray(raw))
+      return []
+    return raw.map((r: any) => ({
+      toolCallId: typeof r.toolCallId === 'string' ? r.toolCallId : '',
+      shellResult: r.resolution?.case === 'shellResult' ? r.resolution.value : r.shellResult,
+      taskResult: r.resolution?.case === 'taskResult' ? r.resolution.value : r.taskResult,
+    })).filter(r => r.toolCallId.length > 0)
+  })()
+  if (interruptedResolutions.length > 0) {
+    logger.info({ count: interruptedResolutions.length, ids: interruptedResolutions.map(r => r.toolCallId) },
+      '[AGENT] interrupted pending tool call resolutions received')
+  }
   // requestContext: userMessageAction / resumeAction / executePlanAction 都可能带一份。
   // 多轮对话中每一轮都会重新推送,不能假设首轮装载一次就够。
   const requestContext = (userAction?.requestContext
@@ -810,6 +832,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
       }))
       .filter(entry => entry.text.length > 0),
     isResume,
+    interruptedResolutions,
     isExecutePlan,
     executePlanContent: planContent || undefined,
     executePlanFileUri: planFileUri || undefined,
