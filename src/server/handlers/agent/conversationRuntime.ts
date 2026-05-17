@@ -654,11 +654,19 @@ export async function* handleConversationRun(
     const workspacePath = parsed.env.workspacePaths?.[0] ?? parsed.env.projectFolder
 
     try {
+      const disabledTools = new Set<string>()
+      if (!parsed.webFetchEnabled)
+        disabledTools.add('WebFetch')
+      if (!parsed.webSearchEnabled)
+        disabledTools.add('WebSearch')
+      if (!parsed.readLintsEnabled)
+        disabledTools.add('ReadLints')
+
       const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, undefined, parsed.mode, {
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
-      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast)
+      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledTools.size > 0 ? disabledTools : undefined)
 
       logger.info({
         round,

@@ -60,10 +60,10 @@ export interface ProviderRuntime {
     thinking: boolean;
     contextTokenLimit: number;
     prepareConversation(messages: LLMMessage[]): PreparedProviderConversation;
-    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean, fastOverride?: boolean): PreparedProviderRequest;
+    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean, fastOverride?: boolean, disabledTools?: Set<string>): PreparedProviderRequest;
     /** 模型配置的最大输出 token 数 */
     maxOutputTokens: number;
-    listRuntimeTools(extraTools?: LLMTool[], mode?: string, isSubagent?: boolean): LLMTool[];
+    listRuntimeTools(extraTools?: LLMTool[], mode?: string, isSubagent?: boolean, disabledTools?: Set<string>): LLMTool[];
     createRoundContext(): ProviderRoundContext;
     transitionRound(messages: LLMMessage[], assistantContent: LLMContentBlock[], pendingToolResults?: LLMToolResultBlock[]): ProviderRoundTransition;
 }
@@ -139,9 +139,11 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
             semanticTurns: conversationCodec.normalizeStoredTranscript(normalizedMessages.map(llmMessageToStoredMessage)),
         };
     };
-    const listRuntimeTools = (extraTools: LLMTool[] = [], mode?: string, isSubagent = false): LLMTool[] => {
+    const listRuntimeTools = (extraTools: LLMTool[] = [], mode?: string, isSubagent = false, disabledTools?: Set<string>): LLMTool[] => {
         const builtins = promptProfile.toolCatalog.listBuiltins();
-        const all = [...builtins, ...extraTools];
+        let all = [...builtins, ...extraTools];
+        if (disabledTools && disabledTools.size > 0)
+            all = all.filter(t => !disabledTools.has(t.name))
         return mode ? filterToolsForMode(all, mode, isSubagent) : all;
     };
     return {
@@ -155,7 +157,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         maxOutputTokens: resolved.maxOutputTokens,
         contextTokenLimit: resolved.contextTokenLimit,
         prepareConversation,
-        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean): PreparedProviderRequest {
+        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean, disabledTools?: Set<string>): PreparedProviderRequest {
             const conversation = prepareConversation(messages);
             // 客户端运行时参数覆盖静态配置 (undefined = 不覆盖, 保留 providers.json 值)
             const thinking = thinkingOverride?.thinking ?? resolved.thinking;
@@ -214,7 +216,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                 request: {
                     model: resolved.apiModel,
                     messages: conversation.normalizedMessages,
-                    tools: listRuntimeTools(extraTools, mode, isSubagent),
+                    tools: listRuntimeTools(extraTools, mode, isSubagent, disabledTools),
                     thinking,
                     thinkingLevel,
                     thinkingBudgetTokens,
