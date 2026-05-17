@@ -9,7 +9,7 @@ import cors from '@fastify/cors'
  */
 import Fastify from 'fastify'
 import { ensureProvidersFile } from './config/providersStore'
-import { ensureRoutesFile } from './config/routesStore'
+import { ensureRoutesFile, loadRoutes } from './config/routesStore'
 import { closeAgentDatabase, initDatabase } from './database/sqlite'
 import { enterWindowContext, logger, setLogBroadcast, setLogPush, setLogSubscriberCheck } from './logger'
 import { initRuntimeConfig } from './runtime-config'
@@ -262,8 +262,11 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   server.get('/byok/events', async (req, reply) => {
     refreshEventStreams.add(reply)
     reply.raw.writeHead(200, sseHeaders)
-    // 初始心跳 comment 行, 防止某些代理超时断开
     reply.raw.write(`: connected\n\n`)
+    // 立即推送当前 REST redirect 列表 — inject-patch 初始只含 BASE,
+    // 需要 server 就绪后推送完整列表才能拦截 BYOK 路径
+    const currentRestPaths = loadRoutes().redirect.filter((r: string) => r.startsWith('REST:')).map((r: string) => r.slice(5))
+    reply.raw.write(`event: routes\ndata: ${JSON.stringify(currentRestPaths)}\n\n`)
     reply.hijack()
 
     req.raw.on('close', () => {
