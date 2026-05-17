@@ -23,6 +23,9 @@ logs/
 coverage/
 .nyc_output/
 
+# Debug response samples
+tools/responses/
+
 # Editor
 .idea/
 *.swp

@@ -124,6 +124,7 @@
     "@connectrpc/connect-node": "^2.1.1",
     "@fastify/cors": "^11.2.0",
     "@google/genai": "^1.49.0",
+    "@vakra-dev/supermarkdown": "^0.0.6",
     "acorn": "^8.14.0",
     "acorn-walk": "^8.3.4",
     "diff": "^9.0.0",

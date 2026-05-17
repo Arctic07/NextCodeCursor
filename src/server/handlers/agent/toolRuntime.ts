@@ -19,7 +19,10 @@ import { finalizeToolCall } from './toolLifecycle';
 import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
 import type { AgentSession } from './session';
 import { buildExecToolResult } from './toolResults';
-import { awaitExecResultAndClose } from './wait';
+import { awaitExecResultAndClose, waitForInteractionResponseWithHeartbeat, waitForPromiseWithHeartbeat } from './wait';
+import { performWebFetch } from './web';
+import { interactionQuery } from './stream';
+import type { ToolResultEnvelope } from './toolResults';
 
 export interface TaskLaunchContext {
     tc: ToolCallInfo;
@@ -298,38 +301,52 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     }
 
     if (cursorToolType === 'webFetchToolCall') {
-        yield* finalizeInteractionTool({
-            session: params.session,
-            ...(params.session ? {
-                interactionId: params.allocateInteractionId(),
-                queryCase: 'webFetchRequestQuery',
-                queryValue: {
-                    args: startedArgs,
-                    skipApproval: true,
-                },
-                expectedResponseCase: 'webFetchRequestResponse',
-            } : {}),
-            buildRawToolResult: (interactionResponse) => {
-                if (!params.session) return buildWebFetchResult(sanitizedInput);
-                if (!interactionResponse) {
-                    logger.warn({ callId: tc.callId, tool: tc.name }, '[TOOL] webFetch approval response missing, falling back to mock success');
-                    return buildWebFetchResult(sanitizedInput);
+        // Phase 1: 审批（skipApproval=true 表示客户端自动批准，但仍需走交互握手）
+        let approved = true
+        let rejectionResult: ToolResultEnvelope | undefined
+        if (params.session) {
+            const interactionId = params.allocateInteractionId()
+            yield interactionQuery(interactionId, 'webFetchRequestQuery', { args: startedArgs })
+            const response = yield* waitForInteractionResponseWithHeartbeat(params.session, interactionId, 'webFetchRequestResponse', null)
+            const ir = response ? (response.interactionResponse as Record<string, unknown>) : null
+            if (ir) {
+                const approval = buildWebFetchApprovalResultFromInteractionResponse(ir)
+                if (!approval.approved) {
+                    approved = false
+                    rejectionResult = approval.result ?? buildLocalToolResult(cursorToolType, sanitizedInput)
                 }
-                const approval = buildWebFetchApprovalResultFromInteractionResponse(interactionResponse);
-                return approval.approved
-                    ? buildWebFetchResult(sanitizedInput)
-                    : (approval.result ?? buildLocalToolResult(cursorToolType, sanitizedInput));
-            },
+            }
+        }
+
+        // Phase 2: 异步执行
+        let rawToolResult: ToolResultEnvelope
+        if (approved) {
+            try {
+                const fetchResult = yield* waitForPromiseWithHeartbeat(performWebFetch(String(sanitizedInput.url || '')))
+                rawToolResult = { result: { case: 'success', value: { url: fetchResult.url, markdown: fetchResult.markdown } } }
+            }
+            catch (e) {
+                rawToolResult = { result: { case: 'error', value: { url: String(sanitizedInput.url || ''), error: e instanceof Error ? e.message : 'web fetch failed' } } }
+            }
+        }
+        else {
+            rawToolResult = rejectionResult!
+        }
+
+        // Phase 3: 结果封装
+        const finalized = finalizeToolCall({
             roundContext: params.roundContext,
             messages: params.messages,
-                        cursorToolType,
+            cursorToolType,
             toolName: tc.name,
             callId: tc.callId,
             startedArgs,
+            rawToolResult,
             input: sanitizedInput,
             modelCallId,
-        });
-        return;
+        })
+        yield finalized.frame
+        return
     }
 
     // createPlanToolCall: 交互握手 (CreatePlanRequestQuery → CreatePlanRequestResponse)

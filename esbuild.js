@@ -1,4 +1,6 @@
 const esbuild = require("esbuild");
+const { cpSync, readdirSync } = require("fs");
+const { join } = require("path");
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
@@ -49,7 +51,18 @@ async function main() {
       "import.meta.url": "undefined",
       __HUB_URL__: JSON.stringify(HUB_URL),
     },
-    plugins: [esbuildProblemMatcherPlugin],
+    plugins: [
+      {
+        name: "supermarkdown-native",
+        setup(build) {
+          build.onResolve({ filter: /^@vakra-dev\/supermarkdown$/ }, () => ({
+            path: "./index.js",
+            external: true,
+          }));
+        },
+      },
+      esbuildProblemMatcherPlugin,
+    ],
   });
 
   // ── Context 2: Webview (Browser, IIFE) ──
@@ -70,6 +83,19 @@ async function main() {
   } else {
     await Promise.all([extCtx.rebuild(), webCtx.rebuild()]);
     await Promise.all([extCtx.dispose(), webCtx.dispose()]);
+
+    // Copy supermarkdown NAPI .node binaries + JS entry to dist/
+    const smDir = join(__dirname, "node_modules", "@vakra-dev", "supermarkdown");
+    try {
+      for (const f of readdirSync(smDir)) {
+        if (f.endsWith(".node") || f === "index.js" || f === "index.d.ts") {
+          cpSync(join(smDir, f), join(__dirname, "dist", f));
+        }
+      }
+      console.log("[build] supermarkdown native binaries copied to dist/");
+    } catch (e) {
+      console.warn("[build] supermarkdown copy failed:", e.message);
+    }
   }
 }
 
