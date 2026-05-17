@@ -8,6 +8,7 @@ import * as acorn from 'acorn';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { loadRoutes } from './routes.js';
+import { BASE_REDIRECT } from './defaults.js';
 import { DEFAULT_REDIRECT } from './defaults.js';
 
 const HOOK_MARKER = '__byokWrapTransport';
@@ -103,11 +104,10 @@ function buildHookPayload() {
   const BYOK_PORT = routes.server.port;
   const COLLECTOR_HOST = routes.collector.host;
   const COLLECTOR_PORT = routes.collector.port;
-  // REST redirect 初始列表始终用 DEFAULT_REDIRECT (byokMode=1 的完整集),
-  // 不读当前 routes.json 的 redirect (可能是 OFF 状态只有 2 条 BASE)。
-  // 这样安装后初始状态就是完整的 REST 拦截。toggle OFF 时通过 SSE
-  // event:routes 推送缩减后的列表,inject-patch 热更新 _restSet。
-  const restRedirects = DEFAULT_REDIRECT.filter(r => r.startsWith('REST:')).map(r => r.slice(5));
+  // REST redirect 初始列表仅含 BASE_REDIRECT (stripe profile stub),
+  // 保证 Cursor 启动时 /auth/poll 等登录关键端点不被拦截。
+  // 完整 BYOK 列表由 server 就绪后通过 SSE event:routes 推送。
+  const restRedirects = BASE_REDIRECT.filter(r => r.startsWith('REST:')).map(r => r.slice(5));
   const restListJson = JSON.stringify(restRedirects);
 
   // 主体: collector observation + transport wrap + REST 重定向
