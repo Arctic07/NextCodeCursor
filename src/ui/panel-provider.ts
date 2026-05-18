@@ -110,11 +110,30 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: 'Base URL not set' })
             break
           }
-          const url = `${baseUrl.replace(RE_TRAILING_SLASH, '')}/models`
+          const base = baseUrl.replace(RE_TRAILING_SLASH, '')
+          const url = p.type === 'anthropic'
+            ? `${base}/v1/models`
+            : p.type === 'gemini'
+              ? `${base}/models?key=${encodeURIComponent(p.auth.value)}`
+              : `${base}/models`
           try {
-            const headers: Record<string, string> = p.type === 'anthropic'
-              ? { 'x-api-key': p.auth.value, 'anthropic-version': '2023-06-01' }
-              : { Authorization: `Bearer ${p.auth.value}` }
+            const headers: Record<string, string> = {}
+            if (p.type === 'gemini') {
+              // Gemini 用 ?key= query param，不需要 header
+            }
+            else {
+              headers.Authorization = `Bearer ${p.auth.value}`
+              if (p.type === 'anthropic') {
+                headers['x-api-key'] = p.auth.value
+                headers['anthropic-version'] = '2023-06-01'
+              }
+            }
+            if (p.headers && typeof p.headers === 'object') {
+              for (const [k, v] of Object.entries(p.headers)) {
+                if (typeof v === 'string')
+                  headers[k] = v
+              }
+            }
             const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })
             if (!resp.ok) {
               const body = await resp.text().catch(() => '')

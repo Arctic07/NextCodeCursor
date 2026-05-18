@@ -20,3 +20,4 @@ pnpm-workspace.yaml
 **/.vscode-test.*
 vitest.config.ts
 .tmp-*
+.claude/**
