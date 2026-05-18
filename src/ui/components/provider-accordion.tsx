@@ -5,13 +5,17 @@ import { ProviderFields } from './provider-fields'
 export function ProviderAccordion() {
   return (
     <div class="acc" {...{ 'x-bind:class': '{ \'dirty\': $store.app.isDirty(p.id) }' }}>
-      {/* Head — 始终可见 */}
+      {/* Head — 始終可見 */}
       <div class="acc-head" {...{ 'x-on:click': '$store.app.toggleExpand(p.id)' }}>
         <span class="acc-caret" {...{ 'x-text': '$store.app.expanded[p.id] ? \'▼\' : \'▶\'' }}></span>
         <span class="acc-title" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).name || \'(unnamed)\'' }}></span>
         <span class="acc-type" {...{ 'x-text': '$store.app.getDraftOrOriginal(p.id).type' }}></span>
         <span class="acc-meta" {...{ 'x-text': '($store.app.getDraftOrOriginal(p.id).models || []).length + \' model\' + (($store.app.getDraftOrOriginal(p.id).models || []).length === 1 ? \'\' : \'s\')' }}></span>
         <span class="acc-dot" {...{ 'x-show': '$store.app.isDirty(p.id)' }}></span>
+        <span class="acc-sort" {...{ 'x-on:click.stop': '' }}>
+          <button class="sort-btn" title="Move up" {...{ 'x-on:click': '$store.app.moveProvider(p.id, -1)' }} {...{ 'x-show': '$store.app.providers.indexOf(p) > 0' }}>&#9650;</button>
+          <button class="sort-btn" title="Move down" {...{ 'x-on:click': '$store.app.moveProvider(p.id, 1)' }} {...{ 'x-show': '$store.app.providers.indexOf(p) < $store.app.providers.length - 1' }}>&#9660;</button>
+        </span>
       </div>
       {/* Body — 可折叠 */}
       <div class="acc-body" {...{ 'x-show': '$store.app.expanded[p.id]' }} x-cloak>

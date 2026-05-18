@@ -487,6 +487,21 @@ export function initApp(Alpine: AlpineType) {
       }
     },
 
+    moveProvider(pid: string, direction: number) {
+      const list = [...(this.state?.providers || [])]
+      const idx = list.findIndex((p: any) => p.id === pid)
+      if (idx < 0)
+        return
+      const target = idx + direction
+      if (target < 0 || target >= list.length)
+        return
+      const tmp = list[idx]
+      list[idx] = list[target]
+      list[target] = tmp
+      const merged = list.map((p: any) => this.drafts[p.id] ?? p)
+      this.post('saveProviders', { providers: JSON.parse(JSON.stringify(merged)) })
+    },
+
     deleteProvider(pid: string) {
       const remaining = (this.state?.providers || []).filter((p: any) => p.id !== pid)
       const merged = remaining.map((p: any) => this.drafts[p.id] ?? p)

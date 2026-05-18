@@ -92,6 +92,9 @@ export const styles = /* css */ `
   .acc-type { font-size: 9px; text-transform: uppercase; padding: 1px 5px; border-radius: 2px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); letter-spacing: 0.3px; }
   .acc-meta { font-size: 10px; opacity: 0.6; }
   .acc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-inputValidation-warningBorder, #cca700); display: inline-block; }
+  .acc-sort { margin-left: auto; display: flex; flex-direction: column; gap: 0; }
+  .sort-btn { background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 0 2px; font-size: 8px; line-height: 1; opacity: 0.4; min-width: auto; }
+  .sort-btn:hover { opacity: 1; }
   .acc-body { padding: 8px 10px 10px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border)); }
   .field { margin-bottom: 4px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
