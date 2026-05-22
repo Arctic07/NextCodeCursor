@@ -114,3 +114,23 @@ export const DEFAULT_PROVIDERS = {
 };
 
 export const MODELS_CATALOG_FILE_NAME = 'models-catalog.json';
+export const WEB_TOOLS_FILE_NAME = 'web-tools.json';
+
+export const DEFAULT_WEB_TOOLS = {
+  $schemaVersion: 1,
+  search: {
+    providers: [
+      { id: 'default-ddg', type: 'duckduckgo', enabled: true },
+      { id: 'default-exa', type: 'exa', enabled: false },
+      { id: 'default-tavily', type: 'tavily', enabled: false },
+      { id: 'default-brave', type: 'brave', enabled: false },
+      { id: 'default-jina', type: 'jina', enabled: false },
+      { id: 'default-firecrawl', type: 'firecrawl', enabled: false },
+    ],
+    parallel: false,
+    maxResults: 10,
+  },
+  fetch: {
+    provider: 'builtin',
+  },
+};

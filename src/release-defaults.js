@@ -24,8 +24,10 @@ import {
   MODELS_CATALOG_FILE_NAME,
   PROVIDERS_FILE_NAME,
   ROUTES_FILE_NAME,
+  WEB_TOOLS_FILE_NAME,
   DEFAULT_PROVIDERS,
   DEFAULT_ROUTES,
+  DEFAULT_WEB_TOOLS,
   BASE_REDIRECT,
   DEFAULT_REDIRECT,
 } from './defaults.js';
@@ -128,6 +130,7 @@ export function releaseDefaults(log) {
   };
   release(ROUTES_FILE_NAME, routes, log, { force: true });
   release(PROVIDERS_FILE_NAME, DEFAULT_PROVIDERS, log);
+  release(WEB_TOOLS_FILE_NAME, DEFAULT_WEB_TOOLS, log);
   copyAsset(MODELS_CATALOG_FILE_NAME, log, { force: true });
 
   log?.('[defaults] Done');
