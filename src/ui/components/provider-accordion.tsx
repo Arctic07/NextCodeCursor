@@ -13,8 +13,8 @@ export function ProviderAccordion() {
         <span class="acc-meta" {...{ 'x-text': '($store.app.getDraftOrOriginal(p.id).models || []).length + \' model\' + (($store.app.getDraftOrOriginal(p.id).models || []).length === 1 ? \'\' : \'s\')' }}></span>
         <span class="acc-dot" {...{ 'x-show': '$store.app.isDirty(p.id)' }}></span>
         <span class="acc-sort" {...{ 'x-on:click.stop': '' }}>
-          <button class="sort-btn" title="Move up" {...{ 'x-on:click': '$store.app.moveProvider(p.id, -1)' }} {...{ 'x-show': '$store.app.providers.indexOf(p) > 0' }}>&#9650;</button>
-          <button class="sort-btn" title="Move down" {...{ 'x-on:click': '$store.app.moveProvider(p.id, 1)' }} {...{ 'x-show': '$store.app.providers.indexOf(p) < $store.app.providers.length - 1' }}>&#9660;</button>
+          <button class="sort-btn" title="Move up" {...{ 'x-on:click': '$store.app.moveProvider(p.id, -1)' }} {...{ 'x-show': 'pIdx > 0' }}>&#9650;</button>
+          <button class="sort-btn" title="Move down" {...{ 'x-on:click': '$store.app.moveProvider(p.id, 1)' }} {...{ 'x-show': 'pIdx < $store.app.providers.length - 1' }}>&#9660;</button>
         </span>
       </div>
       {/* Body — 可折叠 */}

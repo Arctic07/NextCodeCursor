@@ -12,7 +12,7 @@ export function Providers() {
           to create one.
         </div>
       </template>
-      <template x-for="p in $store.app.providers" x-bind:key="p.id">
+      <template x-for="(p, pIdx) in $store.app.providers" x-bind:key="p.id">
         <ProviderAccordion />
       </template>
     </div>
