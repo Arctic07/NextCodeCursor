@@ -11,8 +11,9 @@ import { version as EXTENSION_VERSION } from '../../package.json'
 import { isServerRunning } from '../server'
 import { getServerConfig } from '../server/config'
 import { loadProviders } from '../server/config/providersStore'
-
 import { getByokMode } from '../server/config/routesStore'
+
+import { getWebTools } from '../server/config/searchConfigStore'
 
 export type ServerState = 'local' | 'remote' | 'offline'
 
@@ -22,10 +23,9 @@ export interface AppState {
   port: number
   byokMode: ByokMode
   providers: ProviderEntry[]
+  webTools: import('../server/data/defaults').WebToolsConfig
   version: string
-  /** 当前实例是否开启了文件日志 (globalState, per-instance, 不跨窗口同步) */
   fileLogEnabled: boolean
-  /** 当前实例的日志文件路径 (用于 UI 显示 + Open 命令) */
   logFilePath: string
 }
 
@@ -39,6 +39,7 @@ let current: AppState = {
   byokMode: 1,
   version: EXTENSION_VERSION,
   providers: [],
+  webTools: { $schemaVersion: 1, search: { providers: [], parallel: false, maxResults: 5 }, fetch: { provider: 'builtin' } },
   fileLogEnabled: false,
   logFilePath: '',
 }
@@ -91,6 +92,7 @@ export async function refreshState(_secrets?: vscode.SecretStorage): Promise<App
     port: cfg.port,
     byokMode,
     providers,
+    webTools: getWebTools(),
     version: EXTENSION_VERSION,
     fileLogEnabled: current.fileLogEnabled,
     logFilePath: current.logFilePath,

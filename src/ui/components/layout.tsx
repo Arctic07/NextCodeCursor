@@ -7,6 +7,7 @@
 import { Banner } from './banner'
 import { Footer } from './footer'
 import { Providers } from './providers'
+import { WebToolsButton, WebToolsDialog } from './search-section'
 import { Server } from './server'
 import { styles } from './styles'
 import { ToastContainer } from './toast'
@@ -42,10 +43,13 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
         <h3>
           <span>Providers</span>
           <span class="h3-actions">
+            <WebToolsButton />
             <button class="tiny" x-on:click="$store.app.addProvider()">+ Add</button>
           </span>
         </h3>
         <Providers />
+
+        <WebToolsDialog />
 
         <Footer />
         <ToastContainer />

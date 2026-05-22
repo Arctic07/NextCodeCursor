@@ -155,6 +155,21 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           }
           break
         }
+        case 'saveWebTools': {
+          try {
+            const { updateWebTools } = await import('../server/config/searchConfigStore')
+            await updateWebTools((draft) => {
+              Object.assign(draft, msg.config)
+            })
+            await refreshState()
+            this.postState()
+          }
+          catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            this.view?.webview.postMessage({ type: 'toast', text: `Save search config failed: ${errMsg}`, level: 'error', duration: 6000 })
+          }
+          break
+        }
         case 'saveProviders': {
           const next = msg.providers as ProviderEntry[]
           try {

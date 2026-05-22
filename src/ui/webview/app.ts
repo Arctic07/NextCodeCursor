@@ -35,6 +35,54 @@ export function initApp(Alpine: AlpineType) {
     headersInvalid: {} as Record<string, boolean>,
     remoteModels: {} as Record<string, { loading: boolean, models?: any[], error?: string }>,
 
+    // ── Web Tools Config ──
+    webToolsOpen: false,
+    webToolsTab: 'search' as 'search' | 'fetch',
+    webTools: null as any,
+
+    isSearchProviderEnabled(type: string): boolean {
+      return this.webTools?.search?.providers?.find((p: any) => p.type === type)?.enabled ?? false
+    },
+    getSearchProviderKey(type: string): string {
+      return this.webTools?.search?.providers?.find((p: any) => p.type === type)?.apiKey ?? ''
+    },
+    toggleSearchProvider(type: string, enabled: boolean) {
+      if (!this.webTools?.search)
+        return
+      const p = this.webTools.search.providers.find((x: any) => x.type === type)
+      if (p)
+        p.enabled = enabled
+    },
+    setSearchProviderKey(type: string, key: string) {
+      if (!this.webTools?.search)
+        return
+      const p = this.webTools.search.providers.find((x: any) => x.type === type)
+      if (p)
+        p.apiKey = key
+    },
+    setSearchOption(key: string, value: any) {
+      if (this.webTools?.search)
+        (this.webTools.search as any)[key] = value
+    },
+    setFetchProvider(provider: string) {
+      if (this.webTools)
+        this.webTools.fetch.provider = provider
+    },
+    setFetchKey(provider: string, key: string, value: string) {
+      if (!this.webTools)
+        return
+      if (!this.webTools.fetch[provider])
+        this.webTools.fetch[provider] = {}
+      this.webTools.fetch[provider][key] = value
+    },
+    saveWebTools() {
+      if (!this.webTools)
+        return
+      this.post('saveWebTools', { config: JSON.parse(JSON.stringify(this.webTools)) })
+      this.webToolsOpen = false
+      this.toast('Web tools config saved', 'info')
+    },
+
     // ── Toast ──
     toasts: [] as Array<{ id: number, text: string, level: string }>,
     _toastId: 0,
@@ -686,12 +734,12 @@ export function initApp(Alpine: AlpineType) {
 
     if (msg?.type === 'state') {
       s.state = msg.state
-      // 清理与 state 一致的 drafts
+      if (msg.state?.webTools)
+        s.webTools = clone(msg.state.webTools)
       for (const pid of Object.keys(s.drafts)) {
         const base = (s.state?.providers || []).find((p: any) => p.id === pid)
-        if (base && JSON.stringify(base) === JSON.stringify(s.drafts[pid])) {
+        if (base && JSON.stringify(base) === JSON.stringify(s.drafts[pid]))
           delete s.drafts[pid]
-        }
       }
     }
     else if (msg?.type === 'remoteModelsResult') {
