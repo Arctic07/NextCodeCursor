@@ -28,5 +28,6 @@ tools/responses/
 
 # Editor
 .idea/
+.claude/
 *.swp
 *.swo
