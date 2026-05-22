@@ -245,3 +245,52 @@ export const DEFAULT_PROVIDERS: ProvidersConfig = {
 }
 
 export const MODELS_CATALOG_FILE_NAME = 'models-catalog.json'
+export const WEB_TOOLS_FILE_NAME = 'web-tools.json'
+
+// ── Web Tools (Search + Fetch) ──
+
+export type SearchProviderType = 'duckduckgo' | 'exa' | 'tavily' | 'brave' | 'jina' | 'firecrawl'
+
+export interface SearchProviderEntry {
+  id: string
+  type: SearchProviderType
+  enabled: boolean
+  apiKey?: string
+}
+
+export type FetchProviderType = 'builtin' | 'jina' | 'firecrawl'
+
+export interface FetchProviderConfig {
+  provider: FetchProviderType
+  jina?: { apiKey: string }
+  firecrawl?: { apiKey: string, baseUrl?: string }
+}
+
+export interface WebToolsConfig {
+  $schemaVersion: number
+  search: {
+    providers: SearchProviderEntry[]
+    parallel: boolean
+    maxResults: number
+  }
+  fetch: FetchProviderConfig
+}
+
+export const DEFAULT_WEB_TOOLS: WebToolsConfig = {
+  $schemaVersion: 1,
+  search: {
+    providers: [
+      { id: 'default-ddg', type: 'duckduckgo', enabled: true },
+      { id: 'default-exa', type: 'exa', enabled: false },
+      { id: 'default-tavily', type: 'tavily', enabled: false },
+      { id: 'default-brave', type: 'brave', enabled: false },
+      { id: 'default-jina', type: 'jina', enabled: false },
+      { id: 'default-firecrawl', type: 'firecrawl', enabled: false },
+    ],
+    parallel: false,
+    maxResults: 10,
+  },
+  fetch: {
+    provider: 'builtin',
+  },
+}

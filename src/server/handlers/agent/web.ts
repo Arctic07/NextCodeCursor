@@ -1,4 +1,5 @@
 import { convert } from '@vakra-dev/supermarkdown'
+import { getFetchConfig, getSearchConfig } from '../../config/searchConfigStore'
 import { logger } from '../../logger'
 
 const FETCH_TIMEOUT_MS = 30_000
@@ -79,6 +80,76 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&nbsp;/g, ' ')
 }
 
+async function fetchBuiltin(url: string): Promise<{ url: string, markdown: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, {
+      headers: { 'user-agent': USER_AGENT, 'accept': 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.8' },
+      redirect: 'follow',
+      signal: controller.signal,
+    })
+    if (!response.ok)
+      throw new Error(`HTTP ${response.status} ${response.statusText}`)
+    const contentType = response.headers.get('content-type') ?? ''
+    if (BINARY_TYPES.test(contentType))
+      throw new Error(`binary content type not supported: ${contentType}`)
+    const contentLength = response.headers.get('content-length')
+    if (contentLength && Number(contentLength) > MAX_RESPONSE_BYTES)
+      throw new Error(`response too large: ${contentLength} bytes`)
+    const text = await response.text()
+    if (text.length > MAX_RESPONSE_BYTES)
+      throw new Error(`response body too large: ${text.length} bytes`)
+    const finalUrl = response.url || url
+    let markdown: string
+    if (contentType.includes('text/html') || /^<!doctype html/i.test(text) || /<html[\s>]/i.test(text))
+      markdown = htmlToMarkdown(text, finalUrl)
+    else if (contentType.includes('application/json')) {
+      try { markdown = `# ${finalUrl}\n\n\`\`\`json\n${JSON.stringify(JSON.parse(text), null, 2).slice(0, MAX_MARKDOWN_CHARS)}\n\`\`\`` }
+      catch { markdown = `# ${finalUrl}\n\n\`\`\`\n${text.slice(0, MAX_MARKDOWN_CHARS)}\n\`\`\`` }
+    }
+    else { markdown = `# ${finalUrl}\n\n${text.slice(0, MAX_MARKDOWN_CHARS)}` }
+    return { url: finalUrl, markdown }
+  }
+  finally { clearTimeout(timer) }
+}
+
+async function fetchJina(url: string, apiKey: string): Promise<{ url: string, markdown: string }> {
+  const headers: Record<string, string> = { 'Accept': 'application/json' }
+  if (apiKey)
+    headers.Authorization = `Bearer ${apiKey}`
+  const response = await fetch(`https://r.jina.ai/${url}`, {
+    headers,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+  if (!response.ok)
+    throw new Error(`Jina reader failed: ${response.status}`)
+  const json = await response.json() as any
+  const data = json.data || json
+  return {
+    url: data.url || url,
+    markdown: (data.content || data.text || '').slice(0, MAX_MARKDOWN_CHARS),
+  }
+}
+
+async function fetchFirecrawl(url: string, apiKey: string, baseUrl?: string): Promise<{ url: string, markdown: string }> {
+  const endpoint = `${(baseUrl || 'https://api.firecrawl.dev').replace(/\/+$/, '')}/v1/scrape`
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, formats: ['markdown'] }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+  if (!response.ok)
+    throw new Error(`Firecrawl scrape failed: ${response.status}`)
+  const json = await response.json() as any
+  const data = json.data || json
+  return {
+    url: data.metadata?.sourceURL || url,
+    markdown: (data.markdown || data.content || '').slice(0, MAX_MARKDOWN_CHARS),
+  }
+}
+
 export async function performWebFetch(url: string): Promise<{ url: string, markdown: string }> {
   if (!isValidUrl(url))
     throw new Error(`invalid or blocked URL: ${url}`)
@@ -87,60 +158,23 @@ export async function performWebFetch(url: string): Promise<{ url: string, markd
   if (cached && cached.expiresAt > Date.now())
     return { url: cached.url, markdown: cached.markdown }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  const cfg = getFetchConfig()
+  let result: { url: string, markdown: string }
 
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'user-agent': USER_AGENT,
-        'accept': 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.8',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    })
-
-    if (!response.ok)
-      throw new Error(`HTTP ${response.status} ${response.statusText}`)
-
-    const contentType = response.headers.get('content-type') ?? ''
-    if (BINARY_TYPES.test(contentType))
-      throw new Error(`binary content type not supported: ${contentType}`)
-
-    const contentLength = response.headers.get('content-length')
-    if (contentLength && Number(contentLength) > MAX_RESPONSE_BYTES)
-      throw new Error(`response too large: ${contentLength} bytes (max ${MAX_RESPONSE_BYTES})`)
-
-    const text = await response.text()
-    if (text.length > MAX_RESPONSE_BYTES)
-      throw new Error(`response body too large: ${text.length} bytes`)
-
-    const finalUrl = response.url || url
-    let markdown: string
-
-    if (contentType.includes('text/html') || /^<!doctype html/i.test(text) || /<html[\s>]/i.test(text)) {
-      markdown = htmlToMarkdown(text, finalUrl)
-    }
-    else if (contentType.includes('application/json')) {
-      try {
-        const pretty = JSON.stringify(JSON.parse(text), null, 2)
-        markdown = `# ${finalUrl}\n\n\`\`\`json\n${pretty.slice(0, MAX_MARKDOWN_CHARS)}\n\`\`\``
-      }
-      catch {
-        markdown = `# ${finalUrl}\n\n\`\`\`\n${text.slice(0, MAX_MARKDOWN_CHARS)}\n\`\`\``
-      }
-    }
-    else {
-      markdown = `# ${finalUrl}\n\n${text.slice(0, MAX_MARKDOWN_CHARS)}`
-    }
-
-    fetchCache.set(url, { markdown, url: finalUrl, expiresAt: Date.now() + CACHE_TTL_MS })
-    logger.info({ url: finalUrl, mdLen: markdown.length, htmlLen: text.length }, '[WEB] fetch completed')
-    return { url: finalUrl, markdown }
+  switch (cfg.provider) {
+    case 'jina':
+      result = await fetchJina(url, cfg.jina?.apiKey || '')
+      break
+    case 'firecrawl':
+      result = await fetchFirecrawl(url, cfg.firecrawl?.apiKey || '', cfg.firecrawl?.baseUrl)
+      break
+    default:
+      result = await fetchBuiltin(url)
   }
-  finally {
-    clearTimeout(timer)
-  }
+
+  fetchCache.set(url, { markdown: result.markdown, url: result.url, expiresAt: Date.now() + CACHE_TTL_MS })
+  logger.info({ url: result.url, mdLen: result.markdown.length, provider: cfg.provider }, '[WEB] fetch completed')
+  return result
 }
 
 function stripTags(html: string): string {
@@ -167,40 +201,187 @@ function decodeDuckDuckGoHref(href: string): string {
   }
 }
 
-export async function performWebSearch(searchTerm: string): Promise<Array<{ title: string, url: string, chunk: string }>> {
+// ── Search: multi-provider dispatch ──
+
+import type { FetchProviderConfig, SearchProviderEntry, WebToolsConfig } from '../../data/defaults'
+import Exa from 'exa-js'
+import { tavily } from '@tavily/core'
+import { BraveSearch } from 'brave-search'
+
+export type SearchRef = { title: string, url: string, chunk: string }
+
+async function searchDuckDuckGo(searchTerm: string, max: number): Promise<SearchRef[]> {
   const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchTerm)}`
   const response = await fetch(searchUrl, {
     headers: { 'user-agent': USER_AGENT, 'accept': 'text/html' },
     redirect: 'follow',
   })
-
   if (!response.ok)
-    throw new Error(`search failed: ${response.status} ${response.statusText}`)
-
+    throw new Error(`DDG search failed: ${response.status}`)
   const html = await response.text()
-  const references: Array<{ title: string, url: string, chunk: string }> = []
-
-  const resultRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]{0,1200}?(?:<a[^>]+class="result__snippet"[^>]*>|<div[^>]+class="result__snippet"[^>]*>)([\s\S]*?)(?:<\/a>|<\/div>)/gi
+  const refs: SearchRef[] = []
+  const regex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]{0,1200}?(?:<a[^>]+class="result__snippet"[^>]*>|<div[^>]+class="result__snippet"[^>]*>)([\s\S]*?)(?:<\/a>|<\/div>)/gi
   let match: RegExpExecArray | null
-  while ((match = resultRegex.exec(html)) && references.length < 8) {
+  while ((match = regex.exec(html)) && refs.length < max) {
     const href = decodeDuckDuckGoHref(match[1])
     const title = stripTags(match[2])
     const chunk = stripTags(match[3]).slice(0, 400)
     if (title && href)
-      references.push({ title, url: href, chunk })
+      refs.push({ title, url: href, chunk })
   }
-
-  if (references.length === 0) {
-    const fallbackRegex = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
-    while ((match = fallbackRegex.exec(html)) && references.length < 8) {
+  if (refs.length === 0) {
+    const fallback = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+    while ((match = fallback.exec(html)) && refs.length < max) {
       const href = decodeDuckDuckGoHref(match[1])
       const title = stripTags(match[2])
-      if (!href.startsWith('http') || !title || title.length < 3)
-        continue
-      references.push({ title, url: href, chunk: '' })
+      if (href.startsWith('http') && title && title.length >= 3)
+        refs.push({ title, url: href, chunk: '' })
     }
   }
+  return refs
+}
 
-  logger.info({ searchTerm, results: references.length }, '[WEB] search completed')
-  return references
+async function searchExa(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
+  const client = new Exa(apiKey)
+  const result = await client.search(searchTerm, {
+    numResults: max,
+    contents: { highlights: true },
+  })
+  return (result.results || []).map((r: any) => ({
+    title: r.title || '',
+    url: r.url || '',
+    chunk: r.highlights?.join('\n') || r.summary || r.text?.slice(0, 1000) || '',
+  })).filter((r: SearchRef) => r.title && r.url)
+}
+
+async function searchTavily(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
+  const client = tavily({ apiKey })
+  const result = await client.search(searchTerm, { maxResults: max })
+  return (result.results || []).map((r: any) => ({
+    title: r.title || '',
+    url: r.url || '',
+    chunk: (r.content || '').slice(0, 1000),
+  })).filter((r: SearchRef) => r.title && r.url)
+}
+
+async function searchBrave(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
+  const client = new BraveSearch(apiKey)
+  const result = await client.webSearch(searchTerm, { count: max, extra_snippets: true })
+  const webResults = (result as any)?.web?.results || []
+  return webResults.map((r: any) => ({
+    title: r.title || '',
+    url: r.url || '',
+    chunk: [r.description, ...(r.extra_snippets || [])].filter(Boolean).join('\n').slice(0, 1000),
+  })).filter((r: SearchRef) => r.title && r.url)
+}
+
+async function searchJina(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  }
+  if (apiKey)
+    headers.Authorization = `Bearer ${apiKey}`
+  headers['X-Respond-With'] = 'no-content'
+
+  const response = await fetch('https://s.jina.ai/', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ q: searchTerm, num: max }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!response.ok)
+    throw new Error(`Jina search failed: ${response.status}`)
+  const json = await response.json() as any
+  return (json.data || []).map((r: any) => ({
+    title: r.title || '',
+    url: r.url || '',
+    chunk: (r.description || r.content || '').slice(0, 1000),
+  })).filter((r: SearchRef) => r.title && r.url)
+}
+
+async function searchFirecrawl(apiKey: string, searchTerm: string, max: number, baseUrl?: string): Promise<SearchRef[]> {
+  const endpoint = `${(baseUrl || 'https://api.firecrawl.dev').replace(/\/+$/, '')}/v1/search`
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: searchTerm, limit: max }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!response.ok)
+    throw new Error(`Firecrawl search failed: ${response.status}`)
+  const json = await response.json() as any
+  return (json.data || []).map((r: any) => ({
+    title: r.title || r.metadata?.title || '',
+    url: r.url || '',
+    chunk: (r.markdown || r.content || r.description || '').slice(0, 1000),
+  })).filter((r: SearchRef) => r.title && r.url)
+}
+
+async function searchWithProvider(provider: SearchProviderEntry, searchTerm: string, max: number): Promise<SearchRef[]> {
+  switch (provider.type) {
+    case 'duckduckgo': return searchDuckDuckGo(searchTerm, max)
+    case 'exa': return searchExa(provider.apiKey!, searchTerm, max)
+    case 'tavily': return searchTavily(provider.apiKey!, searchTerm, max)
+    case 'brave': return searchBrave(provider.apiKey!, searchTerm, max)
+    case 'jina': return searchJina(provider.apiKey || '', searchTerm, max)
+    case 'firecrawl': return searchFirecrawl(provider.apiKey!, searchTerm, max)
+    default: throw new Error(`unknown search provider: ${provider.type}`)
+  }
+}
+
+function deduplicateResults(results: SearchRef[], max: number): SearchRef[] {
+  const seen = new Set<string>()
+  const deduped: SearchRef[] = []
+  for (const r of results) {
+    try {
+      const u = new URL(r.url)
+      const key = `${u.hostname}${u.pathname}`
+      if (seen.has(key))
+        continue
+      seen.add(key)
+      deduped.push(r)
+      if (deduped.length >= max)
+        break
+    }
+    catch {
+      deduped.push(r)
+    }
+  }
+  return deduped
+}
+
+export async function performWebSearch(searchTerm: string, config?: WebToolsConfig['search']): Promise<SearchRef[]> {
+  const cfg = config ?? getSearchConfig()
+  const enabled = cfg.providers.filter(p => p.enabled && (p.type === 'duckduckgo' || p.apiKey))
+  if (enabled.length === 0) {
+    return searchDuckDuckGo(searchTerm, cfg.maxResults)
+  }
+
+  if (cfg.parallel && enabled.length > 1) {
+    const settled = await Promise.allSettled(
+      enabled.map(p => searchWithProvider(p, searchTerm, cfg.maxResults)),
+    )
+    const merged: SearchRef[] = []
+    for (const r of settled) {
+      if (r.status === 'fulfilled')
+        merged.push(...r.value)
+      else
+        logger.warn({ error: r.reason?.message }, '[WEB] parallel search provider failed')
+    }
+    const deduped = deduplicateResults(merged, cfg.maxResults)
+    logger.info({ searchTerm, providers: enabled.length, total: merged.length, deduped: deduped.length }, '[WEB] parallel search completed')
+    return deduped
+  }
+
+  const provider = enabled[0]
+  try {
+    const results = await searchWithProvider(provider, searchTerm, cfg.maxResults)
+    logger.info({ searchTerm, provider: provider.type, results: results.length }, '[WEB] search completed')
+    return results
+  }
+  catch (e) {
+    logger.warn({ provider: provider.type, error: (e as Error).message }, '[WEB] primary search failed, fallback to DDG')
+    return searchDuckDuckGo(searchTerm, cfg.maxResults)
+  }
 }

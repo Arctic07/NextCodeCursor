@@ -20,7 +20,7 @@ import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type 
 import type { AgentSession } from './session';
 import { buildExecToolResult } from './toolResults';
 import { awaitExecResultAndClose, waitForInteractionResponseWithHeartbeat, waitForPromiseWithHeartbeat } from './wait';
-import { performWebFetch } from './web';
+import { performWebFetch, performWebSearch } from './web';
 import { interactionQuery } from './stream';
 import type { ToolResultEnvelope } from './toolResults';
 
@@ -273,31 +273,50 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
         return;
     }
 
-    if (cursorToolType === 'webSearchToolCall' && params.session) {
-        yield* finalizeInteractionTool({
-            session: params.session,
-            interactionId: params.allocateInteractionId(),
-            queryCase: 'webSearchRequestQuery',
-            queryValue: {
-                args: startedArgs,
-            },
-            expectedResponseCase: 'webSearchRequestResponse',
-            buildRawToolResult: (interactionResponse) => {
-                const approval = buildWebSearchApprovalResultFromInteractionResponse(interactionResponse);
-                return approval.approved
-                    ? buildWebSearchResult(sanitizedInput)
-                    : (approval.result ?? buildLocalToolResult(cursorToolType, sanitizedInput));
-            },
+    if (cursorToolType === 'webSearchToolCall') {
+        let approved = true
+        let rejectionResult: ToolResultEnvelope | undefined
+        if (params.session) {
+            const interactionId = params.allocateInteractionId()
+            yield interactionQuery(interactionId, 'webSearchRequestQuery', { args: startedArgs })
+            const response = yield* waitForInteractionResponseWithHeartbeat(params.session, interactionId, 'webSearchRequestResponse', null)
+            const ir = response ? (response.interactionResponse as Record<string, unknown>) : null
+            if (ir) {
+                const approval = buildWebSearchApprovalResultFromInteractionResponse(ir)
+                if (!approval.approved) {
+                    approved = false
+                    rejectionResult = approval.result ?? buildLocalToolResult(cursorToolType, sanitizedInput)
+                }
+            }
+        }
+
+        let rawToolResult: ToolResultEnvelope
+        if (approved) {
+            try {
+                const refs = yield* waitForPromiseWithHeartbeat(performWebSearch(String(sanitizedInput.searchTerm || sanitizedInput.search_term || '')))
+                rawToolResult = { result: { case: 'success', value: { references: refs } } }
+            }
+            catch (e) {
+                rawToolResult = { result: { case: 'error', value: { error: e instanceof Error ? e.message : 'web search failed' } } }
+            }
+        }
+        else {
+            rawToolResult = rejectionResult!
+        }
+
+        const finalized = finalizeToolCall({
             roundContext: params.roundContext,
             messages: params.messages,
-                        cursorToolType,
+            cursorToolType,
             toolName: tc.name,
             callId: tc.callId,
             startedArgs,
+            rawToolResult,
             input: sanitizedInput,
             modelCallId,
-        });
-        return;
+        })
+        yield finalized.frame
+        return
     }
 
     if (cursorToolType === 'webFetchToolCall') {
