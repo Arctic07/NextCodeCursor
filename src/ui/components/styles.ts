@@ -13,8 +13,9 @@ export const styles = /* css */ `
   button.ghost { background: transparent; color: var(--vscode-foreground); padding: 2px 6px; opacity: 0.7; }
   button.ghost:hover { opacity: 1; background: var(--vscode-list-hoverBackground); }
   button.tiny { padding: 2px 6px; font-size: 10px; }
-  input, select, textarea { width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 3px 6px; font-size: 11px; border-radius: 2px; outline: none; font-family: var(--vscode-editor-font-family); resize: vertical; }
-  input:focus, select:focus, textarea:focus { border-color: var(--vscode-focusBorder); }
+  input:not([type=checkbox]):not([type=radio]), select, textarea { width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 3px 6px; font-size: 11px; border-radius: 2px; outline: none; font-family: var(--vscode-editor-font-family); resize: vertical; }
+  input:not([type=checkbox]):not([type=radio]):focus, select:focus, textarea:focus { border-color: var(--vscode-focusBorder); }
+  input[type=radio], input[type=checkbox] { outline: none; }
 
   /* 移除 number input 的原生上下 spinner — 视觉冗余, 用户直接输入数字即可 */
   input[type=number] { -moz-appearance: textfield; }
@@ -247,6 +248,40 @@ export const styles = /* css */ `
   .toast { pointer-events: auto; padding: 8px 12px; border-radius: 4px; font-size: 12px; line-height: 1.4; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   .toast-error { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100); color: var(--vscode-errorForeground, #f48771); }
   .toast-warn { background: var(--vscode-inputValidation-warningBackground, #352a05); border: 1px solid var(--vscode-inputValidation-warningBorder, #9d8600); color: var(--vscode-foreground); }
+
+  .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+  .modal-dialog { background: var(--vscode-editor-background, #1e1e1e); border: 1px solid var(--vscode-widget-border); border-radius: 6px; width: 90%; max-width: 420px; max-height: 85vh; overflow: visible; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--vscode-widget-border); }
+  .modal-title { font-size: 13px; font-weight: 600; }
+  .modal-close { background: transparent; border: none; color: var(--vscode-foreground); font-size: 18px; cursor: pointer; opacity: 0.6; min-width: auto; padding: 0 4px; }
+  .modal-close:hover { opacity: 1; }
+  .modal-body { padding: 6px 14px 12px; }
+
+  .search-btn { font-size: 11px; padding: 4px 10px; }
+  .wt-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--vscode-widget-border); margin-bottom: 6px; }
+  .wt-tab { flex: 1; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--vscode-foreground); padding: 6px 0; font-size: 12px; cursor: pointer; opacity: 0.6; min-width: auto; }
+  .wt-tab.active { opacity: 1; border-bottom-color: var(--vscode-button-background, #d4875a); font-weight: 600; }
+  .wt-tab:hover { opacity: 0.9; }
+  .search-providers { display: flex; flex-direction: column; gap: 0; }
+  .search-provider-card { border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,.1)); padding: 8px 0; }
+  .search-provider-card:last-of-type { border-bottom: none; }
+  .search-provider-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .search-provider-info { display: flex; flex-direction: column; gap: 1px; }
+  .search-provider-name { font-size: 12px; font-weight: 500; }
+  .search-provider-hint { font-size: 9px; opacity: 0.5; }
+  .search-provider-key { margin-top: 6px; }
+  .search-provider-key input { width: 100%; font-size: 11px; padding: 3px 6px; }
+  .search-options { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--vscode-widget-border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .search-max-results { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+  .search-max-results select { font-size: 11px; padding: 2px 4px; }
+  .search-dialog-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--vscode-widget-border); }
+  .fetch-providers { display: flex; flex-direction: column; gap: 0; }
+  .fetch-provider-card { border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,.1)); padding: 6px 0; }
+  .fetch-provider-card:last-of-type { border-bottom: none; }
+  .fetch-provider-row { display: flex !important; width: 100%; align-items: center; gap: 6px; cursor: pointer; margin: 0 !important; text-transform: none !important; opacity: 1 !important; letter-spacing: normal !important; font-size: 12px !important; justify-content: flex-start; }
+  .fetch-provider-row .search-provider-name { white-space: nowrap; }
+  .fetch-provider-hint { font-size: 9px; opacity: 0.5; padding-left: 20px; margin-top: 1px; }
+  .fetch-provider-row input[type=radio] { flex-shrink: 0; margin: 0; width: auto; background: none; border: none; padding: 0; }
   .toast-info { background: var(--vscode-inputValidation-infoBackground, #063b49); border: 1px solid var(--vscode-inputValidation-infoBorder, #007acc); color: var(--vscode-foreground); }
   .toast-enter { animation: toast-in .2s ease-out; }
   .toast-leave { animation: toast-out .15s ease-in; }
