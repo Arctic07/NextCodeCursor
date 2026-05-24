@@ -12,7 +12,7 @@ import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntim
 import { initLogger } from './server/logger'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
-import { getState, onStateChange, refreshState, setFileLogState } from './ui/state'
+import { getState, isPortReachable, onStateChange, refreshState, setFileLogState } from './ui/state'
 import { startUpdateCheck, stopUpdateCheck } from './update-check'
 
 let outputChannel: vscode.LogOutputChannel
@@ -145,7 +145,6 @@ async function openLogFile(): Promise<void> {
 
 // ── 窗口标识 (从 VSCODE_PROCESS_TITLE 解析) —— myWindowId 声明在文件头部 ──
 const RE_WINDOW_ID = /\[(\d+)-\d+\]/
-const RE_SSE_DATA = /^data: /
 
 function parseWindowId(): number | null {
   const title = process.env.VSCODE_PROCESS_TITLE || ''
@@ -153,8 +152,10 @@ function parseWindowId(): number | null {
   return m ? Number.parseInt(m[1], 10) : null
 }
 
-// ── SSE 日志订阅 ──
+// ── SSE 日志订阅 + Server Takeover ──
 let sseRequest: http.ClientRequest | null = null
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let takeoverInProgress = false
 
 function connectLogStream(port: number, windowId: number) {
   disconnectLogStream()
@@ -163,39 +164,45 @@ function connectLogStream(port: number, windowId: number) {
     let buf = ''
     res.on('data', (chunk: Buffer) => {
       buf += chunk.toString()
-      // SSE 格式: "data: ...\n\n"
       const parts = buf.split('\n\n')
       buf = parts.pop() || ''
       for (const part of parts) {
-        const line = part.replace(RE_SSE_DATA, '')
-        if (!line)
+        const lines = part.split('\n')
+        let eventType = ''
+        let dataLine = ''
+        for (const l of lines) {
+          if (l.startsWith('event: '))
+            eventType = l.slice(7).trim()
+          else if (l.startsWith('data: '))
+            dataLine = l.slice(6)
+          else if (l.startsWith(':'))
+            continue // SSE comment
+        }
+        if (eventType === 'shutdown') {
+          log('info', '[TAKEOVER] shutdown signal received')
+          attemptTakeover()
+          return
+        }
+        if (!dataLine)
           continue
         try {
-          const entry = JSON.parse(line) as SseLogEntry
+          const entry = JSON.parse(dataLine) as SseLogEntry
           writeToChannel(entry)
         }
         catch {
-          log('info', line)
+          log('info', dataLine)
         }
       }
     })
     res.on('end', () => {
-      // 连接断开, 3 秒后重连
       sseRequest = null
-      setTimeout(() => {
-        if (myWindowId !== null)
-          connectLogStream(port, myWindowId)
-      }, 3000)
+      onSseDisconnect()
     })
   })
 
   req.on('error', () => {
     sseRequest = null
-    // server 可能还没启动, 静默重试
-    setTimeout(() => {
-      if (myWindowId !== null)
-        connectLogStream(port, myWindowId)
-    }, 5000)
+    onSseDisconnect()
   })
 
   sseRequest = req
@@ -205,6 +212,83 @@ function disconnectLogStream() {
   if (sseRequest) {
     sseRequest.destroy()
     sseRequest = null
+  }
+}
+
+async function onSseDisconnect() {
+  if (getState().server === 'local')
+    return // owner 自己关闭,不需要接管
+  const cfg = getServerConfig()
+  const reachable = await isPortReachable(cfg.host, cfg.port)
+  if (reachable) {
+    setTimeout(() => {
+      if (myWindowId !== null) {
+        const c = getServerConfig()
+        connectLogStream(c.port, myWindowId)
+      }
+    }, 3000)
+  }
+  else {
+    attemptTakeover()
+  }
+}
+
+async function attemptTakeover() {
+  if (takeoverInProgress)
+    return
+  if (getState().server === 'local')
+    return
+  takeoverInProgress = true
+  try {
+    await new Promise(r => setTimeout(r, 200 + Math.random() * 600))
+    if (getState().server === 'local')
+      return // 等待期间已被接管
+    await refreshState() // 刷新缓存状态: remote → offline
+    await doStartServer()
+    await refreshState()
+    renderStatusBar()
+    stopHeartbeat()
+    if (myWindowId !== null) {
+      const cfg = getServerConfig()
+      connectLogStream(cfg.port, myWindowId)
+    }
+    log('info', '[TAKEOVER] this window is now the server owner')
+  }
+  catch {
+    await refreshState()
+    renderStatusBar()
+    startHeartbeat()
+    if (myWindowId !== null) {
+      const cfg = getServerConfig()
+      connectLogStream(cfg.port, myWindowId)
+    }
+  }
+  finally {
+    takeoverInProgress = false
+  }
+}
+
+function startHeartbeat() {
+  if (heartbeatTimer)
+    return
+  heartbeatTimer = setInterval(async () => {
+    if (getState().server === 'local') {
+      stopHeartbeat()
+      return
+    }
+    const cfg = getServerConfig()
+    const reachable = await isPortReachable(cfg.host, cfg.port)
+    if (!reachable) {
+      log('info', '[HEARTBEAT] server unreachable, attempting takeover...')
+      attemptTakeover()
+    }
+  }, 3000)
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
   }
 }
 
@@ -296,12 +380,13 @@ async function doStartServer() {
       port: cfg.port,
     })
     log('info', `[SRV] listening at http://${host}:${port}`)
+    stopHeartbeat()
   }
   catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    // EADDRINUSE = 另一个窗口实例先赢得了端口，不是真的错误
     if (msg.includes('EADDRINUSE')) {
       log('info', `[SRV] port ${cfg.port} claimed by another instance, running as remote`)
+      startHeartbeat()
     }
     else {
       log('error', `[SRV] failed to start: ${msg}`)
@@ -460,6 +545,8 @@ export async function activate(context: vscode.ExtensionContext) {
     await doStartServer()
     await refreshState()
   }
+  if (getState().server === 'remote')
+    startHeartbeat()
 
   // 解析窗口 ID 并连接 SSE 日志流
   myWindowId = parseWindowId()
@@ -486,6 +573,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
   stopUpdateCheck()
+  stopHeartbeat()
   disconnectLogStream()
   closeLogFileStream()
   stopRoutesWatcher()

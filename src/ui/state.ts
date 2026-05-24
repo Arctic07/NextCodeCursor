@@ -54,7 +54,7 @@ export function getState(): AppState {
   return current
 }
 
-function isPortReachable(host: string, port: number): Promise<boolean> {
+export function isPortReachable(host: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket()
     socket.setTimeout(500)

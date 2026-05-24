@@ -9,7 +9,7 @@ import cors from '@fastify/cors'
  */
 import Fastify from 'fastify'
 import { ensureProvidersFile } from './config/providersStore'
-import { ensureRoutesFile, loadRoutes } from './config/routesStore'
+import { ensureRoutesFile, loadRoutes, toggleByokMode } from './config/routesStore'
 import { closeAgentDatabase, initDatabase } from './database/sqlite'
 import { enterWindowContext, logger, setLogBroadcast, setLogPush, setLogSubscriberCheck } from './logger'
 import { initRuntimeConfig } from './runtime-config'
@@ -104,18 +104,25 @@ function resolveWindowId(req: any): number | null {
  */
 const refreshEventStreams = new Set<any>()
 
+let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 export function bumpRefreshSignal(): void {
-  let sent = 0
-  for (const reply of refreshEventStreams) {
-    try {
-      reply.raw.write(`event: refresh\ndata: {}\n\n`)
-      sent++
+  if (refreshDebounceTimer)
+    clearTimeout(refreshDebounceTimer)
+  refreshDebounceTimer = setTimeout(() => {
+    refreshDebounceTimer = null
+    let sent = 0
+    for (const reply of refreshEventStreams) {
+      try {
+        reply.raw.write(`event: refresh\ndata: {}\n\n`)
+        sent++
+      }
+      catch {
+        refreshEventStreams.delete(reply)
+      }
     }
-    catch {
-      refreshEventStreams.delete(reply)
-    }
-  }
-  logger.info({ connections: sent }, '[SRV] refresh signal pushed')
+    logger.info({ connections: sent }, '[SRV] refresh signal pushed')
+  }, 500)
 }
 
 /**
@@ -274,6 +281,18 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     })
   })
 
+  // BYOK toggle — renderer (glass sidebar) 通过 fetch 调用
+  server.post('/byok/toggle', async () => {
+    const next = await toggleByokMode()
+    const restPaths = next.redirect
+      .filter((r: string) => r.startsWith('REST:'))
+      .map((r: string) => r.slice(5))
+    pushRoutesUpdate(restPaths)
+    bumpRefreshSignal()
+    logger.info({ byokMode: next.byokMode }, '[SRV] BYOK toggled via REST')
+    return { byokMode: next.byokMode }
+  })
+
   // Fake auth endpoints
   server.get('/health', async () => ({ ok: true, mode: 'byok' }))
 
@@ -316,11 +335,31 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   return { host, port }
 }
 
+export function broadcastShutdown(): void {
+  const msg = `event: shutdown\ndata: {}\n\n`
+  for (const [, streams] of logStreams) {
+    for (const reply of streams) {
+      try {
+        reply.raw.write(msg)
+      }
+      catch { /* noop */ }
+    }
+  }
+  for (const reply of refreshEventStreams) {
+    try {
+      reply.raw.write(msg)
+    }
+    catch { /* noop */ }
+  }
+  logger.info('[SRV] shutdown broadcast sent')
+}
+
 export async function stopServer(): Promise<void> {
   if (!app)
     return
   const server = app
   app = null
+  broadcastShutdown()
   try {
     await server.close()
   }
