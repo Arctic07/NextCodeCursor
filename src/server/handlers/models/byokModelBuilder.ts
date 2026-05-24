@@ -97,7 +97,12 @@ function makeBoolParamDef(id: string, name: string, tooltip?: string): ModelPara
     name,
     ...(tooltip ? { markdownTooltip: tooltip } : {}),
     parameterType: create(ModelParameterDefinition_ModelParameterTypeSchema, {
-      booleanParameter: create(ModelParameterDefinition_BooleanParameterDefinitionSchema, {}),
+      booleanParameter: create(ModelParameterDefinition_BooleanParameterDefinitionSchema, {
+        values: [
+          create(ModelParameterDefinition_BooleanParameterDefinition_BooleanParameterValueSchema, { value: 'true' }),
+          create(ModelParameterDefinition_BooleanParameterDefinition_BooleanParameterValueSchema, { value: 'false' }),
+        ],
+      }),
     }),
   })
 }
