@@ -204,9 +204,6 @@ function decodeDuckDuckGoHref(href: string): string {
 // ── Search: multi-provider dispatch ──
 
 import type { FetchProviderConfig, SearchProviderEntry, WebToolsConfig } from '../../data/defaults'
-import Exa from 'exa-js'
-import { tavily } from '@tavily/core'
-import { BraveSearch } from 'brave-search'
 
 export type SearchRef = { title: string, url: string, chunk: string }
 
@@ -242,12 +239,16 @@ async function searchDuckDuckGo(searchTerm: string, max: number): Promise<Search
 }
 
 async function searchExa(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
-  const client = new Exa(apiKey)
-  const result = await client.search(searchTerm, {
-    numResults: max,
-    contents: { highlights: true },
+  const res = await fetch('https://api.exa.ai/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+    body: JSON.stringify({ query: searchTerm, numResults: max, contents: { highlights: true } }),
+    signal: AbortSignal.timeout(15_000),
   })
-  return (result.results || []).map((r: any) => ({
+  if (!res.ok)
+    throw new Error(`Exa search failed: ${res.status}`)
+  const json = await res.json() as any
+  return (json.results || []).map((r: any) => ({
     title: r.title || '',
     url: r.url || '',
     chunk: r.highlights?.join('\n') || r.summary || r.text?.slice(0, 1000) || '',
@@ -255,9 +256,16 @@ async function searchExa(apiKey: string, searchTerm: string, max: number): Promi
 }
 
 async function searchTavily(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
-  const client = tavily({ apiKey })
-  const result = await client.search(searchTerm, { maxResults: max })
-  return (result.results || []).map((r: any) => ({
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey, query: searchTerm, max_results: max }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok)
+    throw new Error(`Tavily search failed: ${res.status}`)
+  const json = await res.json() as any
+  return (json.results || []).map((r: any) => ({
     title: r.title || '',
     url: r.url || '',
     chunk: (r.content || '').slice(0, 1000),
@@ -265,10 +273,15 @@ async function searchTavily(apiKey: string, searchTerm: string, max: number): Pr
 }
 
 async function searchBrave(apiKey: string, searchTerm: string, max: number): Promise<SearchRef[]> {
-  const client = new BraveSearch(apiKey)
-  const result = await client.webSearch(searchTerm, { count: max, extra_snippets: true })
-  const webResults = (result as any)?.web?.results || []
-  return webResults.map((r: any) => ({
+  const params = new URLSearchParams({ q: searchTerm, count: String(max), extra_snippets: '1' })
+  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+    headers: { 'Accept': 'application/json', 'X-Subscription-Token': apiKey },
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok)
+    throw new Error(`Brave search failed: ${res.status}`)
+  const json = await res.json() as any
+  return (json.web?.results || []).map((r: any) => ({
     title: r.title || '',
     url: r.url || '',
     chunk: [r.description, ...(r.extra_snippets || [])].filter(Boolean).join('\n').slice(0, 1000),
