@@ -63,10 +63,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           await refreshState()
           this.postState()
           break
-        case 'refresh':
-          await refreshState()
-          this.postState()
-          break
         case 'toggleByok':
           await vscode.commands.executeCommand('cursor2plus.toggleByok')
           break
@@ -172,19 +168,43 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         }
         case 'saveProviders': {
           const next = msg.providers as ProviderEntry[]
+          const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined
+          const targetIds = Array.isArray(msg.targetIds) ? msg.targetIds : undefined
           try {
             await updateProviders((draft) => {
               draft.providers = next
             })
             resetProviderInstanceCache()
             bumpRefreshSignal()
-            await refreshState()
+            const state = await refreshState()
             this.postState()
-            this.view?.webview.postMessage({ type: 'toast', text: 'Providers saved.', level: 'info' })
+            if (requestId) {
+              this.view?.webview.postMessage({
+                type: 'saveProvidersResult',
+                requestId,
+                targetIds,
+                ok: true,
+                state,
+              })
+            }
+            else {
+              this.view?.webview.postMessage({ type: 'toast', text: 'Providers saved.', level: 'info' })
+            }
           }
           catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
-            this.view?.webview.postMessage({ type: 'toast', text: `Save failed: ${errMsg}`, level: 'error', duration: 6000 })
+            if (requestId) {
+              this.view?.webview.postMessage({
+                type: 'saveProvidersResult',
+                requestId,
+                targetIds,
+                ok: false,
+                error: errMsg,
+              })
+            }
+            else {
+              this.view?.webview.postMessage({ type: 'toast', text: `Save failed: ${errMsg}`, level: 'error', duration: 6000 })
+            }
           }
           break
         }

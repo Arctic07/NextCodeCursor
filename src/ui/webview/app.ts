@@ -22,6 +22,50 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
 
+function sortedRecord(value: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value).sort()) {
+    const v = value[key]
+    if (v !== undefined)
+      out[key] = canonicalValue(v)
+  }
+  return out
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value))
+    return value.map(canonicalValue)
+  if (value && typeof value === 'object')
+    return sortedRecord(value as Record<string, unknown>)
+  return value
+}
+
+function canonicalProvider(provider: any): any {
+  if (!provider)
+    return {}
+  const headers = provider.headers && typeof provider.headers === 'object' && !Array.isArray(provider.headers)
+    ? sortedRecord(provider.headers)
+    : undefined
+  return {
+    id: provider.id,
+    name: provider.name ?? provider.id,
+    type: provider.type,
+    baseUrl: provider.baseUrl ?? '',
+    auth: canonicalValue(provider.auth ?? { kind: 'apiKey', value: '' }),
+    models: canonicalValue(Array.isArray(provider.models) ? provider.models : []),
+    ...(provider.proxyUrl ? { proxyUrl: provider.proxyUrl } : {}),
+    ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+  }
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(canonicalValue(value))
+}
+
+function providersEqual(a: any, b: any): boolean {
+  return stableStringify(canonicalProvider(a)) === stableStringify(canonicalProvider(b))
+}
+
 export function initApp(Alpine: AlpineType) {
   // Alpine store 内 this 指向 proxy 对象, TS 无法推断 — 用 any 绕过
   const store: any = {
@@ -34,6 +78,8 @@ export function initApp(Alpine: AlpineType) {
     modelExpanded: {} as Record<string, Record<string, boolean>>,
     headersInvalid: {} as Record<string, boolean>,
     remoteModels: {} as Record<string, { loading: boolean, models?: any[], error?: string }>,
+    saveSnapshots: {} as Record<string, { targetIds: string[], snapshots: Record<string, any> }>,
+    savingProviders: {} as Record<string, boolean>,
 
     // ── Web Tools Config ──
     webToolsOpen: false,
@@ -133,35 +179,47 @@ export function initApp(Alpine: AlpineType) {
     },
 
     // ── Draft 管理 ──
+    baseProvider(pid: string): any {
+      return (this.state?.providers || []).find((p: any) => p.id === pid)
+    },
+
+    getProviderView(pid: string): any {
+      return this.drafts[pid] || this.baseProvider(pid) || {}
+    },
+
     getModel(pid: string, mid: string): any {
-      const d = this.getDraft(pid)
+      const d = this.getProviderView(pid)
       return (d.models || []).find((x: any) => x.id === mid)
     },
+
+    /** 兼容模板旧命名：只读，不创建 draft。写操作必须调用 ensureDraft。 */
     getDraft(pid: string): any {
+      return this.getProviderView(pid)
+    },
+
+    ensureDraft(pid: string): any {
       if (!this.drafts[pid]) {
-        const base = (this.state?.providers || []).find((p: any) => p.id === pid)
-        if (base) {
+        const base = this.baseProvider(pid)
+        if (base)
           this.drafts[pid] = clone(base)
-        }
-        else {
+        else
           return {}
-        }
       }
       return this.drafts[pid]
     },
 
     getDraftOrOriginal(pid: string): any {
-      return this.drafts[pid] || (this.state?.providers || []).find((p: any) => p.id === pid) || {}
+      return this.getProviderView(pid)
     },
 
     isDirty(pid: string): boolean {
       const draft = this.drafts[pid]
       if (!draft)
         return false
-      const base = (this.state?.providers || []).find((p: any) => p.id === pid)
+      const base = this.baseProvider(pid)
       if (!base)
         return true // new, not saved
-      return JSON.stringify(base) !== JSON.stringify(draft)
+      return !providersEqual(base, draft)
     },
 
     // ── 校验 ──
@@ -266,7 +324,7 @@ export function initApp(Alpine: AlpineType) {
 
     // ── 字段更新 ──
     updateField(pid: string, field: string, value: any) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       if (field === 'auth.kind') {
         d.auth = { ...(d.auth || {}), kind: value }
       }
@@ -326,14 +384,14 @@ export function initApp(Alpine: AlpineType) {
      *     强制重置为 apiKey 避免旧的 "token" 残留污染
      */
     normalizeAuthKind(pid: string) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       if (d.type !== 'anthropic') {
         d.auth = { ...(d.auth || { value: '' }), kind: 'apiKey' }
       }
     },
 
     updateModelField(pid: string, mid: string, field: string, value: any) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m)
         return
@@ -350,7 +408,7 @@ export function initApp(Alpine: AlpineType) {
           delete m.thinkingBudgetTokens
         }
         else {
-          const pType = (this.getDraft(pid) as any).type
+          const pType = d.type
           if (!m.thinkingLevel && !m.thinkingBudgetTokens) {
             if (pType === 'anthropic')
               m.thinkingLevel = 'high'
@@ -370,7 +428,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     setThinkingMode(pid: string, mid: string, mode: 'level' | 'budget') {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m)
         return
@@ -385,7 +443,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     updateModelNumber(pid: string, mid: string, field: string, raw: string) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m)
         return
@@ -418,7 +476,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     addModel(pid: string) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const m = {
         id: uid('model'),
         apiModel: '',
@@ -435,7 +493,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     deleteModel(pid: string, mid: string) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       d.models = (d.models || []).filter((x: any) => x.id !== mid)
       if (this.modelExpanded[pid])
         delete this.modelExpanded[pid][mid]
@@ -444,7 +502,7 @@ export function initApp(Alpine: AlpineType) {
     // ── QuickSwitch auto-link ──
 
     _syncQsFromDefaults(pid: string, mid: string) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m)
         return
@@ -478,7 +536,8 @@ export function initApp(Alpine: AlpineType) {
     // ── Edit Panel parameters helpers ──
 
     setEditParam(pid: string, mid: string, key: string, value: any) {
-      const m = this.getModel(pid, mid)
+      const d = this.ensureDraft(pid)
+      const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m)
         return
       if (!m.parameters)
@@ -492,7 +551,8 @@ export function initApp(Alpine: AlpineType) {
     },
 
     toggleEditParamArrayItem(pid: string, mid: string, key: string, item: string, checked: boolean) {
-      const m = this.getModel(pid, mid)
+      const d = this.ensureDraft(pid)
+      const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m?.parameters)
         return
       const arr: string[] = (m.parameters as any)[key]
@@ -505,7 +565,8 @@ export function initApp(Alpine: AlpineType) {
     },
 
     removeEditParamArrayIndex(pid: string, mid: string, key: string, index: number) {
-      const m = this.getModel(pid, mid)
+      const d = this.ensureDraft(pid)
+      const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m?.parameters)
         return
       const arr: any[] = (m.parameters as any)[key]
@@ -515,7 +576,8 @@ export function initApp(Alpine: AlpineType) {
     },
 
     addEditParamContextValue(pid: string, mid: string, value: number) {
-      const m = this.getModel(pid, mid)
+      const d = this.ensureDraft(pid)
+      const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m?.parameters || !Array.isArray(m.parameters.context))
         return
       if (!value || value <= 0 || !Number.isFinite(value))
@@ -559,14 +621,11 @@ export function initApp(Alpine: AlpineType) {
       this.post('saveProviders', { providers: JSON.parse(JSON.stringify(merged)) })
     },
 
-    saveProvider(_pid: string) {
+    saveProvider(pid: string) {
       try {
-        let allOk = true
-        for (const p of this.providers) {
-          const v = this.validate(p.id)
-          if (v.ok)
-            continue
-          allOk = false
+        const p = this.getProviderView(pid)
+        const v = this.validate(pid)
+        if (!v.ok) {
           const providerName = p.name || 'Provider'
           for (const [, msg] of Object.entries(v.errors))
             this.toast(`${providerName}: ${msg}`, 'error', 6000)
@@ -580,11 +639,23 @@ export function initApp(Alpine: AlpineType) {
               this.modelExpanded[p.id] = {}
             this.modelExpanded[p.id][mid] = true
           }
-        }
-        if (!allOk)
           return
-        const data = JSON.parse(JSON.stringify(this.providers))
-        this.post('saveProviders', { providers: data })
+        }
+
+        const snapshot = clone(p)
+        const baseProviders = [...(this.state?.providers || [])]
+        const idx = baseProviders.findIndex((x: any) => x.id === pid)
+        const nextProviders = idx >= 0
+          ? baseProviders.map((x: any) => x.id === pid ? snapshot : x)
+          : [...baseProviders, snapshot]
+        const requestId = uid('save')
+        this.saveSnapshots[requestId] = { targetIds: [pid], snapshots: { [pid]: snapshot } }
+        this.savingProviders[pid] = true
+        this.post('saveProviders', {
+          requestId,
+          targetIds: [pid],
+          providers: JSON.parse(JSON.stringify(nextProviders)),
+        })
       }
       catch (e) {
         this.toast(`Save error: ${e instanceof Error ? e.message : String(e)}`, 'error')
@@ -608,7 +679,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     applyCatalogEntry(pid: string, mid: string, entry: any) {
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const m = (d.models || []).find((x: any) => x.id === mid)
       if (!m)
         return
@@ -624,7 +695,7 @@ export function initApp(Alpine: AlpineType) {
       if (!m.thinking && entry.reasoning) {
         m.thinking = true
         if (!m.thinkingLevel && !m.thinkingBudgetTokens) {
-          const pType = (this.getDraft(pid) as any).type
+          const pType = d.type
           m.thinkingLevel = pType === 'anthropic' ? 'high' : 'medium'
         }
       }
@@ -685,7 +756,7 @@ export function initApp(Alpine: AlpineType) {
 
     applyRemoteModel(pid: string, modelId: string) {
       this.addModel(pid)
-      const d = this.getDraft(pid)
+      const d = this.ensureDraft(pid)
       const models = d.models || []
       const lastModel = models[models.length - 1]
       if (lastModel) {
@@ -738,9 +809,40 @@ export function initApp(Alpine: AlpineType) {
         s.webTools = clone(msg.state.webTools)
       for (const pid of Object.keys(s.drafts)) {
         const base = (s.state?.providers || []).find((p: any) => p.id === pid)
-        if (base && JSON.stringify(base) === JSON.stringify(s.drafts[pid]))
+        if (base && providersEqual(base, s.drafts[pid]))
           delete s.drafts[pid]
       }
+    }
+    else if (msg?.type === 'saveProvidersResult') {
+      if (msg.state) {
+        s.state = msg.state
+        if (msg.state?.webTools)
+          s.webTools = clone(msg.state.webTools)
+      }
+      const requestId = msg.requestId as string
+      const pending = requestId ? s.saveSnapshots[requestId] : null
+      const targetIds = pending?.targetIds || msg.targetIds || []
+      for (const pid of targetIds)
+        delete s.savingProviders[pid]
+      if (!msg.ok) {
+        s.toast(`Save failed: ${msg.error || 'unknown error'}`, 'error', 6000)
+      }
+      else {
+        for (const pid of targetIds) {
+          const sent = pending?.snapshots?.[pid]
+          const current = s.drafts[pid]
+          const base = (s.state?.providers || []).find((p: any) => p.id === pid)
+          if (sent && current && providersEqual(current, sent))
+            delete s.drafts[pid]
+          else if (sent && !current && base && providersEqual(base, sent))
+            delete s.drafts[pid]
+          else if (!sent && base && current && providersEqual(base, current))
+            delete s.drafts[pid]
+        }
+        s.toast('Providers saved.', 'info')
+      }
+      if (requestId)
+        delete s.saveSnapshots[requestId]
     }
     else if (msg?.type === 'remoteModelsResult') {
       const pid = msg.pid as string
