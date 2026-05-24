@@ -25,10 +25,7 @@ export class OpenAIChatProvider implements LLMProvider {
         if (entry.baseUrl) {
             opts.baseURL = entry.baseUrl;
         }
-        const proxiedFetch = createProxiedFetch(entry.proxyUrl);
-        if (proxiedFetch) {
-            opts.fetch = proxiedFetch;
-        }
+        opts.fetch = createProxiedFetch(entry.proxyUrl);
         const headers = buildDefaultHeaders('openai-chat', entry.headers);
         if (headers) {
             opts.defaultHeaders = headers;

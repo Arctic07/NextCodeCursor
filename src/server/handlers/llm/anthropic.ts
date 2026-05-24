@@ -58,10 +58,7 @@ export class AnthropicProvider implements LLMProvider {
             opts.apiKey = entry.auth.value;
         }
 
-        const proxiedFetch = createProxiedFetch(entry.proxyUrl);
-        if (proxiedFetch) {
-            opts.fetch = proxiedFetch;
-        }
+        opts.fetch = createProxiedFetch(entry.proxyUrl);
 
         const headers = buildDefaultHeaders('anthropic', entry.headers);
         if (headers) {

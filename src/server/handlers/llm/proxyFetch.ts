@@ -64,20 +64,26 @@ function getCaCerts(): string[] {
 // ── Proxy Fetch ──
 
 /**
- * 若 proxyUrl 非空, 返回代理化的 fetch 函数供 SDK opts.fetch 使用。
- * 否则返回 undefined (不走代理, SDK 用默认 globalThis.fetch)。
+ * 返回独立于 VS Code proxy 设置的 fetch 函数供 LLM SDK 使用。
+ *
+ * 始终使用 undici 自己的 fetch + Agent/ProxyAgent，绕过 VS Code 的
+ * @vscode/proxy-agent monkey-patch (劫持 http.request)。
+ * BYOK LLM 请求仅遵循 Provider 自己的 proxyUrl 配置。
+ *
+ * - proxyUrl 非空: undici fetch + ProxyAgent (走指定代理)
+ * - proxyUrl 为空: undici fetch + Agent (直连, 不走任何代理)
  */
-export function createProxiedFetch(proxyUrl: string | undefined): typeof globalThis.fetch | undefined {
-  if (!proxyUrl)
-    return undefined
+export function createProxiedFetch(proxyUrl: string | undefined): typeof globalThis.fetch {
+  if (proxyUrl) {
+    const ca = getCaCerts()
+    const dispatcher = new ProxyAgent({
+      uri: proxyUrl,
+      requestTls: { ca },
+    })
+    logger.info({ proxyUrl, caCount: ca.length }, '[PROXY] LLM fetch via proxy')
+    return ((input: any, init?: any) =>
+      undiciFetch(input, { ...init, dispatcher })) as unknown as typeof globalThis.fetch
+  }
 
-  const ca = getCaCerts()
-  const dispatcher = new ProxyAgent({
-    uri: proxyUrl,
-    requestTls: { ca },
-  })
-  logger.info({ proxyUrl, caCount: ca.length }, '[PROXY] creating proxied fetch for LLM SDK')
-
-  return ((input: any, init?: any) =>
-    undiciFetch(input, { ...init, dispatcher })) as unknown as typeof globalThis.fetch
+  return undiciFetch as unknown as typeof globalThis.fetch
 }
