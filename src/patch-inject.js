@@ -122,9 +122,35 @@ function buildHookPayload() {
   //
   // 通知通道: EventSource 订阅 /byok/events, server 在 bumpRefreshSignal 时推送 "event: refresh",
   // 替代了早期的 3s 轮询 /byok/refresh-signal 方案。EventSource 会自动重连。
-  const refreshLogic = `globalThis.__byokRefreshModels=function(){if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=document.querySelector('[title="Refresh model list"]');if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths")}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
+  // Model Picker "Refresh Models" 按钮注入
+  //
+  // 监听 .ui-model-picker__menu 出现 → 在 "Add Models" 同级位置注入 "Refresh Models" 选项。
+  // 使用 ui-model-picker__user-action-item 类复用原生样式。
+  // 点击触发 __byokRefreshModels() 刷新模型列表。
+  // Editor Window / Agent Window 均生效。
+  // 在模型选择器搜索框右侧注入 Refresh 按钮。
+  // 搜索框结构: div.ui-palette-input-wrapper[cmdk-input-wrapper] > icon + input
+  // 在 wrapper 末尾追加 button，flex 布局自动排右。
+  // 使用 __icon-button 原生样式 (16px, transparent bg, cursor:pointer)。
+  const pickerRefresh = `(function(){if(!document.body)return;var _prObs=new MutationObserver(function(){var inp=document.querySelector('input[placeholder="Search models"]');if(!inp)return;var wrap=inp.closest(".ui-input-group");if(!wrap||wrap.querySelector("#byok-refresh-btn"))return;var btn=document.createElement("button");btn.type="button";btn.id="byok-refresh-btn";btn.className="ui-icon-button";btn.dataset.variant="default";btn.dataset.size="sm";btn.setAttribute("aria-label","Refresh Models");btn.style.cssText="width:28px;height:28px;font-size:15px;flex-shrink:0;";btn.textContent="\\u21BB";btn.addEventListener("click",function(ev){ev.stopPropagation();globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels();console.log("[BYOK] manual refresh from picker")});wrap.appendChild(btn)});_prObs.observe(document.body,{childList:true,subtree:true})})();`;
 
-  return main + refreshLogic + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
+  // Glass sidebar BYOK 状态指示器
+  //
+  // Agent Window (glass mode) 没有 VS Code 状态栏。
+  // 在左侧边栏底部 account bar 中注入 BYOK 状态指示器:
+  //   glass-sidebar-footer-bar
+  //     ├─ account trigger (头像+名字)
+  //     ├─ #byok-glass-status          ← 注入点
+  //     └─ glass-sidebar-footer-actions-right (filter+settings)
+  //
+  // 通过 MutationObserver 等待 glass sidebar footer 渲染后注入。
+  // 指示器颜色跟随 EventSource 连接状态:
+  //   connected → 绿点   disconnected → 灰点
+  const glassStatus = `(function(){var _bEl=null,_bTip=null,_bSrv=false,_bMode=false;function _bCreate(){var e=document.createElement("button");e.type="button";e.className="ui-icon-button";e.dataset.variant="default";e.dataset.size="lg";e.id="byok-glass-status";e.style.cssText="font-size:11px;gap:3px;width:auto;white-space:nowrap;";e.addEventListener("click",function(){fetch(_byokUrl+"/byok/toggle",{method:"POST"}).then(function(r){return r.json()}).then(function(d){console.log("[BYOK] toggle \\u2192",d.byokMode?"ON":"OFF")}).catch(function(e){console.warn("[BYOK] toggle failed:",e&&e.message||e)})});e.addEventListener("mouseenter",function(){_bShowTip()});e.addEventListener("mouseleave",function(){_bHideTip()});return e}function _bShowTip(){if(_bTip||!_bEl)return;var t=document.createElement("div");t.className="ui-tooltip";t.setAttribute("role","tooltip");t.style.cssText="position:fixed;z-index:99999;pointer-events:none;";var c=document.createElement("div");c.className="ui-tooltip-content";var b=document.createElement("div");b.className="ui-tooltip-body";var tr=document.createElement("div");tr.className="ui-tooltip-title-row";tr.textContent=(_bSrv?"Server online":"Server offline")+" \\u00B7 "+(_bMode?"BYOK ON":"BYOK OFF");b.appendChild(tr);c.appendChild(b);t.appendChild(c);document.body.appendChild(t);var r=_bEl.getBoundingClientRect();var tw=t.offsetWidth,th=t.offsetHeight;t.style.left=Math.round(r.left+r.width/2-tw/2)+"px";t.style.top=Math.round(r.top-th-6)+"px";_bTip=t}function _bHideTip(){if(_bTip){_bTip.remove();_bTip=null}}function _bRender(){if(!_bEl)return;var icon=_bSrv?"\\u2713":"\\u2717";var glyph=_bMode?"\\u25C9":"\\u25CB";_bEl.textContent=icon+" BYOK "+glyph}function _bInject(){if(_bEl&&document.contains(_bEl))return;var act=document.querySelector(".glass-sidebar-footer-actions-right");if(!act)return;_bEl=_bCreate();_bRender();act.insertBefore(_bEl,act.firstChild)}if(document.body){var _bObs=new MutationObserver(function(){_bInject()});_bObs.observe(document.body,{childList:true,subtree:true});_bInject()}globalThis.__byokGlassStatus=function(srv,mode){if(srv!==void 0)_bSrv=srv;if(mode!==void 0)_bMode=mode;_bRender()}})();`;
+
+  const refreshLogic = `globalThis.__byokRefreshModels=function(){if(globalThis.__byokAiSvc&&typeof globalThis.__byokAiSvc.refreshDefaultModels==="function"){try{var p=globalThis.__byokAiSvc.refreshDefaultModels();console.log("[BYOK] refreshDefaultModels() invoked via captured aiService ref");if(p&&typeof p.then==="function")p.catch(function(e){console.warn("[BYOK] refreshDefaultModels failed:",e&&e.message||e)});return"service"}catch(e){console.warn("[BYOK] refreshDefaultModels threw:",e&&e.message||e)}}var btn=document.querySelector('[title="Refresh model list"]');if(btn&&typeof btn.click==="function"){btn.click();console.log("[BYOK] refresh triggered via DOM click fallback");return"click"}console.warn("[BYOK] no refresh mechanism available (aiService not captured, picker not visible)");return"none"};try{var _byokEs=new EventSource(_byokUrl+"/byok/events");_byokEs.addEventListener("open",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(true,_restPaths.length>2)});_byokEs.addEventListener("refresh",function(){console.log("[BYOK] refresh event received");globalThis.__byokRefreshModels&&globalThis.__byokRefreshModels()});_byokEs.addEventListener("routes",function(ev){try{var newPaths=JSON.parse(ev.data);_restPaths=newPaths;_restSet=new Set(newPaths);console.log("[BYOK] REST redirects hot-reloaded: "+newPaths.length+" paths");globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(void 0,newPaths.length>2)}catch(e){console.warn("[BYOK] routes event parse failed:",e&&e.message||e)}});_byokEs.addEventListener("error",function(){globalThis.__byokGlassStatus&&globalThis.__byokGlassStatus(false,void 0)})}catch(e){console.warn("[BYOK] EventSource init failed:",e&&e.message||e)}`;
+
+  return main + refreshLogic + pickerRefresh + glassStatus + `console.log("[BYOK] Hook loaded, collector="+_collectorUrl+", byok="+_byokUrl+", REST redirects="+_restPaths.length)})()`;
 }
 
 // ---- AST fingerprinting + patch ----
@@ -341,6 +367,41 @@ function patchMaxModeToggle(code, log) {
   return result;
 }
 
+const EXTENSION_ID = 'cometix-space.cursor2plus';
+
+function patchGlassExtensionAllowlist(code, log) {
+  // Agent Window 扩展白名单由 Jes (hD) 和 Ges (fD) 两个数组控制。
+  // 6 处引用: 定义、Vn1 函数返回、2 个 .filter() 、1 个 .includes() 、组合数组。
+  // 最可靠的方式: 直接修改数组定义,所有引用点自动生效。
+  //
+  // 定位策略: Jes 数组末尾紧跟 "],Ges=["，用这个跨数组边界的唯一指纹定位。
+  // Ges 数组末尾紧跟 "],t$h=[" 或类似模式。
+  const entry = `,"${EXTENSION_ID}"`;
+  let result = code;
+  let patched = 0;
+
+  // Jes = [...baseList, ..., "vscode.github-authentication"]  ← 追加到此处
+  const jesEnd = '"vscode.github-authentication"]';
+  if (result.includes(jesEnd)) {
+    result = result.replace(jesEnd, `"vscode.github-authentication"${entry}]`);
+    patched++;
+  }
+
+  // Ges = [...baseList, ..., "anysphere.remote-wsl"]  ← 追加到此处
+  const gesEnd = '"anysphere.remote-wsl"]';
+  if (result.includes(gesEnd)) {
+    result = result.replace(gesEnd, `"anysphere.remote-wsl"${entry}]`);
+    patched++;
+  }
+
+  if (patched === 0) {
+    log?.('  [glass-allowlist] WARNING: allowlist arrays not found, skipping');
+  } else {
+    log?.(`  [glass-allowlist] injected ${EXTENSION_ID} into ${patched} allowlist array(s)`);
+  }
+  return result;
+}
+
 export function patchInject(paths, log) {
   log?.('[inject] Patching workbench.js...');
   const code = readFileSync(paths.workbenchJs, 'utf-8');
@@ -368,6 +429,8 @@ export function patchInject(paths, log) {
   //    补丁: S = !i && o.some(...)  (o = models 数组, 无 supportsMaxMode 时隐藏)
   //    锚定: 同一行包含 '"max mode".includes(d)' 的唯一行
   patched = patchMaxModeToggle(patched, log);
+  // 5. Glass Window (Agent Window) 扩展白名单放行
+  patched = patchGlassExtensionAllowlist(patched, log);
 
   if (!patched.includes(HOOK_MARKER)) throw new Error('Verification failed');
 
