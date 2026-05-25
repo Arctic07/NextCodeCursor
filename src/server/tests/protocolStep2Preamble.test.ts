@@ -52,6 +52,7 @@ function stubParsed(overrides: Record<string, unknown>): Parameters<typeof build
     selectedSubagents: [],
     selectedBrowsers: [],
     recentAgentsContext: [],
+    subagentModelOverrides: [],
     ...overrides,
   } as Parameters<typeof buildMessages>[0]
 }

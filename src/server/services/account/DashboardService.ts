@@ -51,7 +51,7 @@ export default (router: ConnectRouter) => {
         }),
 
         getTeams: async () => ({}),
-        getUserPrivacyMode: async () => ({ privacyMode: PrivacyMode.NO_STORAGE }),
+        getUserPrivacyMode: async () => ({ privacyMode: PrivacyMode.NO_TRAINING }),
 
         getUsageLimitStatusAndActiveGrants: async () => ({
             usageLimitPolicyStatus: create(GetUsageLimitStatusAndActiveGrantsResponse_UsageLimitPolicyStatusSchema, {

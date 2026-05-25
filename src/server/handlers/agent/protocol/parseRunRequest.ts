@@ -555,6 +555,20 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     name: (s.name as string) ?? '',
   })).filter(s => s.name.length > 0)
 
+  // subagentModelOverrides (AgentRunRequest field 20) — 用户在 Settings > Subagents 中的模型 override
+  // subagentModelOverrides oneof 在 protobuf JSON 中: { subagentType, model?: {modelId,...}, inherit?: bool, disabled?: bool }
+  const subagentModelOverridesRaw = (runRequest?.subagentModelOverrides as Array<Record<string, unknown>> | undefined) ?? []
+  const subagentModelOverrides = subagentModelOverridesRaw.map(o => {
+    const subagentType = (o.subagentType as string) ?? ''
+    if (o.model) {
+      const model = o.model as Record<string, unknown>
+      return { subagentType, selection: { case: 'model' as const, modelId: (model.modelId as string) ?? '' } }
+    }
+    if (o.disabled)
+      return { subagentType, selection: { case: 'disabled' as const } }
+    return { subagentType, selection: { case: 'inherit' as const } }
+  }).filter(o => o.subagentType.length > 0)
+
   // selectedBrowsers (field 24) — Cursor 浏览器集成,@ 的页面
   const selectedBrowsersRaw = (selectedContext?.selectedBrowsers as Array<Record<string, unknown>> | undefined) ?? []
   const selectedBrowsers = selectedBrowsersRaw.map(b => ({
@@ -737,6 +751,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     projectLayouts,
     externalLinks,
     selectedSubagents,
+    subagentModelOverrides,
     selectedBrowsers,
     recentAgentsContext,
     webSearchEnabled: (requestContext?.webSearchEnabled as boolean) ?? false,

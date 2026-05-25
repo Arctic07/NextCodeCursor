@@ -58,6 +58,11 @@ async function handleAvailableModels() {
     composerModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
     cmdKModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
     backgroundComposerModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
+    // subagentModelConfigs: map<string, FeatureModelConfig>
+    // 提供 explore 条目让 Settings > Subagents 显示 "Explore subagent model" 选择器
+    subagentModelConfigs: {
+      explore: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
+    },
     // displayConfiguration — 覆盖客户端 localStorage 缓存的官方配置:
     //   routedModelViewConfig.hideRoutedModelView = true
     //     → Auto toggle 不显示 (routedModelViewToNamedViewToggle 不存在)

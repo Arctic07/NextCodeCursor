@@ -38,6 +38,7 @@ describe('turnTracker', () => {
         selectedSubagents: [],
         selectedBrowsers: [],
         recentAgentsContext: [],
+        subagentModelOverrides: [],
         webSearchEnabled: false,
         webFetchEnabled: false,
         readLintsEnabled: false,

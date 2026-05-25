@@ -23,6 +23,26 @@ import { awaitExecResultAndClose, waitForInteractionResponseWithHeartbeat, waitF
 import { performWebFetch, performWebSearch } from './web';
 import { interactionQuery } from './stream';
 import type { ToolResultEnvelope } from './toolResults';
+import type { ParsedRunRequest } from './protocol/types';
+
+type SubagentModelOverride = ParsedRunRequest['subagentModelOverrides'][number];
+
+function resolveSubagentModel(
+    subagentType: string,
+    parentModelId: string,
+    overrides?: SubagentModelOverride[],
+): string {
+    const override = overrides?.find(o => o.subagentType === subagentType);
+    if (!override || override.selection.case === 'inherit') {
+        logger.debug({ subagentType, parentModelId, overrideCount: overrides?.length ?? 0 }, '[TOOL] subagent model → inherit parent');
+        return parentModelId;
+    }
+    if (override.selection.case === 'model' && override.selection.modelId) {
+        logger.info({ subagentType, modelId: override.selection.modelId, parentModelId }, '[TOOL] subagent model → override');
+        return override.selection.modelId;
+    }
+    return parentModelId;
+}
 
 export interface TaskLaunchContext {
     tc: ToolCallInfo;
@@ -38,6 +58,7 @@ export async function* runToolCall(params: {
     availableMcpTools: AvailableMcpTool[];
     conversationId: string;
     currentModelId: string;
+    subagentModelOverrides?: SubagentModelOverride[];
     workspacePath?: string;
     round: number;
     session: AgentSession | null;
@@ -97,14 +118,9 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     //   - shellToolCall: LLM 没指定 cwd 时补上当前 workspace 路径。
     let sanitizedInput = resolvedTool.sanitizedInput;
     if (cursorToolType === 'taskToolCall') {
-        const originalModel = sanitizedInput.model ?? sanitizedInput.modelId;
-        if (originalModel && originalModel !== params.currentModelId) {
-            logger.warn(
-                { requested: originalModel, forced: params.currentModelId, callId: tc.callId },
-                '[TOOL] subagent model override — BYOK mode always inherits parent conversation model',
-            );
-        }
-        sanitizedInput = { ...sanitizedInput, model: params.currentModelId, modelId: params.currentModelId };
+        const subagentType = (sanitizedInput.subagent_type ?? sanitizedInput.subagentType ?? 'explore') as string;
+        const resolvedModelId = resolveSubagentModel(subagentType, params.currentModelId, params.subagentModelOverrides);
+        sanitizedInput = { ...sanitizedInput, model: resolvedModelId, modelId: resolvedModelId };
     }
     else if (
         cursorToolType === 'shellToolCall'
@@ -213,9 +229,12 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     if (execArgsType && params.session) {
         let args: Record<string, unknown>;
         try {
+            const execModelId = cursorToolType === 'taskToolCall' && typeof sanitizedInput.modelId === 'string'
+                ? sanitizedInput.modelId
+                : params.currentModelId;
             args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
-                currentModelId: params.currentModelId,
+                currentModelId: execModelId,
                 workspacePath: params.workspacePath,
             });
         } catch (e) {
@@ -467,6 +486,7 @@ export async function* launchTaskTool(params: {
     availableMcpTools: AvailableMcpTool[];
     conversationId: string;
     currentModelId: string;
+    subagentModelOverrides?: SubagentModelOverride[];
     workspacePath?: string;
     round: number;
     allocateExecMessageId: () => number;
@@ -477,20 +497,16 @@ export async function* launchTaskTool(params: {
     const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`;
 
     let sanitizedInput = resolvedTool.sanitizedInput;
-    const originalModel = sanitizedInput.model ?? sanitizedInput.modelId;
-    if (originalModel && originalModel !== params.currentModelId) {
-        logger.warn(
-            { requested: originalModel, forced: params.currentModelId, callId: tc.callId },
-            '[TOOL] subagent model override — BYOK mode always inherits parent conversation model',
-        );
-    }
-    sanitizedInput = { ...sanitizedInput, model: params.currentModelId, modelId: params.currentModelId };
+    const subagentType = (sanitizedInput.subagent_type ?? sanitizedInput.subagentType ?? 'explore') as string;
+    const resolvedModelId = resolveSubagentModel(subagentType, params.currentModelId, params.subagentModelOverrides);
+    sanitizedInput = { ...sanitizedInput, model: resolvedModelId, modelId: resolvedModelId };
 
     logger.info({
         callId: tc.callId,
         runInBackground: sanitizedInput.run_in_background ?? sanitizedInput.runInBackground ?? '(unset)',
         resume: sanitizedInput.resume ?? '(none)',
-        subagentType: sanitizedInput.subagent_type ?? sanitizedInput.subagentType,
+        subagentType,
+        resolvedModelId,
     }, '[TOOL] taskToolCall dispatching');
 
     let startedArgs: Record<string, unknown>;
@@ -511,9 +527,12 @@ export async function* launchTaskTool(params: {
 
     let args: Record<string, unknown>;
     try {
+        const execModelId = typeof sanitizedInput.modelId === 'string'
+            ? sanitizedInput.modelId
+            : params.currentModelId;
         args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
-            currentModelId: params.currentModelId,
+            currentModelId: execModelId,
             workspacePath: params.workspacePath,
         });
     }

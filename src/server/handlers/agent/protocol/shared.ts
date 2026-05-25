@@ -54,6 +54,7 @@ export function emptyParsed(): ParsedRunRequest {
     isGitRepo: false,
     conversationNotesListing: '',
     sharedNotesListing: '',
+    subagentModelOverrides: [],
   }
 }
 

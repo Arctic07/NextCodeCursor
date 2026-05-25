@@ -133,6 +133,11 @@ export interface ParsedRunRequest {
    * (递归结构, 含 path / files / subfolders)。原样 JSON 压入 XML 供 LLM 理解。
    */
   projectLayouts: Array<Record<string, unknown>>
+  /** 子代理模型 override (来自 AgentRunRequest.subagent_model_overrides, field 20) */
+  subagentModelOverrides: Array<{
+    subagentType: string
+    selection: { case: 'model', modelId: string } | { case: 'inherit' } | { case: 'disabled' }
+  }>
   /**
    * 用户 @ 的外部链接 (来自 selectedContext.external_links, proto field 9)
    * 包含普通 URL 和 PDF (is_pdf + pdf_content / blob_id)。菜单里没有 @Link 入口,
