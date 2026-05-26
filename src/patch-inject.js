@@ -369,6 +369,194 @@ function patchMaxModeToggle(code, log) {
 
 const EXTENSION_ID = 'cometix-space.cursor2plus';
 
+/**
+ * KaTeX 的 \sqrt / stretchy delimiter / cancel 会生成 inline SVG。
+ * Cursor 的 allowMath sanitizer schema 只放行 MathML 时,根号 SVG 会被过滤。
+ *
+ * 跨版本策略:
+ * - 不依赖混淆变量名 (u7b/GVT 等每版变化)。
+ * - 从包含 msqrt/mroot 的 math tag array 反向定位 AssignmentExpression。
+ * - 用 AST 精确校验 tag array 和紧邻的属性 schema ObjectExpression 结构。
+ * - 只追加 KaTeX 必需的 svg/path/line 标签和最小属性集,不放行 href/on* / style / foreignObject。
+ *
+ * 注意: installer production build 会经过 js-confuser。这里刻意写成单函数 + 命令式循环,
+ * 避免复杂 helper/callback 在混淆后触发错误重命名。
+ */
+function patchKatexMathSvgSanitizer(code, log) {
+  const requiredTags = ['math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'mtext', 'mfrac', 'msqrt', 'mroot', 'annotation'];
+  const svgTags = ['svg', 'path', 'line'];
+  const svgAttrs = ['xmlns', 'width', 'height', 'viewBox', 'viewbox', 'preserveAspectRatio', 'preserveaspectratio'];
+  const lineAttrs = ['x1', 'y1', 'x2', 'y2', 'stroke-width', 'strokeWidth'];
+
+  function literalString(node) {
+    return node && node.type === 'Literal' && typeof node.value === 'string' ? node.value : undefined;
+  }
+  function propertyName(prop) {
+    if (!prop || prop.type !== 'Property' || prop.computed) return undefined;
+    if (prop.key.type === 'Identifier') return prop.key.name;
+    return literalString(prop.key);
+  }
+  function arrayStrings(node) {
+    if (!node || node.type !== 'ArrayExpression') return undefined;
+    const values = [];
+    for (let i = 0; i < node.elements.length; i++) {
+      const value = literalString(node.elements[i]);
+      if (value === undefined) return undefined;
+      values.push(value);
+    }
+    return values;
+  }
+  function firstExpr(expr) {
+    return expr && expr.type === 'SequenceExpression' ? expr.expressions[0] : expr;
+  }
+  function containsAll(values, required) {
+    for (let i = 0; i < required.length; i++) {
+      if (!values.includes(required[i])) return false;
+    }
+    return true;
+  }
+  function tagAssignmentValues(expr) {
+    const candidate = firstExpr(expr);
+    if (!candidate || candidate.type !== 'AssignmentExpression' || candidate.operator !== '=') return undefined;
+    if (!candidate.left || candidate.left.type !== 'Identifier') return undefined;
+    const values = arrayStrings(candidate.right);
+    if (!values || !containsAll(values, requiredTags)) return undefined;
+    return { assignment: candidate, values };
+  }
+  function attributeSchemaInfo(node) {
+    if (!node || node.type !== 'ObjectExpression') return undefined;
+    const props = Object.create(null);
+    for (let i = 0; i < node.properties.length; i++) {
+      const prop = node.properties[i];
+      const key = propertyName(prop);
+      if (key) props[key] = prop.value;
+    }
+    const requiredKeys = ['math', 'semantics', 'annotation', 'mfrac', 'msqrt', 'mroot', 'mtd'];
+    for (let i = 0; i < requiredKeys.length; i++) {
+      if (!props[requiredKeys[i]]) return undefined;
+    }
+    const mathAttrs = arrayStrings(props.math) || [];
+    const mtdAttrs = arrayStrings(props.mtd) || [];
+    const mfracAttrs = arrayStrings(props.mfrac) || [];
+    if (!mathAttrs.includes('xmlns') || !mathAttrs.includes('display')) return undefined;
+    if (!mtdAttrs.includes('columnalign')) return undefined;
+    if (!mfracAttrs.includes('linethickness')) return undefined;
+    return { node, props };
+  }
+  function svgPropertySource(key) {
+    if (key === 'svg') return `svg:${JSON.stringify(svgAttrs)}`;
+    if (key === 'path') return 'path:["d"]';
+    if (key === 'line') return `line:${JSON.stringify(lineAttrs)}`;
+    throw new Error(`unknown KaTeX SVG sanitizer property: ${key}`);
+  }
+  function assignmentStartBeforeArray(arrayStart) {
+    let i = arrayStart - 1;
+    while (i >= 0 && /\s/.test(code[i])) i--;
+    if (code[i] !== '=') return -1;
+    i--;
+    while (i >= 0 && /\s/.test(code[i])) i--;
+    const end = i + 1;
+    while (i >= 0 && /[a-zA-Z0-9_$]/.test(code[i])) i--;
+    const start = i + 1;
+    return start === end ? -1 : start;
+  }
+
+  const edits = [];
+  const seenTagStarts = [];
+  const seenAttrStarts = [];
+  let candidateCount = 0;
+  let scanFrom = 0;
+
+  while (true) {
+    const msqrtIdx = code.indexOf('"msqrt"', scanFrom);
+    if (msqrtIdx === -1) break;
+    scanFrom = msqrtIdx + 7;
+    candidateCount++;
+
+    const arrayStart = code.lastIndexOf('[', msqrtIdx);
+    if (arrayStart === -1) continue;
+    const exprStart = assignmentStartBeforeArray(arrayStart);
+    if (exprStart === -1 || seenTagStarts.includes(exprStart)) continue;
+
+    let parsed;
+    try {
+      parsed = acorn.parseExpressionAt(code, exprStart, { ecmaVersion: 2022, sourceType: 'script' });
+    } catch {
+      continue;
+    }
+
+    const tagInfo = tagAssignmentValues(parsed);
+    if (!tagInfo) continue;
+    seenTagStarts.push(exprStart);
+
+    const missingTags = [];
+    for (let i = 0; i < svgTags.length; i++) {
+      if (!tagInfo.values.includes(svgTags[i])) missingTags.push(svgTags[i]);
+    }
+    if (missingTags.length > 0) {
+      const parts = [];
+      for (let i = 0; i < missingTags.length; i++) parts.push(JSON.stringify(missingTags[i]));
+      edits.push({
+        start: tagInfo.assignment.right.end - 1,
+        end: tagInfo.assignment.right.end - 1,
+        text: `${tagInfo.values.length > 0 ? ',' : ''}${parts.join(',')}`,
+      });
+    }
+
+    const expressions = parsed.type === 'SequenceExpression' ? parsed.expressions : [parsed];
+    for (let i = 0; i < expressions.length; i++) {
+      const expr = expressions[i];
+      if (!expr || expr.type !== 'AssignmentExpression' || expr.operator !== '=') continue;
+      if (!expr.left || expr.left.type !== 'Identifier') continue;
+      const attrInfo = attributeSchemaInfo(expr.right);
+      if (!attrInfo || seenAttrStarts.includes(expr.right.start)) continue;
+      seenAttrStarts.push(expr.right.start);
+
+      const existingKeys = [];
+      for (let j = 0; j < expr.right.properties.length; j++) {
+        const key = propertyName(expr.right.properties[j]);
+        if (key) existingKeys.push(key);
+      }
+      const missingProps = [];
+      for (let j = 0; j < svgTags.length; j++) {
+        if (!existingKeys.includes(svgTags[j])) missingProps.push(svgTags[j]);
+      }
+      if (missingProps.length > 0) {
+        const propSources = [];
+        for (let j = 0; j < missingProps.length; j++) propSources.push(svgPropertySource(missingProps[j]));
+        edits.push({
+          start: expr.right.end - 1,
+          end: expr.right.end - 1,
+          text: `${expr.right.properties.length > 0 ? ',' : ''}${propSources.join(',')}`,
+        });
+      }
+      break;
+    }
+  }
+
+  if (seenTagStarts.length === 0) {
+    log?.(`  [katex-svg] WARNING: no AST-validated KaTeX math tag allowlist found (${candidateCount} candidate(s))`);
+    return code;
+  }
+  if (seenAttrStarts.length === 0) {
+    log?.(`  [katex-svg] WARNING: no AST-validated KaTeX math attribute schema found (${seenTagStarts.length} tag allowlist(s))`);
+    return code;
+  }
+  if (edits.length === 0) {
+    log?.(`  [katex-svg] already patched (${seenTagStarts.length} math sanitizer schema(s))`);
+    return code;
+  }
+
+  edits.sort((a, b) => b.start - a.start);
+  let result = code;
+  for (let i = 0; i < edits.length; i++) {
+    const edit = edits[i];
+    result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
+  }
+  log?.(`  [katex-svg] patched ${seenTagStarts.length} KaTeX math sanitizer schema(s), ${edits.length} insertion(s)`);
+  return result;
+}
+
 function patchGlassExtensionAllowlist(code, log) {
   // Agent Window 扩展白名单由 Jes (hD) 和 Ges (fD) 两个数组控制。
   // 6 处引用: 定义、Vn1 函数返回、2 个 .filter() 、1 个 .includes() 、组合数组。
@@ -429,7 +617,9 @@ export function patchInject(paths, log) {
   //    补丁: S = !i && o.some(...)  (o = models 数组, 无 supportsMaxMode 时隐藏)
   //    锚定: 同一行包含 '"max mode".includes(d)' 的唯一行
   patched = patchMaxModeToggle(patched, log);
-  // 5. Glass Window (Agent Window) 扩展白名单放行
+  // 5. KaTeX math SVG sanitizer: 放行根号 / stretchy delimiter 所需 inline SVG
+  patched = patchKatexMathSvgSanitizer(patched, log);
+  // 6. Glass Window (Agent Window) 扩展白名单放行
   patched = patchGlassExtensionAllowlist(patched, log);
 
   if (!patched.includes(HOOK_MARKER)) throw new Error('Verification failed');
