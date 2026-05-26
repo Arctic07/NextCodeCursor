@@ -5,7 +5,7 @@ import type { LLMMessage } from '../llm/types';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
 import { finalizeInteractionTool } from './interactionRuntime';
-import { execMessage, ProtoSerializeError, toolCallCompleted, toolCallStarted } from './stream';
+import { execMessage, toolCallCompleted, toolCallStarted } from './stream';
 import { buildToolArgs } from './toolBuilders';
 import {
     buildAskQuestionResultFromInteractionResponse,
@@ -67,36 +67,7 @@ export async function* runToolCall(params: {
     allocateExecMessageId: () => number;
     allocateInteractionId: () => number;
 }): AsyncGenerator<AgentServerMessage, void, void> {
-    const tc = params.toolCall;
-
-    try {
-        yield* runToolCallInner(params);
-    }
-    catch (err) {
-        if (err instanceof ProtoSerializeError) {
-            // 层 2 熔断: proto 帧序列化失败 → 降级为 error result, 不 crash stream。
-            // 不 emit checkpoint → 客户端保留上一轮 checkpoint → 历史不 corrupt。
-            logger.error(
-                { tool: tc.name, callId: tc.callId, error: err.message },
-                '[TOOL] proto serialize failed — returning error result to LLM (stream preserved)',
-            );
-            const safeErrorResult = { result: { case: 'error', value: { error: `Tool frame serialize error: ${err.message}` } } };
-            const finalized = finalizeToolCall({
-                roundContext: params.roundContext,
-                messages: params.messages,
-                cursorToolType: 'readToolCall',
-                toolName: tc.name,
-                callId: tc.callId,
-                startedArgs: {},
-                rawToolResult: safeErrorResult,
-                input: tc.input,
-                modelCallId: `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`,
-            });
-            yield finalized.frame;
-            return;
-        }
-        throw err;
-    }
+    yield* runToolCallInner(params);
 }
 
 async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): AsyncGenerator<AgentServerMessage, void, void> {
