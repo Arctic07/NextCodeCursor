@@ -1,5 +1,5 @@
 import { SimulatedMsgReason, type AgentServerMessage } from '../../gen/agent_v1_pb'
-import type { LLMContentBlock, LLMMessage } from '../llm/types'
+import type { LLMContentBlock, LLMMessage, LLMTool } from '../llm/types'
 import type { ParsedRunRequest } from './protocol'
 import type { AgentSession } from './session'
 import type { ToolCallInfo } from './tools'
@@ -9,8 +9,9 @@ import { resolveProviderRuntime } from '../llm'
 import { decodeBlob } from './blob'
 import { cacheBlob, getCachedBlob } from './blobStore'
 import { emitFinalCheckpoint, emitRollingCheckpoint } from './checkpointManager'
+import { ContextTokenTracker } from './tokenCounter'
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from './compactionStrategy'
-import { flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
+import { extractPlainTextContent, flushMessageBlobs, hydrateHistoryEntries, rebuildConversationHistory, repairHistoryEntries, sendAndCacheBlob } from './historyManager'
 import { buildMessages, workspaceUris } from './protocol'
 import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
@@ -33,6 +34,89 @@ const EDIT_TARGET_FIELD: Record<string, string> = {
   Write: 'contents',
   Edit: 'new_string',
   EditNotebook: 'new_string',
+}
+
+type BreakdownCategory = { id: string, label: string, estimatedTokens: number }
+
+function extractXmlSection(text: string, tag: string): string {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = text.match(new RegExp(`<${escaped}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${escaped}>`))
+  return match?.[0] ?? ''
+}
+
+function splitSubagentDefinitionsFromDescription(description: string): { description: string, subagentDefinitions: string } {
+  const marker = 'Available subagent_types and a quick description of what they do:'
+  const start = description.indexOf(marker)
+  if (start < 0)
+    return { description, subagentDefinitions: '' }
+
+  const availableModelsStart = description.indexOf('\n\nAvailable models:', start)
+  const nextInstructionsStart = description.indexOf('\n\nWhen speaking to the USER', start)
+  const endCandidates = [availableModelsStart, nextInstructionsStart].filter(index => index > start)
+  const end = endCandidates.length > 0 ? Math.min(...endCandidates) : description.length
+  const subagentDefinitions = description.slice(start, end).trim()
+  const cleanedDescription = `${description.slice(0, start).trimEnd()}\n\n${description.slice(end).trimStart()}`.trim()
+  return { description: cleanedDescription, subagentDefinitions }
+}
+
+function splitSubagentDefinitionsFromTools(tools: LLMTool[]): { toolSchemaText: string, subagentDefinitionsText: string } {
+  const subagentDefinitions: string[] = []
+  const sanitizedTools = tools.map(tool => {
+    if (tool.name !== 'Task' && tool.name !== 'Subagent' && !tool.description.includes('Available subagent_types'))
+      return tool
+
+    const split = splitSubagentDefinitionsFromDescription(tool.description)
+    if (!split.subagentDefinitions)
+      return tool
+
+    subagentDefinitions.push(split.subagentDefinitions)
+    return { ...tool, description: split.description }
+  })
+
+  return {
+    toolSchemaText: sanitizedTools.length > 0 ? JSON.stringify(sanitizedTools) : '',
+    subagentDefinitionsText: subagentDefinitions.join('\n\n'),
+  }
+}
+
+function buildContextBreakdown(params: {
+  systemContent: string
+  preambleUserContent: string
+  requestMessages: LLMMessage[]
+  requestTools: LLMTool[]
+}): BreakdownCategory[] {
+  const tracker = new ContextTokenTracker()
+
+  const toolsText = extractXmlSection(params.systemContent, 'tools')
+  const mcpFileSystemText = extractXmlSection(params.systemContent, 'mcp_file_system')
+  const systemPromptText = params.systemContent.replace(toolsText, '').replace(mcpFileSystemText, '')
+  const { toolSchemaText, subagentDefinitionsText } = splitSubagentDefinitionsFromTools(params.requestTools)
+  tracker.addText('system_prompt', systemPromptText)
+  tracker.addText('tools', `${toolsText}\n${toolSchemaText}`)
+
+  const rulesText = extractXmlSection(params.preambleUserContent, 'rules')
+  const availableSkillsText = extractXmlSection(params.preambleUserContent, 'available_skills')
+  const attachedSkillsText = extractXmlSection(params.preambleUserContent, 'attached_skills')
+  const mcpInstructionsText = extractXmlSection(params.preambleUserContent, 'mcp_instructions')
+  const attachedSubagentsText = extractXmlSection(params.preambleUserContent, 'attached_subagents')
+
+  tracker.addText('rules', rulesText)
+  tracker.addText('skills', `${availableSkillsText}\n${attachedSkillsText}`)
+  tracker.addText('mcp', `${mcpFileSystemText}\n${mcpInstructionsText}`)
+  tracker.addText('subagents', `${subagentDefinitionsText}\n${attachedSubagentsText}`)
+
+  const knownPreambleSections = [rulesText, availableSkillsText, attachedSkillsText, mcpInstructionsText, attachedSubagentsText].filter(Boolean)
+  let conversationText = params.preambleUserContent
+  for (const section of knownPreambleSections)
+    conversationText = conversationText.replace(section, '')
+
+  const requestConversationText = params.requestMessages
+    .map(message => extractPlainTextContent(message))
+    .filter(text => text && text !== params.systemContent && text !== params.preambleUserContent)
+    .join('\n')
+
+  tracker.addText('conversation', `${conversationText}\n${requestConversationText}`)
+  return tracker.toBreakdownCategories()
 }
 
 export function detectEditPathFromToolInput(toolName: string, rawInput: string): string {
@@ -532,6 +616,16 @@ export async function* handleConversationRun(
     hasTerminalSection: systemContent.includes('<terminal_files_information>'),
   }, '[AGENT] built prompt')
 
+  const disabledToolsForRun = new Set<string>()
+  if (!parsed.webFetchEnabled)
+    disabledToolsForRun.add('WebFetch')
+  if (!parsed.webSearchEnabled)
+    disabledToolsForRun.add('WebSearch')
+  if (!parsed.readLintsEnabled)
+    disabledToolsForRun.add('ReadLints')
+
+  let breakdownCategories: BreakdownCategory[] | undefined
+
   let blobCounter = 0
   let interactionIdCounter = 1
   let blobIds: string[] = []
@@ -654,19 +748,20 @@ export async function* handleConversationRun(
     const workspacePath = parsed.env.workspacePaths?.[0] ?? parsed.env.projectFolder
 
     try {
-      const disabledTools = new Set<string>()
-      if (!parsed.webFetchEnabled)
-        disabledTools.add('WebFetch')
-      if (!parsed.webSearchEnabled)
-        disabledTools.add('WebSearch')
-      if (!parsed.readLintsEnabled)
-        disabledTools.add('ReadLints')
-
       const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, undefined, parsed.mode, {
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
-      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledTools.size > 0 ? disabledTools : undefined)
+      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledToolsForRun.size > 0 ? disabledToolsForRun : undefined)
+
+      if (!breakdownCategories) {
+        breakdownCategories = buildContextBreakdown({
+          systemContent,
+          preambleUserContent,
+          requestMessages: preparedRequest.request.messages,
+          requestTools: preparedRequest.request.tools ?? [],
+        })
+      }
 
       logger.info({
         round,
@@ -980,6 +1075,7 @@ export async function* handleConversationRun(
         modelName: route.model,
         readPaths: [],
         gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
+        breakdownCategories,
       })
 
       // 链路①: 服务端 Agent Run 内自动 summarize
@@ -1074,5 +1170,6 @@ export async function* handleConversationRun(
     modelName: route.model,
     readPaths: [],
     gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
+    breakdownCategories,
   })
 }

@@ -1,5 +1,5 @@
 const esbuild = require("esbuild");
-const { cpSync, readdirSync } = require("fs");
+const { cpSync, mkdirSync, readdirSync } = require("fs");
 const { join } = require("path");
 
 const production = process.argv.includes("--production");
@@ -7,6 +7,34 @@ const watch = process.argv.includes("--watch");
 
 // HUB_URL —— 字符串在 js-confuser 的 StringConcealing 下不可见
 const HUB_URL = "https://ccursor.cometix.dev";
+
+function copyRuntimeAssets() {
+  mkdirSync(join(__dirname, "dist"), { recursive: true });
+
+  // Copy supermarkdown NAPI .node binaries + JS entry to dist/
+  const smDir = join(__dirname, "node_modules", "@vakra-dev", "supermarkdown");
+  try {
+    for (const f of readdirSync(smDir)) {
+      if (f.endsWith(".node") || f === "index.js" || f === "index.d.ts") {
+        cpSync(join(smDir, f), join(__dirname, "dist", f));
+      }
+    }
+    console.log("[build] supermarkdown native binaries copied to dist/");
+  } catch (e) {
+    console.warn("[build] supermarkdown copy failed:", e.message);
+  }
+
+  // Copy gpt-tokenizer o200k_base encoding to dist/ (external, not obfuscated)
+  try {
+    cpSync(
+      join(__dirname, "node_modules", "gpt-tokenizer", "dist", "o200k_base.js"),
+      join(__dirname, "dist", "o200k_base.js"),
+    );
+    console.log("[build] gpt-tokenizer o200k_base copied to dist/");
+  } catch (e) {
+    console.warn("[build] gpt-tokenizer copy failed:", e.message);
+  }
+}
 
 /**
  * @type {import('esbuild').Plugin}
@@ -61,6 +89,15 @@ async function main() {
           }));
         },
       },
+      {
+        name: "gpt-tokenizer-external",
+        setup(build) {
+          build.onResolve({ filter: /^gpt-tokenizer\/encoding\/o200k_base$/ }, () => ({
+            path: "./o200k_base.js",
+            external: true,
+          }));
+        },
+      },
       esbuildProblemMatcherPlugin,
     ],
   });
@@ -79,23 +116,12 @@ async function main() {
   });
 
   if (watch) {
+    copyRuntimeAssets();
     await Promise.all([extCtx.watch(), webCtx.watch()]);
   } else {
     await Promise.all([extCtx.rebuild(), webCtx.rebuild()]);
     await Promise.all([extCtx.dispose(), webCtx.dispose()]);
-
-    // Copy supermarkdown NAPI .node binaries + JS entry to dist/
-    const smDir = join(__dirname, "node_modules", "@vakra-dev", "supermarkdown");
-    try {
-      for (const f of readdirSync(smDir)) {
-        if (f.endsWith(".node") || f === "index.js" || f === "index.d.ts") {
-          cpSync(join(smDir, f), join(__dirname, "dist", f));
-        }
-      }
-      console.log("[build] supermarkdown native binaries copied to dist/");
-    } catch (e) {
-      console.warn("[build] supermarkdown copy failed:", e.message);
-    }
+    copyRuntimeAssets();
   }
 }
 

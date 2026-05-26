@@ -15,7 +15,7 @@ import type { LLMStreamEvent } from '../llm/types'
  * tool_use_done            → interactionUpdate.toolCallStarted
  * done                     → interactionUpdate.stepCompleted + turnEnded
  */
-import { create, toBinary } from '@bufbuild/protobuf'
+import { create } from '@bufbuild/protobuf'
 import type { GenMessage } from '@bufbuild/protobuf/codegenv2'
 import {
   AgentMode,
@@ -67,38 +67,51 @@ import { logger, streamLogger } from '../../logger'
 import { AGENT_HEARTBEAT_INTERVAL_MS, IDLE_HINT_AFTER_MS } from './constants'
 import { mapPartialToolName } from './tools'
 
-/**
- * Proto 帧毒性检测: yield 前预验证 toBinary 能否成功。
- *
- * create() 只构造 JS 对象,不做 proto binary 序列化验证 —
- * 字段类型不匹配(如 bytes 字段传了 undefined)在 create() 时不报错,
- * 要到 toBinary() 或客户端 protobuf-es 反序列化时才 crash。
- *
- * 毒帧发给客户端会导致:
- *   1. SSE stream 断开 (客户端 proto 反序列化失败)
- *   2. 但 Server 可能已 emit checkpoint (带不完整 blobIds)
- *   3. 客户端存了 corrupt checkpoint → 历史消息丢失
- *
- * 这个函数在 Server 侧预先 toBinary,失败则 throw,让上层 catch
- * 降级为 error result (对话继续,历史不 corrupt)。
- */
-export class ProtoSerializeError extends Error {
-  constructor(message: string, public readonly fieldHint?: string) {
-    super(message)
-    this.name = 'ProtoSerializeError'
-  }
+type BreakdownCategoryInit = { id: string, label: string, estimatedTokens: number }
+
+function normalizeContextWindowMaxTokens(maxTokens: number): number {
+  const safe = Math.max(1, Math.round(maxTokens))
+  if (safe >= 1_000_000)
+    return Math.max(1_000_000, Math.round(safe / 100_000) * 100_000)
+  if (safe >= 1_000)
+    return Math.max(1_000, Math.round(safe / 1_000) * 1_000)
+  return safe
 }
 
-function validateFrame(frame: AgentServerMessage): AgentServerMessage {
-  try {
-    toBinary(AgentServerMessageSchema, frame)
+function normalizeBreakdownCategories(
+  categories: BreakdownCategoryInit[] | undefined,
+  usedTokens: number,
+): BreakdownCategoryInit[] | undefined {
+  if (!categories?.length)
+    return undefined
+
+  const normalized = categories
+    .map(category => ({
+      ...category,
+      estimatedTokens: Math.max(0, Math.round(category.estimatedTokens)),
+    }))
+    .filter(category => category.estimatedTokens > 0)
+
+  if (normalized.length === 0)
+    return undefined
+
+  const categorizedTotal = normalized.reduce((sum, category) => sum + category.estimatedTokens, 0)
+  const residual = Math.max(0, Math.round(usedTokens) - categorizedTotal)
+  if (residual === 0)
+    return normalized
+
+  const conversation = normalized.find(category => category.id === 'conversation')
+  if (conversation) {
+    conversation.estimatedTokens += residual
   }
-  catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    logger.error({ error: msg }, '[STREAM] proto frame validation failed — blocking toxic frame')
-    throw new ProtoSerializeError(msg, msg)
+  else {
+    normalized.push({
+      id: 'conversation',
+      label: 'Conversation',
+      estimatedTokens: residual,
+    })
   }
-  return frame
+  return normalized
 }
 
 /**
@@ -186,7 +199,7 @@ export function userMessageAppended(params: {
   simulatedMsgReason?: SimulatedMsgReason
   simulatedMessageMetadata?: { title?: string, taskId?: string }
 }): AgentServerMessage {
-  return validateFrame(create(AgentServerMessageSchema, {
+  return create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
       value: create(InteractionUpdateSchema, {
@@ -207,7 +220,7 @@ export function userMessageAppended(params: {
         } as any,
       }),
     },
-  }))
+  })
 }
 
 /** 构造 summaryStarted 帧 */
@@ -286,7 +299,7 @@ function buildToolCallValue(toolType: string, args: Record<string, unknown> | un
   return value
 }
 
-/** 构造 partialToolCall 帧 (工具调用预告，参数未完成) — 含 proto 预验证 */
+/** 构造 partialToolCall 帧 (工具调用预告，参数未完成) */
 export function partialToolCall(callId: string, toolType: string, modelCallId: string, args?: Record<string, unknown>): AgentServerMessage {
   const frame = create(AgentServerMessageSchema, {
     message: {
@@ -303,16 +316,14 @@ export function partialToolCall(callId: string, toolType: string, modelCallId: s
       }),
     },
   })
-  if (args) {
+  if (args)
     logger.debug({ callId, toolType, args }, '[STREAM] partialToolCall with args')
-    return validateFrame(frame)
-  }
   return frame
 }
 
-/** 构造 toolCallStarted 帧 (参数完整，正式开始) — 含 proto 预验证 */
+/** 构造 toolCallStarted 帧 (参数完整，正式开始) */
 export function toolCallStarted(callId: string, toolType: string, args: Record<string, unknown>, modelCallId: string): AgentServerMessage {
-  return validateFrame(create(AgentServerMessageSchema, {
+  return create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
       value: create(InteractionUpdateSchema, {
@@ -326,12 +337,12 @@ export function toolCallStarted(callId: string, toolType: string, args: Record<s
         } as any,
       }),
     },
-  }))
+  })
 }
 
-/** 构造 toolCallCompleted 帧 — 含 proto 预验证 */
+/** 构造 toolCallCompleted 帧 */
 export function toolCallCompleted(callId: string, toolType: string, args: Record<string, unknown>, result: unknown, modelCallId: string): AgentServerMessage {
-  return validateFrame(create(AgentServerMessageSchema, {
+  return create(AgentServerMessageSchema, {
     message: {
       case: 'interactionUpdate',
       value: create(InteractionUpdateSchema, {
@@ -345,7 +356,7 @@ export function toolCallCompleted(callId: string, toolType: string, args: Record
         } as any,
       }),
     },
-  }))
+  })
 }
 
 /** 构造 toolCallDelta 帧 */
@@ -414,9 +425,9 @@ export function interactionQuery(id: number, queryCase: string, queryValue: Reco
   })
 }
 
-/** 构造 execServerMessage 帧 — 发送执行指令给 Client — 含 proto 预验证 */
+/** 构造 execServerMessage 帧 — 发送执行指令给 Client */
 export function execMessage(id: number, execId: string, argsType: string, args: Record<string, unknown>): AgentServerMessage {
-  return validateFrame(create(AgentServerMessageSchema, {
+  return create(AgentServerMessageSchema, {
     message: {
       case: 'execServerMessage',
       value: create(ExecServerMessageSchema, {
@@ -428,7 +439,7 @@ export function execMessage(id: number, execId: string, argsType: string, args: 
         } as any,
       }),
     },
-  }))
+  })
 }
 
 /** 构造 kvServerMessage.getBlobArgs 帧 — 向 Client 请求取回 blob */
@@ -508,6 +519,8 @@ export function checkpoint(
     gitRepos?: Array<{ path: string, branchName: string }>
     /** 固定 "ide", 对标官方行为. 允许覆盖但一般无需. */
     agentType?: string
+    /** Context Window breakdown 分类 token 明细 */
+    breakdownCategories?: Array<{ id: string, label: string, estimatedTokens: number }>
   },
 ): AgentServerMessage {
   const encoder = new TextEncoder()
@@ -557,12 +570,18 @@ export function checkpoint(
   // activeBranchName: 取第一个 git repo 的 branch, 官方行为是仅有一个主 branch
   const activeBranchName = extras?.gitRepos?.[0]?.branchName
 
+  const displayMaxTokens = normalizeContextWindowMaxTokens(maxTokens)
+  const breakdownCategories = normalizeBreakdownCategories(extras?.breakdownCategories, usedTokens)
+
   logger.debug({
     rpmCount: blobIds.length,
     turnsCount: extras?.turnBlobIds?.length ?? 0,
     mode,
     agentMode,
     usedTokens,
+    maxTokens,
+    displayMaxTokens,
+    breakdownCategoryCount: breakdownCategories?.length ?? 0,
     hasWorkspaceUris: (extras?.workspaceUris?.length ?? 0) > 0,
     hasReadPaths: (extras?.readPaths?.length ?? 0) > 0,
     gitRepoCount: trackedGitRepoBranches.length,
@@ -578,7 +597,19 @@ export function checkpoint(
         rootPromptMessagesJson: blobIds.map(id => encoder.encode(id)),
         turns: (extras?.turnBlobIds ?? []).map(id => encoder.encode(id)),
         pendingToolCalls,
-        tokenDetails: { usedTokens, maxTokens } as any,
+        tokenDetails: {
+          usedTokens,
+          maxTokens: displayMaxTokens,
+          ...(breakdownCategories?.length
+            ? {
+                breakdown: {
+                  totalUsedTokens: usedTokens,
+                  maxTokens: displayMaxTokens,
+                  categories: breakdownCategories,
+                },
+              }
+            : {}),
+        } as any,
         summaryArchives: (extras?.summaryArchiveIds ?? []).map(id => encoder.encode(id)),
         // 以下字段官方 checkpoint 必须携带, 否则 Cursor 客户端不回传 conversationState
         mode: agentMode,

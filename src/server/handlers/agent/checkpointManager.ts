@@ -25,6 +25,8 @@ export function emitRollingCheckpoint(params: {
     readPaths?: string[];
     /** 当前工作区的 git repo 列表, 用于 ConversationStateStructure.trackedGitRepoBranches / activeBranchName */
     gitRepos?: Array<{ path: string, branchName: string }>;
+    /** Context Window breakdown 分类 token 明细 */
+    breakdownCategories?: Array<{ id: string, label: string, estimatedTokens: number }>;
 }): AgentServerMessage {
     const rollingAssistantSummary = summarizeAssistantContent(params.lastAssistantContent);
     const rollingTokenDetails = clampTokenDetails(params.usedTokensEstimate, params.contextTokenLimit);
@@ -70,6 +72,7 @@ export function emitRollingCheckpoint(params: {
             readPaths: params.readPaths,
             modelName: params.modelName,
             gitRepos: params.gitRepos,
+            breakdownCategories: params.breakdownCategories,
         },
     );
 }
@@ -91,6 +94,8 @@ export function emitFinalCheckpoint(params: {
     readPaths?: string[];
     /** 当前工作区的 git repo 列表, 用于 ConversationStateStructure.trackedGitRepoBranches / activeBranchName */
     gitRepos?: Array<{ path: string, branchName: string }>;
+    /** Context Window breakdown 分类 token 明细 */
+    breakdownCategories?: Array<{ id: string, label: string, estimatedTokens: number }>;
 }): AgentServerMessage {
     const assistantSummary = summarizeAssistantContent(params.lastAssistantContent);
     const tokenDetails = clampTokenDetails(params.usedTokensEstimate, params.contextTokenLimit);
@@ -132,6 +137,7 @@ export function emitFinalCheckpoint(params: {
             readPaths: params.readPaths,
             modelName: params.modelName,
             gitRepos: params.gitRepos,
+            breakdownCategories: params.breakdownCategories,
         },
     );
 }
