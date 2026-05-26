@@ -52,12 +52,37 @@ function optionalNumber(value: unknown): number | undefined {
     return undefined;
 }
 
+function optionalSubagentBackgroundReason(value: unknown): number | undefined {
+    const numeric = optionalNumber(value);
+    if (numeric !== undefined) return numeric;
+    if (typeof value !== 'string') return undefined;
+
+    switch (value.trim()) {
+        case 'SUBAGENT_BACKGROUND_REASON_UNSPECIFIED':
+        case 'UNSPECIFIED':
+            return 0;
+        case 'SUBAGENT_BACKGROUND_REASON_AGENT_REQUEST':
+        case 'AGENT_REQUEST':
+            return 1;
+        case 'SUBAGENT_BACKGROUND_REASON_USER_REQUEST':
+        case 'USER_REQUEST':
+            return 2;
+        case 'SUBAGENT_BACKGROUND_REASON_QUEUED_FOLLOW_UP':
+        case 'QUEUED_FOLLOW_UP':
+            return 3;
+        default:
+            return undefined;
+    }
+}
+
 export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>): ToolResultEnvelope | null {
     const sr = obj(execClientMsg.subagentResult);
     const success = obj(sr.success);
     if (sr.success) {
         const finalMessage = str(success.finalMessage);
         const durationMs = bigintLike(success.durationMs);
+        const backgroundReason = optionalSubagentBackgroundReason(success.backgroundReason);
+        const toolCallCount = optionalNumber(success.toolCallCount);
         return {
             result: {
                 case: 'success',
@@ -69,9 +94,9 @@ export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>):
                     isBackground: bool(success.isBackground),
                     ...(durationMs !== undefined ? { durationMs } : {}),
                     ...(typeof success.resultSuffix === 'string' ? { resultSuffix: success.resultSuffix } : {}),
-                    ...(success.backgroundReason !== undefined ? { backgroundReason: success.backgroundReason } : {}),
+                    ...(backgroundReason !== undefined ? { backgroundReason } : {}),
                     ...(typeof success.transcriptPath === 'string' ? { transcriptPath: success.transcriptPath } : {}),
-                    ...(optionalNumber(success.toolCallCount) !== undefined ? { toolCallCount: optionalNumber(success.toolCallCount) } : {}),
+                    ...(toolCallCount !== undefined ? { toolCallCount } : {}),
                 },
             },
         };
@@ -93,15 +118,17 @@ export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>):
 
 export function normalizeTaskToolResult(resultCaseName: string, value: Record<string, unknown>): ToolResultEnvelope | null {
     if (resultCaseName === 'success') {
+        const backgroundReason = optionalSubagentBackgroundReason(value.backgroundReason);
+        const toolCallCount = optionalNumber(value.toolCallCount);
         return envelope('success', {
             conversationSteps: arr(value.conversationSteps).map(normalizeConversationStep),
             ...(typeof value.agentId === 'string' ? { agentId: value.agentId } : {}),
             isBackground: bool(value.isBackground),
             ...(value.durationMs !== undefined ? { durationMs: value.durationMs } : {}),
             ...(typeof value.resultSuffix === 'string' ? { resultSuffix: value.resultSuffix } : {}),
-            ...(value.backgroundReason !== undefined ? { backgroundReason: value.backgroundReason } : {}),
+            ...(backgroundReason !== undefined ? { backgroundReason } : {}),
             ...(typeof value.transcriptPath === 'string' ? { transcriptPath: value.transcriptPath } : {}),
-            ...(optionalNumber(value.toolCallCount) !== undefined ? { toolCallCount: optionalNumber(value.toolCallCount) } : {}),
+            ...(toolCallCount !== undefined ? { toolCallCount } : {}),
         });
     }
     if (resultCaseName) return envelope(resultCaseName, value);
