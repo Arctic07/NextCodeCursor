@@ -74,6 +74,8 @@ export const BYOK_REDIRECT = [
   'aiserver.v1.DashboardService/GetGlobalCommands',
   'aiserver.v1.DashboardService/GetTeamCommands',
   'aiserver.v1.DashboardService/GetSlackInstallUrl',
+  'aiserver.v1.DashboardService/ShareCanvas',
+  'aiserver.v1.DashboardService/LookupSharedCanvasByKey',
   'aiserver.v1.ServerConfigService',
   'aiserver.v1.NetworkService',
   'aiserver.v1.HealthService',
