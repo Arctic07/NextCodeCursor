@@ -162,7 +162,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   await initDatabase()
 
   const host = opts.host || '127.0.0.1'
-  const port = opts.port || 9960
+  const port = opts.port || 39831
 
   const server = Fastify({
     loggerInstance: logger,
@@ -328,7 +328,21 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   setLogPush(pushLog)
   setLogSubscriberCheck(hasLogSubscriber)
 
-  await server.listen({ port, host })
+  try {
+    await server.listen({ port, host })
+  }
+  catch (err) {
+    app = null
+    try {
+      await server.close()
+    }
+    catch { /* noop */ }
+    try {
+      await closeAgentDatabase()
+    }
+    catch { /* noop */ }
+    throw err
+  }
   app = server
   logger.info(`[SRV] listening at http://${host}:${port}`)
 
