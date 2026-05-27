@@ -1,5 +1,5 @@
-import { convert } from '@vakra-dev/supermarkdown'
 import { getFetchConfig, getSearchConfig } from '../../config/searchConfigStore'
+import { loadSupermarkdown, supermarkdownUnavailableMessage } from './supermarkdown'
 import { logger } from '../../logger'
 
 const FETCH_TIMEOUT_MS = 30_000
@@ -39,8 +39,14 @@ function isValidUrl(url: string): boolean {
 }
 
 function htmlToMarkdown(html: string, sourceUrl: string): string {
+  const loaded = loadSupermarkdown()
+  if (!loaded.ok) {
+    logger.error({ error: loaded.error.message }, '[WEB] supermarkdown native module unavailable')
+    throw new Error(supermarkdownUnavailableMessage(loaded.error))
+  }
+
   try {
-    const md = convert(html, {
+    const md = loaded.convert(html, {
       excludeSelectors: EXCLUDE_SELECTORS,
       baseUrl: sourceUrl,
       headingStyle: 'atx',
@@ -49,8 +55,9 @@ function htmlToMarkdown(html: string, sourceUrl: string): string {
     return md.slice(0, MAX_MARKDOWN_CHARS)
   }
   catch (e) {
-    logger.warn({ error: (e as Error).message }, '[WEB] supermarkdown convert failed, fallback to strip')
-    return fallbackStripHtml(html, sourceUrl)
+    const message = e instanceof Error ? e.message : String(e)
+    logger.error({ error: message }, '[WEB] supermarkdown convert failed')
+    throw new Error(`Built-in Web Fetch failed while converting HTML with supermarkdown: ${message}`)
   }
 }
 

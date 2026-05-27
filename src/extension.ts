@@ -8,11 +8,12 @@ import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
 import { ensureRoutesFile, onRoutesChange, startRoutesWatcher, stopRoutesWatcher, toggleByokMode } from './server/config/routesStore'
+import { isLikelyWindowsMsvcMissing, preflightSupermarkdown, setSupermarkdownNativeErrorNotifier } from './server/handlers/agent/supermarkdown'
 import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntime'
 import { initLogger } from './server/logger'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
-import { getState, isPortReachable, onStateChange, refreshState, setFileLogState } from './ui/state'
+import { getState, onStateChange, probeByokServer, refreshState, setFileLogState } from './ui/state'
 import { startUpdateCheck, stopUpdateCheck } from './update-check'
 
 let outputChannel: vscode.LogOutputChannel
@@ -111,6 +112,30 @@ function writeToChannel(entry: SseLogEntry) {
 /** 语义化包装: 替代直接 outputChannel.info/warn/error 调用, 走统一文件写入 */
 function log(level: SseLogLevel, msg: string): void {
   writeToChannel({ level, msg })
+}
+
+function showPortOccupiedMessage(port: number): void {
+  const text = `Cursor++ Server cannot start because port ${port} is already used by another process. Close the process using this port, then restart Cursor.`
+  log('error', `[SRV] ${text}`)
+  vscode.window.showErrorMessage(text)
+}
+
+let supermarkdownTipShown = false
+
+function setupSupermarkdownNativeTip(): void {
+  setSupermarkdownNativeErrorNotifier((error) => {
+    if (supermarkdownTipShown || !isLikelyWindowsMsvcMissing(error))
+      return
+    supermarkdownTipShown = true
+    log('warn', `[WEB] supermarkdown native module failed to load: ${error.message}`)
+    vscode.window.showWarningMessage(
+      'Cursor++ Web Fetch requires Microsoft Visual C++ Redistributable 2015-2022 x64. Install it, then restart Cursor.',
+      'Download MSVC Runtime',
+    ).then((choice) => {
+      if (choice === 'Download MSVC Runtime')
+        vscode.env.openExternal(vscode.Uri.parse('https://aka.ms/vs/17/release/vc_redist.x64.exe'))
+    })
+  })
 }
 
 /** 切换文件日志开关, 落盘到 globalState, 同步到 state (UI 显示) */
@@ -219,8 +244,8 @@ async function onSseDisconnect() {
   if (getState().server === 'local')
     return // owner 自己关闭,不需要接管
   const cfg = getServerConfig()
-  const reachable = await isPortReachable(cfg.host, cfg.port)
-  if (reachable) {
+  const probe = await probeByokServer(cfg.host, cfg.port)
+  if (probe.kind === 'byok') {
     setTimeout(() => {
       if (myWindowId !== null) {
         const c = getServerConfig()
@@ -228,8 +253,14 @@ async function onSseDisconnect() {
       }
     }, 3000)
   }
-  else {
+  else if (probe.kind === 'offline') {
     attemptTakeover()
+  }
+  else {
+    log('warn', `[SRV] port ${cfg.port} is occupied by another process (${probe.reason})`)
+    await refreshState()
+    renderStatusBar()
+    stopHeartbeat()
   }
 }
 
@@ -277,10 +308,16 @@ function startHeartbeat() {
       return
     }
     const cfg = getServerConfig()
-    const reachable = await isPortReachable(cfg.host, cfg.port)
-    if (!reachable) {
+    const probe = await probeByokServer(cfg.host, cfg.port)
+    if (probe.kind === 'offline') {
       log('info', '[HEARTBEAT] server unreachable, attempting takeover...')
       attemptTakeover()
+    }
+    else if (probe.kind === 'occupied') {
+      log('warn', `[SRV] port ${cfg.port} is occupied by another process (${probe.reason})`)
+      await refreshState()
+      renderStatusBar()
+      stopHeartbeat()
     }
   }, 3000)
 }
@@ -325,9 +362,11 @@ function renderStatusBar() {
 
   // 主 tooltip 行 — 保留旧 Server 描述形态
   const src = s.server === 'local' ? 'this instance' : 'another instance'
-  const serverTip = s.server === 'offline'
-    ? 'Cursor++ — Server offline'
-    : `Cursor++ — Server :${s.port} (${src})`
+  const serverTip = s.serverIssue === 'port_occupied'
+    ? `Cursor++ — port ${s.port} is occupied by another process`
+    : s.server === 'offline'
+      ? 'Cursor++ — Server offline'
+      : `Cursor++ — Server :${s.port} (${src})`
 
   // BYOK mode 后缀 + tooltip 行
   const byokGlyph = s.byokMode ? '◉' : '○'
@@ -365,12 +404,34 @@ async function toggleServer() {
   await refreshState()
 }
 
+async function waitForRemoteByokServer(host: string, port: number, attempts = 8): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    const probe = await probeByokServer(host, port)
+    if (probe.kind === 'byok')
+      return true
+    if (probe.kind === 'offline')
+      return false
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  return false
+}
+
 async function doStartServer() {
   const cfg = getServerConfig()
 
+  await refreshState()
   const s = getState()
-  if (s.server !== 'offline') {
-    log('warn', `[SRV] port ${cfg.port} already in use`)
+  if (s.server === 'local') {
+    log('warn', '[SRV] server already running in this instance')
+    return
+  }
+  if (s.server === 'remote') {
+    log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+    startHeartbeat()
+    return
+  }
+  if (s.serverIssue === 'port_occupied') {
+    showPortOccupiedMessage(cfg.port)
     return
   }
 
@@ -384,9 +445,23 @@ async function doStartServer() {
   }
   catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('EADDRINUSE')) {
-      log('info', `[SRV] port ${cfg.port} claimed by another instance, running as remote`)
-      startHeartbeat()
+    const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: unknown }).code) : ''
+    if (code === 'EADDRINUSE' || msg.includes('EADDRINUSE')) {
+      if (await waitForRemoteByokServer(cfg.host, cfg.port)) {
+        log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+        await refreshState()
+        renderStatusBar()
+        startHeartbeat()
+      }
+      else {
+        await refreshState()
+        if (getState().server === 'remote') {
+          log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+          startHeartbeat()
+          return
+        }
+        showPortOccupiedMessage(cfg.port)
+      }
     }
     else {
       log('error', `[SRV] failed to start: ${msg}`)
@@ -400,6 +475,8 @@ async function doStartServer() {
 export async function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Cursor++', { log: true })
   initLogger((level, msg) => writeToChannel({ level, msg }))
+  setupSupermarkdownNativeTip()
+  preflightSupermarkdown()
   log('info', 'Cursor++ activating...')
 
   // 状态栏 (BYOK Mode 切换按钮)
