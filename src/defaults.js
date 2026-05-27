@@ -15,7 +15,7 @@ export const PROVIDERS_FILE_NAME = 'providers.json';
 export const DB_FILE_NAME = 'cursor.db';
 
 export const DEFAULT_HOST = '127.0.0.1';
-export const DEFAULT_PORT = 9960;
+export const DEFAULT_PORT = 39831;
 export const DEFAULT_COLLECTOR_PORT = 14800;
 
 /**
