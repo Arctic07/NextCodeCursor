@@ -17,8 +17,12 @@ import { getWebTools } from '../server/config/searchConfigStore'
 
 export type ServerState = 'local' | 'remote' | 'offline'
 
+export type ServerIssue = 'port_occupied' | null
+
 export interface AppState {
   server: ServerState
+  serverIssue: ServerIssue
+  serverIssueDetail: string
   host: string
   port: number
   byokMode: ByokMode
@@ -34,8 +38,10 @@ export const onStateChange = emitter.event
 
 let current: AppState = {
   server: 'offline',
+  serverIssue: null,
+  serverIssueDetail: '',
   host: '127.0.0.1',
-  port: 9960,
+  port: 39831,
   byokMode: 1,
   version: EXTENSION_VERSION,
   providers: [],
@@ -74,20 +80,60 @@ export function isPortReachable(host: string, port: number): Promise<boolean> {
   })
 }
 
+export type ServerProbeResult
+  = | { kind: 'byok' }
+    | { kind: 'offline' }
+    | { kind: 'occupied', reason: string }
+
+export async function probeByokServer(host: string, port: number): Promise<ServerProbeResult> {
+  const reachable = await isPortReachable(host, port)
+  if (!reachable)
+    return { kind: 'offline' }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 500)
+  try {
+    const response = await fetch(`http://${host}:${port}/health`, { signal: controller.signal })
+    const data = await response.json().catch(() => null) as any
+    if (response.ok && data?.ok === true && data?.mode === 'byok')
+      return { kind: 'byok' }
+    return { kind: 'occupied', reason: `unexpected /health response: HTTP ${response.status}` }
+  }
+  catch (err) {
+    return { kind: 'occupied', reason: err instanceof Error ? err.message : String(err) }
+  }
+  finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function refreshState(_secrets?: vscode.SecretStorage): Promise<AppState> {
   const cfg = getServerConfig()
 
   let server: ServerState = 'offline'
-  if (isServerRunning())
+  let serverIssue: ServerIssue = null
+  let serverIssueDetail = ''
+  if (isServerRunning()) {
     server = 'local'
-  else if (await isPortReachable(cfg.host, cfg.port))
-    server = 'remote'
+  }
+  else {
+    const probe = await probeByokServer(cfg.host, cfg.port)
+    if (probe.kind === 'byok') {
+      server = 'remote'
+    }
+    else if (probe.kind === 'occupied') {
+      serverIssue = 'port_occupied'
+      serverIssueDetail = probe.reason
+    }
+  }
 
   const byokMode = getByokMode()
   const providers = loadProviders().providers
 
   current = {
     server,
+    serverIssue,
+    serverIssueDetail,
     host: cfg.host,
     port: cfg.port,
     byokMode,

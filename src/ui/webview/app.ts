@@ -175,6 +175,8 @@ export function initApp(Alpine: AlpineType) {
         return `Running on :${s.port} (this instance)`
       if (s.server === 'remote')
         return `Running on :${s.port} (another instance)`
+      if (s.serverIssue === 'port_occupied')
+        return `Port :${s.port} occupied by another process`
       return 'Offline'
     },
 
