@@ -27,6 +27,9 @@ import {
     PrivacyMode,
     GetUsageLimitStatusAndActiveGrantsResponse_UsageLimitPolicyStatusSchema,
 } from '../../gen/aiserver_v1_pb';
+import { exportCanvasHtml, getCanvasesDir, lookupCanvasByKey, storeCanvas } from '../../handlers/canvas/canvasStore';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export default (router: ConnectRouter) => {
     router.service(DashboardService, {
@@ -69,5 +72,29 @@ export default (router: ConnectRouter) => {
         getGlobalCommands: async () => ({}),
         getTeamCommands: async () => ({}),
         getSlackInstallUrl: async () => ({}),
+
+        shareCanvas: async (req) => {
+            const result = storeCanvas({
+                title: req.title,
+                appJs: req.appJs,
+                dataJson: req.dataJson,
+                canvasKey: req.canvasKey,
+            })
+            const html = exportCanvasHtml({
+                title: req.title,
+                appJsGzip: req.appJs,
+                dataJson: req.dataJson,
+            })
+            const safeName = (req.title || 'canvas').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'canvas'
+            const exportPath = join(getCanvasesDir(), `${safeName}.html`)
+            writeFileSync(exportPath, html)
+            return { shareId: result.shareId, shareUrl: `file://${exportPath}` }
+        },
+
+        lookupSharedCanvasByKey: async (req) => {
+            const meta = lookupCanvasByKey(req.canvasKey)
+            if (!meta) return {}
+            return { shareId: meta.shareId, shareUrl: `file://${join(meta.dir, 'export.html')}` }
+        },
     });
 };
