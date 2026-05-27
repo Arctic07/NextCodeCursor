@@ -102,7 +102,7 @@ When writing mermaid diagrams:
 
 function buildDebugReminder(parsed: ParsedRunRequest): string {
   const logPath = parsed.debugModeConfig?.logPath ?? '/tmp/debug-session.log'
-  const serverEndpoint = parsed.debugModeConfig?.serverEndpoint ?? 'http://127.0.0.1:9960'
+  const serverEndpoint = parsed.debugModeConfig?.serverEndpoint ?? 'http://127.0.0.1:39831'
   const sessionId = parsed.debugModeConfig?.sessionId ?? ''
   const hasSession = sessionId.length > 0
 

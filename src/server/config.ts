@@ -15,7 +15,7 @@ export function getServerConfig(): ServerConfig {
   const c = cfg()
   return {
     host: c.get<string>('server.host', '127.0.0.1'),
-    port: c.get<number>('server.port', 9960),
+    port: c.get<number>('server.port', 39831),
     autoStart: c.get<boolean>('server.autoStart', true),
     collectorPort: c.get<number>('collector.port', 14800),
   }

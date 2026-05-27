@@ -12,7 +12,7 @@ export const DB_FILE_NAME = 'cursor.db'
 export const KNOWLEDGE_BASE_FILE_NAME = 'knowledge-base.json'
 
 export const DEFAULT_HOST = '127.0.0.1'
-export const DEFAULT_PORT = 9960
+export const DEFAULT_PORT = 39831
 export const DEFAULT_COLLECTOR_PORT = 14800
 
 /**

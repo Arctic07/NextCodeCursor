@@ -69,7 +69,7 @@
         },
         "cursor2plus.server.port": {
           "type": "number",
-          "default": 9960,
+          "default": 39831,
           "description": "BYOK server listen port"
         },
         "cursor2plus.server.autoStart": {
