@@ -60,43 +60,6 @@ export function buildWebFetchApprovalResultFromInteractionResponse(
     return { approved: false, result: { result: { case: 'error', value: { error: 'missing approval response', url: '' } } } };
 }
 
-export function buildWebSearchResult(input: Record<string, unknown>): ToolResultEnvelope {
-    const searchTerm = str(input.searchTerm ?? input.query, 'mock query');
-    return {
-        result: {
-            case: 'success',
-            value: {
-                references: [
-                    {
-                        title: `Mock web_search result for: ${searchTerm}`,
-                        url: 'https://example.com/mock-web-search',
-                        chunk: `This is a fixed mock web_search response used for protocol validation. Search term: ${searchTerm}.`,
-                    },
-                ],
-            },
-        },
-    };
-}
-
-export function buildWebFetchResult(input: Record<string, unknown>): ToolResultEnvelope {
-    const url = str(input.url, 'https://example.com/mock-web-fetch');
-    return {
-        result: {
-            case: 'success',
-            value: {
-                url,
-                markdown: [
-                    '# Mock Web Fetch Response',
-                    '',
-                    'This is a fixed mock response used for protocol validation.',
-                    '',
-                    `Requested URL: ${url}`,
-                ].join('\n'),
-            },
-        },
-    };
-}
-
 export function normalizeInteractionToolResult(
     cursorToolType: string,
     resultCaseName: string,

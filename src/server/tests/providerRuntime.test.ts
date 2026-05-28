@@ -10,7 +10,6 @@ import { resetAgentDatabaseForTests } from '../database/sqlite'
 import { AgentServerMessageSchema } from '../gen/agent_v1_pb'
 import { cacheBlob, getCachedBlob, resetBlobCacheForTests, warmupBlobsAsync } from '../handlers/agent/blobStore'
 import { checkpoint, kvMessage, summary, summaryCompleted, summaryStarted } from '../handlers/agent/stream'
-import { buildWebSearchResult } from '../handlers/agent/toolBuilders'
 import { finalizeToolCall } from '../handlers/agent/toolLifecycle'
 import { addUsage, clampTokenDetails, computeContextUsagePercent, emptyUsageTotals, estimateContextTokens, shouldTriggerCompaction } from '../handlers/agent/usage'
 import { resolvePromptProfile } from '../handlers/llm/promptProfile'
@@ -45,7 +44,7 @@ it('provider state strategy preserves tool name on tool results for provider-spe
     toolName: 'web_search',
     callId: 'call-gemini-tool',
     startedArgs: { searchTerm: 'cursor byok', toolCallId: 'call-gemini-tool' },
-    rawToolResult: buildWebSearchResult({ searchTerm: 'cursor byok' }),
+    rawToolResult: { result: { case: 'success', value: { references: [{ title: 'web', url: 'https://example.com/x', chunk: 'cursor byok' }] } } },
     input: { searchTerm: 'cursor byok' },
     modelCallId: 'model-gemini-tool',
   })
@@ -132,7 +131,8 @@ it('checkpoint carries non-zero tokenDetails used by Cursor compaction heuristic
     throw new Error('unexpected case')
   const tokenDetails = frame.message.value.tokenDetails
   expect(tokenDetails?.usedTokens).toBe(1536)
-  expect(tokenDetails?.maxTokens).toBe(131072)
+  // maxTokens 经 normalizeContextWindowMaxTokens 规整为整齐显示值(取整到千): 131072 → 131000
+  expect(tokenDetails?.maxTokens).toBe(131000)
   expect(frame.message.value.turns.map((id: Uint8Array) => Buffer.from(id).toString('utf-8'))).toEqual(['turn-1'])
 })
 

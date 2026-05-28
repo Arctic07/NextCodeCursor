@@ -4,7 +4,6 @@ import { expect, it } from 'vitest'
 import { finalizeExecTool } from '../handlers/agent/execRuntime'
 import { finalizeInteractionTool } from '../handlers/agent/interactionRuntime'
 import { createEphemeralSession, pushSessionMessage } from '../handlers/agent/session'
-import { buildWebFetchResult, buildWebSearchResult } from '../handlers/agent/toolBuilders'
 import { finalizeToolCall } from '../handlers/agent/toolLifecycle'
 import { runToolCall } from '../handlers/agent/toolRuntime'
 import { AgentRunAbortedError } from '../handlers/agent/wait'
@@ -26,7 +25,7 @@ it('finalizeInteractionTool finalizes without session using fallback raw tool re
   const roundContext = createTestRoundContext(anthropicStateStrategy)
   const iterator = finalizeInteractionTool({
     session: null,
-    buildRawToolResult: () => buildWebFetchResult({ url: 'https://example.com/x' }),
+    buildRawToolResult: () => ({ result: { case: 'success', value: { url: 'https://example.com/x', markdown: 'ok' } } }),
     roundContext,
     messages,
     cursorToolType: 'webFetchToolCall',
@@ -683,7 +682,7 @@ it('finalizeToolCall normalizes result, appends pending tool result, and returns
     toolName: 'web_search',
     callId: 'call-1',
     startedArgs: { searchTerm: 'cursor byok', toolCallId: 'call-1' },
-    rawToolResult: buildWebSearchResult({ searchTerm: 'cursor byok' }),
+    rawToolResult: { result: { case: 'success', value: { references: [{ title: 'web', url: 'https://example.com/x', chunk: 'cursor byok' }] } } },
     input: { searchTerm: 'cursor byok' },
     modelCallId: 'model-1',
   })
@@ -691,7 +690,7 @@ it('finalizeToolCall normalizes result, appends pending tool result, and returns
   expect(finalized.toolResult.result.case).toBe('success')
   expect(roundContext.pendingToolResults.length).toBe(1)
   expect(roundContext.pendingToolResults[0]?.toolUseId).toBe('call-1')
-  expect(roundContext.pendingToolResults[0]?.content ?? '').toMatch(/mock-web-search/)
+  expect(roundContext.pendingToolResults[0]?.content ?? '').toMatch(/example\.com\/x/)
   expect(finalized.frame.message.case).toBe('interactionUpdate')
   if (finalized.frame.message.case !== 'interactionUpdate')
     throw new Error('unexpected case')

@@ -6,8 +6,6 @@ import { execMessage, partialToolCall, toolCallCompleted, toolCallStarted } from
 import {
   buildExecToolResult,
   buildToolResultText,
-  buildWebFetchResult,
-  buildWebSearchResult,
   isToolResultError,
   normalizeToolResult,
 } from '../handlers/agent/toolBuilders'
@@ -199,22 +197,6 @@ it('partialToolCall maps dynamic external tool names to valid proto tool cases',
   const frame = partialToolCall('call-1', 'mcpToolCall', 'model-1')
   const json = toJsonString(AgentServerMessageSchema, frame)
   expect(json).toMatch(/"mcpToolCall"/)
-})
-
-it('buildWebSearchResult returns Cursor-compatible success shape', () => {
-  const result = buildWebSearchResult({ searchTerm: 'cursor byok' })
-  expect(result.result.case).toBe('success')
-  const refs = result.result.value.references as Array<Record<string, unknown>>
-  expect(refs.length).toBe(1)
-  expect(refs[0]?.url).toBe('https://example.com/mock-web-search')
-  expect(String(refs[0]?.chunk)).toMatch(/cursor byok/)
-})
-
-it('buildWebFetchResult returns Cursor-compatible success shape', () => {
-  const result = buildWebFetchResult({ url: 'https://example.com/x' })
-  expect(result.result.case).toBe('success')
-  expect(result.result.value.url).toBe('https://example.com/x')
-  expect(String(result.result.value.markdown)).toMatch(/Mock Web Fetch Response/)
 })
 
 it('normalizeToolResult preserves shell failure semantics and error classification', () => {

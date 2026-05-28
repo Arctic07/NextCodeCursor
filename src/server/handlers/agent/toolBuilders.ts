@@ -46,9 +46,7 @@ export {
     buildShellToolResult,
     buildToolResultText,
     buildWebFetchApprovalResultFromInteractionResponse,
-    buildWebFetchResult,
     buildWebSearchApprovalResultFromInteractionResponse,
-    buildWebSearchResult,
     isToolResultError,
     normalizeToolResult,
 } from './toolResults';

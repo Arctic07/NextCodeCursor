@@ -9,9 +9,7 @@ import {
     buildInteractionToolResultText,
     buildLocalInteractionToolResult,
     buildWebFetchApprovalResultFromInteractionResponse,
-    buildWebFetchResult,
     buildWebSearchApprovalResultFromInteractionResponse,
-    buildWebSearchResult,
     normalizeInteractionToolResult,
 } from './toolkit/results/interactionToolResults';
 import {
@@ -46,9 +44,7 @@ export {
     buildAskQuestionResultFromInteractionResponse,
     buildShellToolResult,
     buildWebFetchApprovalResultFromInteractionResponse,
-    buildWebFetchResult,
     buildWebSearchApprovalResultFromInteractionResponse,
-    buildWebSearchResult,
 };
 
 export function buildExecToolResult(
