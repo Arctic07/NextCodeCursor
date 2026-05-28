@@ -75,6 +75,16 @@ function optionalSubagentBackgroundReason(value: unknown): number | undefined {
     }
 }
 
+/** SubagentBackgroundReason 数值 → 可读名 (gen: agent.v1.SubagentBackgroundReason)。 */
+function subagentBackgroundReasonName(reason: number): string {
+    switch (reason) {
+        case 1: return 'AGENT_REQUEST';
+        case 2: return 'USER_REQUEST';
+        case 3: return 'QUEUED_FOLLOW_UP';
+        default: return 'UNSPECIFIED';
+    }
+}
+
 export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>): ToolResultEnvelope | null {
     const sr = obj(execClientMsg.subagentResult);
     const success = obj(sr.success);
@@ -83,6 +93,10 @@ export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>):
         const durationMs = bigintLike(success.durationMs);
         const backgroundReason = optionalSubagentBackgroundReason(success.backgroundReason);
         const toolCallCount = optionalNumber(success.toolCallCount);
+        // SubagentSuccess (gen: agent.v1.SubagentSuccess) 无 isBackground 字段,
+        // 只有 background_reason(4)。原 bool(success.isBackground) 恒 false 是死代码。
+        // isBackground 应由 backgroundReason != 0 推导 —— 这才是"是否转后台"的原始语义。
+        const isBackground = backgroundReason !== undefined && backgroundReason !== 0;
         return {
             result: {
                 case: 'success',
@@ -91,7 +105,7 @@ export function buildTaskExecToolResult(execClientMsg: Record<string, unknown>):
                         ? [{ message: { case: 'assistantMessage', value: { text: finalMessage } } }]
                         : [],
                     ...(typeof success.agentId === 'string' ? { agentId: success.agentId } : {}),
-                    isBackground: bool(success.isBackground),
+                    isBackground,
                     ...(durationMs !== undefined ? { durationMs } : {}),
                     ...(typeof success.resultSuffix === 'string' ? { resultSuffix: success.resultSuffix } : {}),
                     ...(backgroundReason !== undefined ? { backgroundReason } : {}),
@@ -120,10 +134,13 @@ export function normalizeTaskToolResult(resultCaseName: string, value: Record<st
     if (resultCaseName === 'success') {
         const backgroundReason = optionalSubagentBackgroundReason(value.backgroundReason);
         const toolCallCount = optionalNumber(value.toolCallCount);
+        // isBackground 同 buildTaskExecToolResult: 由 backgroundReason 推导,
+        // 同时兼容已经显式带了 isBackground 的归一化输入(取或值)。
+        const isBackground = bool(value.isBackground) || (backgroundReason !== undefined && backgroundReason !== 0);
         return envelope('success', {
             conversationSteps: arr(value.conversationSteps).map(normalizeConversationStep),
             ...(typeof value.agentId === 'string' ? { agentId: value.agentId } : {}),
-            isBackground: bool(value.isBackground),
+            isBackground,
             ...(value.durationMs !== undefined ? { durationMs: value.durationMs } : {}),
             ...(typeof value.resultSuffix === 'string' ? { resultSuffix: value.resultSuffix } : {}),
             ...(backgroundReason !== undefined ? { backgroundReason } : {}),
@@ -146,6 +163,18 @@ export function buildTaskToolResultText(resultCaseName: string, value: Record<st
         const transcriptPath = str(value.transcriptPath).trim();
         if (resultSuffix) parts.push(resultSuffix);
         if (transcriptPath) parts.push(`[Subagent transcript: ${transcriptPath}]`);
+
+        // backgroundReason != 0 → subagent 已转后台,而非真正完成。必须明确告诉 LLM 去轮询,
+        // 否则会被误读成 "Subagent completed"。agentId 即 AwaitShell 的 task_id。
+        const backgroundReason = optionalSubagentBackgroundReason(value.backgroundReason);
+        if (backgroundReason !== undefined && backgroundReason !== 0) {
+            const agentId = typeof value.agentId === 'string' ? value.agentId : '';
+            parts.push(
+                `[Task moved to background: ${subagentBackgroundReasonName(backgroundReason)}.`
+                + (agentId ? ` Use AwaitShell with task_id="${agentId}" to poll for completion.` : ' Use AwaitShell with the agent id to poll for completion.')
+                + ']',
+            );
+        }
 
         const body = parts.join('\n\n').trim();
         if (body) return body;

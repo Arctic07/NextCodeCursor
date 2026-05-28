@@ -31,6 +31,9 @@
  *   delete     → deleteArgs / deleteResult
  *   readLints  → diagnosticsArgs / diagnosticsResult
  *   task       → subagentArgs / subagentResult
+ *   await      → 分流: shell 走 readArgs/readResult (读 {terminalsFolder}/{shellId}.txt),
+ *                subagent 走 subagentAwaitArgs/subagentAwaitResult。
+ *                分流依据是 session 后台 job 注册表的 kind (见 toolRuntime.ts awaitToolCall 分支)。
  *   mcp        → mcpArgs / mcpResult
  *   webSearch  → 无 exec 通道 (Server 端执行)
  *   webFetch   → 无 exec 通道 (Server 端执行)

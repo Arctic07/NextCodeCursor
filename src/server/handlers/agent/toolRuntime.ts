@@ -11,15 +11,14 @@ import {
     buildAskQuestionResultFromInteractionResponse,
     buildLocalToolResult,
     buildWebFetchApprovalResultFromInteractionResponse,
-    buildWebFetchResult,
     buildWebSearchApprovalResultFromInteractionResponse,
-    buildWebSearchResult,
 } from './toolResults';
 import { finalizeToolCall } from './toolLifecycle';
 import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
-import type { AgentSession } from './session';
+import { getBackgroundJob, registerBackgroundJob, type AgentSession } from './session';
 import { buildExecToolResult } from './toolResults';
-import { awaitExecResultAndClose, waitForInteractionResponseWithHeartbeat, waitForPromiseWithHeartbeat } from './wait';
+import { str } from './toolkit/results/shared';
+import { waitForInteractionResponseWithHeartbeat, waitForPromiseWithHeartbeat } from './wait';
 import { performWebFetch, performWebSearch } from './web';
 import { interactionQuery } from './stream';
 import type { ToolResultEnvelope } from './toolResults';
@@ -181,6 +180,76 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
         });
         yield finalized.frame;
         logger.info({ tool: tc.name, currentStep, hasFinalSummary: !!startedArgs.finalSummary }, '[TOOL] communicateUpdate auto-completed');
+        return;
+    }
+
+    // awaitToolCall (AwaitShell): 按后台 job 注册表分流 shell / subagent。
+    //   - shell job  : readArgs 读取 {terminalsFolder}/{shellId}.txt 终端文件 (客户端默认通道)
+    //   - subagent job: subagentAwaitArgs (agentId + timeoutMs) → SubagentAwaitResult
+    // 路由依据是 launch 时登记的 kind,不靠猜路径前缀。
+    // 核实: cursor-agent-exec(执行侧)只消费 server 下发的 exec 通道, 路由决定在 server 侧
+    //       (客户端 forceServerSideSubagent / enableAwaitForSubagents, main.unminify.js:~834450)。
+    if (cursorToolType === 'awaitToolCall' && params.session) {
+        const taskId = str(sanitizedInput.task_id ?? sanitizedInput.taskId);
+        const job = taskId ? getBackgroundJob(params.session, taskId) : undefined;
+        const blockUntilMs = typeof sanitizedInput.block_until_ms === 'number'
+            ? sanitizedInput.block_until_ms
+            : typeof sanitizedInput.blockUntilMs === 'number'
+                ? sanitizedInput.blockUntilMs
+                : 30000;
+
+        if (job?.kind === 'subagent') {
+            // subagent: 走专用 subagentAwaitArgs 通道。
+            const args = {
+                agentId: job.agentId ?? taskId,
+                timeoutMs: blockUntilMs,
+            };
+            const execId = `${tc.callId}-exec`;
+            const execMessageId = params.allocateExecMessageId();
+            yield execMessage(execMessageId, execId, 'subagentAwaitArgs', args);
+            yield* finalizeExecTool({
+                session: params.session,
+                toolName: tc.name,
+                callId: tc.callId,
+                cursorToolType,
+                execMessageId,
+                modelCallId,
+                startedArgs,
+                input: sanitizedInput,
+                roundContext: params.roundContext,
+                messages: params.messages,
+            });
+            return;
+        }
+
+        // shell job (或未登记的 task_id, 保守按 shell 终端文件处理): readArgs 读终端文件。
+        // 路径: {terminalsFolder}/{shellId}.txt。terminalsFolder 取注册表登记值或 session 兜底。
+        const terminalsFolder = job?.terminalsFolder ?? params.session.terminalsFolder;
+        const shellId = job?.shellId !== undefined ? String(job.shellId) : taskId;
+        const path = terminalsFolder && shellId
+            ? `${terminalsFolder}/${shellId}.txt`
+            : str(sanitizedInput.path ?? taskId);
+        const args: Record<string, unknown> = {
+            path,
+            toolCallId: tc.callId,
+            ...(typeof sanitizedInput.offset === 'number' ? { offset: sanitizedInput.offset } : {}),
+            ...(typeof sanitizedInput.limit === 'number' ? { limit: sanitizedInput.limit } : {}),
+        };
+        const execId = `${tc.callId}-exec`;
+        const execMessageId = params.allocateExecMessageId();
+        yield execMessage(execMessageId, execId, 'readArgs', args);
+        yield* finalizeExecTool({
+            session: params.session,
+            toolName: tc.name,
+            callId: tc.callId,
+            cursorToolType,
+            execMessageId,
+            modelCallId,
+            startedArgs,
+            input: sanitizedInput,
+            roundContext: params.roundContext,
+            messages: params.messages,
+        });
         return;
     }
 
@@ -508,6 +577,7 @@ export function finalizeTaskResult(
     execResult: Record<string, unknown> | null,
     roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>,
     messages: LLMMessage[],
+    session?: AgentSession | null,
 ): AgentServerMessage {
     if (execResult && 'execClientMessage' in execResult) {
         const ecm = execResult.execClientMessage as Record<string, unknown>;
@@ -520,6 +590,21 @@ export function finalizeTaskResult(
             toolCallCount: success?.toolCallCount,
             finalMsgLen: typeof success?.finalMessage === 'string' ? success.finalMessage.length : 0,
         }, '[TOOL] task exec result received');
+
+        // subagent 转后台 (SubagentSuccess.background_reason != 0): 登记后台 job,
+        // 供后续 AwaitShell(task_id=agentId) 走 subagentAwaitArgs 通道轮询。
+        if (session && success && typeof success.agentId === 'string') {
+            const reason = success.backgroundReason;
+            const isBg = (typeof reason === 'number' && reason !== 0)
+                || (typeof reason === 'string' && reason !== 'SUBAGENT_BACKGROUND_REASON_UNSPECIFIED' && reason !== 'UNSPECIFIED' && reason !== '0' && reason !== '');
+            if (isBg) {
+                registerBackgroundJob(session, success.agentId, {
+                    kind: 'subagent',
+                    agentId: success.agentId,
+                    ...(typeof success.transcriptPath === 'string' ? { transcriptPath: success.transcriptPath } : {}),
+                });
+            }
+        }
 
         const finalized = finalizeToolCall({
             roundContext,

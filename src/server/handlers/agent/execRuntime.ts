@@ -9,12 +9,36 @@ import {
 } from './toolResults';
 import { finalizeToolCall } from './toolLifecycle';
 import { shellToolCallStderrDelta, shellToolCallStdoutDelta } from './stream';
-import type { AgentSession } from './session';
+import { registerBackgroundJob, type AgentSession } from './session';
 import {
     waitForExecClientMessageWithHeartbeat,
     waitForExecStreamCloseWithHeartbeat,
     waitForShellExecEventWithHeartbeat,
 } from './wait';
+
+/**
+ * 归一化 ShellBackgroundReason(toJson 后可能是 enum 字符串名或数字)。
+ * 0=UNSPECIFIED, 1=TIMEOUT, 2=USER_REQUEST (gen: agent.v1.ShellBackgroundReason)。
+ */
+function normalizeShellBackgroundReason(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value !== 'string') return undefined;
+    switch (value.trim()) {
+        case 'SHELL_BACKGROUND_REASON_UNSPECIFIED':
+        case 'UNSPECIFIED':
+            return 0;
+        case 'SHELL_BACKGROUND_REASON_TIMEOUT':
+        case 'TIMEOUT':
+            return 1;
+        case 'SHELL_BACKGROUND_REASON_USER_REQUEST':
+        case 'USER_REQUEST':
+            return 2;
+        default: {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : undefined;
+        }
+    }
+}
 
 export async function* finalizeExecTool(params: {
     session: AgentSession;
@@ -39,6 +63,7 @@ export async function* finalizeExecTool(params: {
         let localExecTime = 0;
         let rejected: { reason?: string } | undefined;
         let permissionDenied: { command?: string; workingDirectory?: string; error?: string } | undefined;
+        let backgrounded: { shellId: number; pid?: number; msToWait?: number; reason?: number; terminalsFolder?: string } | undefined;
         let done = false;
 
         const processShellMessage = function* (shellMsg: Record<string, unknown>): Generator<AgentServerMessage, void, void> {
@@ -67,6 +92,34 @@ export async function* finalizeExecTool(params: {
                 if (ss?.rejected) {
                     const rejectedPayload = ss.rejected as Record<string, unknown>;
                     rejected = { reason: typeof rejectedPayload.reason === 'string' ? rejectedPayload.reason : undefined };
+                    done = true;
+                }
+                if (ss?.backgrounded) {
+                    // 命令转后台 (ShellStreamBackgrounded)。执行侧主导转后台,server 是接收方:
+                    // 提取 shellId/pid/msToWait/reason, 登记后台 job 供后续 AwaitShell 分流,
+                    // 并据此构造"已转后台"结果(而非误把片段输出当 exitCode=0 成功)。
+                    const bg = ss.backgrounded as Record<string, unknown>;
+                    const shellId = typeof bg.shellId === 'number' ? bg.shellId : Number(bg.shellId);
+                    const pid = typeof bg.pid === 'number' ? bg.pid : undefined;
+                    const msToWait = typeof bg.msToWait === 'number' ? bg.msToWait : undefined;
+                    const reason = normalizeShellBackgroundReason(bg.reason);
+                    const terminalsFolder = params.session.terminalsFolder;
+                    backgrounded = {
+                        shellId,
+                        ...(pid !== undefined ? { pid } : {}),
+                        ...(msToWait !== undefined ? { msToWait } : {}),
+                        ...(reason !== undefined ? { reason } : {}),
+                        ...(terminalsFolder ? { terminalsFolder } : {}),
+                    };
+                    if (Number.isFinite(shellId)) {
+                        registerBackgroundJob(params.session, String(shellId), {
+                            kind: 'shell',
+                            shellId,
+                            terminalsFolder,
+                            command: typeof bg.command === 'string' ? bg.command : (typeof params.input.command === 'string' ? params.input.command : undefined),
+                        });
+                    }
+                    logger.info({ tool: params.toolName, callId: params.callId, shellId, reason, msToWait }, '[TOOL] shell moved to background');
                     done = true;
                 }
                 if (ss?.exit) {
@@ -115,6 +168,7 @@ export async function* finalizeExecTool(params: {
                 localExecutionTimeMs: localExecTime,
                 rejected,
                 permissionDenied,
+                backgrounded,
             }),
             input: params.input,
             modelCallId: params.modelCallId,

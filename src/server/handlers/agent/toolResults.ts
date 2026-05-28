@@ -25,6 +25,11 @@ import {
     normalizeSearchToolResult,
 } from './toolkit/results/searchToolResults';
 import {
+    buildAwaitExecToolResult,
+    buildAwaitToolResultText,
+    normalizeAwaitToolResult,
+} from './toolkit/results/awaitToolResults';
+import {
     buildShellToolResult,
     buildShellToolResultText,
     normalizeShellToolResult,
@@ -54,6 +59,7 @@ export function buildExecToolResult(
     try {
         return buildSearchExecToolResult(cursorToolType, execClientMsg, input)
             ?? buildFileExecToolResult(cursorToolType, execClientMsg, input)
+            ?? buildAwaitExecToolResult(cursorToolType, execClientMsg, input)
             ?? (cursorToolType === 'taskToolCall' ? buildTaskExecToolResult(execClientMsg) : null)
             ?? buildMcpExecToolResult(cursorToolType, execClientMsg, input)
             ?? { result: { case: 'error', value: { message: `unsupported exec tool ${cursorToolType}` } } };
@@ -79,6 +85,7 @@ export function normalizeToolResult(
     return normalizeSearchToolResult(cursorToolType, resultCaseName, value, input)
         ?? normalizeInteractionToolResult(cursorToolType, resultCaseName, value, input)
         ?? normalizeFileToolResult(cursorToolType, resultCaseName, value, input)
+        ?? normalizeAwaitToolResult(cursorToolType, resultCaseName, value)
         ?? (cursorToolType === 'taskToolCall' ? normalizeTaskToolResult(resultCaseName, value) : null)
         ?? (cursorToolType === 'communicateUpdateToolCall' ? { result: { case: resultCaseName || 'success', value } } : null)
         ?? normalizeMcpToolResult(cursorToolType, resultCaseName, value, input)
@@ -110,6 +117,7 @@ export function buildToolResultText(
     const value = obj(result.value);
 
     return (cursorToolType === 'shellToolCall' ? buildShellToolResultText(resultCaseName, value, input) : null)
+        ?? buildAwaitToolResultText(cursorToolType, resultCaseName, value)
         ?? buildSearchToolResultText(cursorToolType, resultCaseName, value, input)
         ?? buildFileToolResultText(cursorToolType, resultCaseName, value, input)
         ?? buildInteractionToolResultText(cursorToolType, toolResult, resultCaseName, value)

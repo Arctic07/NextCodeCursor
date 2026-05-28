@@ -609,6 +609,11 @@ export async function* handleConversationRun(
     hasTerminalSection: systemContent.includes('<terminal_files_information>'),
   }, '[AGENT] built prompt')
 
+  // 后台 job 注册表需要 env.terminalsFolder 构造后台 shell 的终端文件路径
+  // ({terminalsFolder}/{shellId}.txt)。在 run 起始把它挂到 session,供 AwaitShell 分流时取用。
+  if (session && parsed.env.terminalsFolder)
+    session.terminalsFolder = parsed.env.terminalsFolder
+
   const disabledToolsForRun = new Set<string>()
   if (!parsed.webFetchEnabled)
     disabledToolsForRun.add('WebFetch')
@@ -994,7 +999,7 @@ export async function* handleConversationRun(
         )
         const results = yield* waitForPromiseWithHeartbeat(Promise.all(resultPromises))
         for (let i = 0; i < taskLaunches.length; i++) {
-          const frame = finalizeTaskResult(taskLaunches[i], results[i], roundContext, messages)
+          const frame = finalizeTaskResult(taskLaunches[i], results[i], roundContext, messages, session)
           const completedToolCall = extractCompletedToolCall(frame)
           if (activeTurn && completedToolCall) {
             const toolBlob = activeTurn.addCompletedToolCall(completedToolCall)

@@ -12,6 +12,32 @@ import { fromBinary, toJson } from '@bufbuild/protobuf';
 import { AgentClientMessageSchema } from '../../gen/agent_v1_pb';
 import { logger } from '../../logger';
 
+/**
+ * 后台 job 登记项。
+ *
+ * Shell 转后台(ShellStreamBackgrounded)与 Subagent 转后台(SubagentSuccess.backgroundReason)后,
+ * LLM 会在后续轮次调用 AwaitShell(task_id=...) 轮询其状态。AwaitShell 需要据 task_id 区分:
+ *   - shell  : 走 readArgs 通道, 读取 {terminalsFolder}/{shellId}.txt 终端文件
+ *   - subagent: 走 subagentAwaitArgs 通道 (agentId)
+ * 因此必须在转后台时按 task_id 登记 kind + 路由所需信息。
+ *
+ * 作用域选择: 后台 shell 的 AwaitShell 轮询发生在 **同一个 agent run** 的后续工具调用里,
+ * 与转后台事件共享同一 requestId/session(handleConversationRun 单次调用贯穿全部 round)。
+ * 故注册表挂在 session 上, 而非全局 Map。
+ */
+export interface BackgroundJob {
+    kind: 'shell' | 'subagent';
+    /** shell job: 执行侧回报的 shell_id (AwaitShell 的 task_id) */
+    shellId?: number;
+    /** subagent job: SubagentSuccess.agentId (AwaitShell 的 task_id) */
+    agentId?: string;
+    /** shell job: 终端输出文件所在目录 (env.terminalsFolder), 文件为 {terminalsFolder}/{shellId}.txt */
+    terminalsFolder?: string;
+    /** subagent job: transcript 文件路径 (SubagentSuccess.transcriptPath), 供日志/降级使用 */
+    transcriptPath?: string;
+    command?: string;
+}
+
 export interface AgentSession {
     requestId: string;
     messages: Array<Record<string, unknown>>;
@@ -19,10 +45,28 @@ export interface AgentSession {
     notify: (() => void) | null;
     listeners: Set<() => void>;
     closed: boolean;
+    /**
+     * 后台 job 注册表 (key = task_id 字符串形式: shell 用 shellId, subagent 用 agentId)。
+     * 转后台时登记, AwaitShell 据此分流 readArgs / subagentAwaitArgs。
+     */
+    backgroundJobs: Map<string, BackgroundJob>;
+    /** env.terminalsFolder — 用于构造后台 shell 的终端文件路径 {terminalsFolder}/{shellId}.txt */
+    terminalsFolder?: string;
 }
 
 export function createEphemeralSession(requestId: string): AgentSession {
-    return { requestId, messages: [], notify: null, listeners: new Set(), closed: false };
+    return { requestId, messages: [], notify: null, listeners: new Set(), closed: false, backgroundJobs: new Map() };
+}
+
+/** 登记一个后台 job, 供后续 AwaitShell 分流。key = task_id 字符串形式。 */
+export function registerBackgroundJob(session: AgentSession, taskId: string, job: BackgroundJob): void {
+    session.backgroundJobs.set(taskId, job);
+    logger.info({ requestId: session.requestId, taskId, kind: job.kind }, '[SESSION] background job registered');
+}
+
+/** 按 task_id 查找已登记的后台 job。 */
+export function getBackgroundJob(session: AgentSession, taskId: string): BackgroundJob | undefined {
+    return session.backgroundJobs.get(taskId);
 }
 
 function notifyAll(session: AgentSession): void {
@@ -45,7 +89,7 @@ const sessions = new Map<string, AgentSession>();
 export function getOrCreateSession(requestId: string): AgentSession {
     let session = sessions.get(requestId);
     if (!session) {
-        session = { requestId, messages: [], notify: null, listeners: new Set(), closed: false };
+        session = { requestId, messages: [], notify: null, listeners: new Set(), closed: false, backgroundJobs: new Map() };
         sessions.set(requestId, session);
         logger.debug({ requestId }, '[SESSION] created');
     }

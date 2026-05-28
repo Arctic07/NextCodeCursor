@@ -104,7 +104,11 @@ export const AwaitTool: ToolRegistryEntry = {
     canonicalName: 'AwaitShell',
     aliases: ['AwaitShell', 'Await'],
     cursorToolType: 'awaitToolCall',
-    // 官方: Await 通过 readArgs exec 读取终端输出文件
+    // 官方: Await 默认通过 readArgs exec 读取终端输出文件;subagent 则走 subagentAwaitArgs。
+    // 真实分流逻辑在 toolRuntime.ts 的 awaitToolCall 专用分支(据 session 后台 job 注册表的 kind):
+    //   - shell  : readArgs, path = {terminalsFolder}/{shellId}.txt
+    //   - subagent: subagentAwaitArgs (agentId + timeoutMs)
+    // 这里 execArgsType 仅作 fallback;buildExecArgs 在被专用分支接管时不会被调用。
     execArgsType: 'readArgs',
     llmToolByProvider: {
         anthropic: ANTHROPIC,
@@ -117,10 +121,9 @@ export const AwaitTool: ToolRegistryEntry = {
         ...(typeof input.pattern === 'string' || typeof input.regex === 'string'
             ? { regex: str(input.pattern ?? input.regex) } : {}),
     }),
-    // exec: 读取终端输出文件 terminals/{taskId}.txt
+    // exec fallback: 读取终端输出文件。正常路径下 toolRuntime 的专用分支会据注册表构造真实
+    // {terminalsFolder}/{shellId}.txt;此处仅在专用分支未命中时兜底,用 task_id 作为 path。
     buildExecArgs: (input, callId) => ({
-        // 官方样例: path 指向 .cursor/projects/.../terminals/{taskId}.txt
-        // BYOK 暂用 taskId 作为占位，实际路径由 toolRuntime 构建
         path: str(input.task_id),
         toolCallId: callId,
     }),
