@@ -19,9 +19,9 @@ it('returns empty string when path not yet in accumulated input', () => {
   expect(detectEditPathFromToolInput('ApplyPatch', '{"patch":"*** Begin Patch\\n@@"}')).toBe('')
 })
 
-it('normalizes detected edit paths for partial tool call bubbles', () => {
-  expect(normalizeDetectedEditPath('src/a.ts', '/workspace/project')).toBe('/workspace/project/src/a.ts')
-  expect(normalizeDetectedEditPath('C:relative.txt', 'C:\\repo')).toBe('C:relative.txt')
+it('preserves detected edit paths for partial tool call bubbles', () => {
+  expect(normalizeDetectedEditPath('src/a.ts')).toBe('src/a.ts')
+  expect(normalizeDetectedEditPath('C:relative.txt')).toBe('C:relative.txt')
 })
 
 it('extracts new_string and detects path in single chunk', () => {

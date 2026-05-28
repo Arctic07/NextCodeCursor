@@ -217,7 +217,6 @@ it('runToolCall edit tool uses client readResult before writeArgs', async () => 
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'claude-sonnet-4',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -237,6 +236,8 @@ it('runToolCall edit tool uses client readResult before writeArgs', async () => 
     throw new Error('expected exec frames')
   expect(readFrame.message.value.message.case).toBe('readArgs')
   expect(writeFrame.message.value.message.case).toBe('writeArgs')
+  expect((readFrame.message.value.message.value as any).path).toBe('a.txt')
+  expect((writeFrame.message.value.message.value as any).path).toBe('a.txt')
   expect((writeFrame.message.value.message.value as any).fileText).toBe('hello\nnew\n')
 
   const completed = frames.find(frame => frame.message.case === 'interactionUpdate'
@@ -281,7 +282,6 @@ it('runToolCall ApplyPatch Add File fails when client readResult says target exi
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'gpt-5',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -333,7 +333,6 @@ it('runToolCall ApplyPatch Delete File is rejected before writeArgs', async () =
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'gpt-5',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -390,7 +389,6 @@ it('runToolCall Write creates file when client readResult is fileNotFound', asyn
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'claude-sonnet-4',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -441,7 +439,6 @@ it('runToolCall Edit reports old_string not found from client content without wr
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'claude-sonnet-4',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -488,7 +485,6 @@ it('runToolCall Edit rejects multiple matches from client content without writeA
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'claude-sonnet-4',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -556,7 +552,6 @@ it('runToolCall ApplyPatch normalizes CRLF client content to LF writeArgs', asyn
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'gpt-5',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -614,7 +609,6 @@ it('runToolCall ApplyPatch Update File fails on fileNotFound without writeArgs',
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'gpt-5',
-    workspacePath: '/workspace',
     round: 0,
     session,
     roundContext,
@@ -632,7 +626,7 @@ it('runToolCall ApplyPatch Update File fails on fileNotFound without writeArgs',
   expect(roundContext.pendingToolResults[0].content).toContain('File not found')
 })
 
-it('runToolCall injects workspace workingDirectory into shell tool args when model omits it', async () => {
+it('runToolCall does not inject workspace workingDirectory into shell tool args when model omits it', async () => {
   const session = createEphemeralSession('shell-runtime')
   const messages: LLMMessage[] = []
   const roundContext = createTestRoundContext(anthropicStateStrategy)
@@ -645,7 +639,6 @@ it('runToolCall injects workspace workingDirectory into shell tool args when mod
     availableMcpTools: [],
     conversationId: 'conv-runtime',
     currentModelId: 'claude-sonnet-4',
-    workspacePath: '/workspace/project',
     round: 0,
     session,
     roundContext,
@@ -665,7 +658,7 @@ it('runToolCall injects workspace workingDirectory into shell tool args when mod
   if (started.value.message.value.message.case !== 'toolCallStarted')
     throw new Error('unexpected case')
   const startedArgs = (started.value.message.value.message.value.toolCall as any)?.tool?.value?.args
-  expect(startedArgs.workingDirectory).toBe('/workspace/project')
+  expect(startedArgs.workingDirectory).toBe('')
 
   const exec = await iterator.next()
   expect(exec.done).toBe(false)
@@ -675,7 +668,7 @@ it('runToolCall injects workspace workingDirectory into shell tool args when mod
   if (exec.value.message.case !== 'execServerMessage')
     throw new Error('unexpected case')
   const execArgs = exec.value.message.value.message.value as Record<string, unknown>
-  expect(execArgs.workingDirectory).toBe('/workspace/project')
+  expect(execArgs.workingDirectory).toBe('')
   expect(execArgs.command).toBe('mkdir tmp-test-dir')
 })
 

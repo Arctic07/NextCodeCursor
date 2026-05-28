@@ -43,15 +43,25 @@ export interface ParsedRunRequest {
   agentSkills: Array<{ fullPath: string, description: string }>
   env: {
     osVersion?: string
-    shell?: string
     workspacePaths?: string[]
-    timeZone?: string
+    shell?: string
+    sandboxEnabled?: boolean
     terminalsFolder?: string
-    agentTranscriptsFolder?: string
     agentSharedNotesFolder?: string
     agentConversationNotesFolder?: string
+    timeZone?: string
     projectFolder?: string
+    agentTranscriptsFolder?: string
+    artifactsFolder?: string
     sandboxSupported?: boolean
+    sandboxNetworkHasDefaults?: boolean
+    sandboxNetworkExplicitAllowlist?: string[]
+    secretRedactionEnabled?: boolean
+    computerUseSupported?: boolean
+    isWorkingDirHomeDir?: boolean
+    processWorkingDirectory?: string
+    smartModeClassifierAutoModeEnabled?: boolean
+    devForceNextSmartModeClassifierBlockToken?: string
   }
   /** Git 仓库信息 */
   gitRepos?: Array<{ path: string, status: string, branchName: string }>

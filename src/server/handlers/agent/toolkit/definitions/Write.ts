@@ -1,6 +1,5 @@
 import { str } from '../shared';
-import { resolveToolPath } from '../pathUtils';
-import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
+import type { ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
     name: 'Write',
@@ -83,10 +82,6 @@ Usage:
     },
 };
 
-function resolveWritePath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
-    return resolveToolPath(input.path, options?.workspacePath);
-}
-
 function normalizeTextForCursorWrite(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
@@ -101,11 +96,11 @@ export const WriteTool: ToolRegistryEntry = {
         // OpenAI 使用 ApplyPatch 而非 Write — 见 ApplyPatch.ts
         gemini: GEMINI,
     },
-    buildStartedArgs: (input, _callId, options) => ({
-        path: resolveWritePath(input, options),
+    buildStartedArgs: (input) => ({
+        path: str(input.path),
     }),
-    buildExecArgs: (input, callId, options) => {
-        const path = resolveWritePath(input, options);
+    buildExecArgs: (input, callId) => {
+        const path = str(input.path);
         const fileText = normalizeTextForCursorWrite(typeof input.contents === 'string' ? input.contents : '');
         return {
             path,
@@ -115,8 +110,8 @@ export const WriteTool: ToolRegistryEntry = {
             toolCallId: callId,
         };
     },
-    buildEditPlan: (input, _callId, options) => {
-        const path = resolveWritePath(input, options);
+    buildEditPlan: (input) => {
+        const path = str(input.path);
         const contents = normalizeTextForCursorWrite(typeof input.contents === 'string' ? input.contents : '');
         return {
             kind: 'write',

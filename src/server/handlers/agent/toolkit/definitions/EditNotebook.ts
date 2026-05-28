@@ -1,6 +1,5 @@
 import { str, num, bool } from '../shared';
-import { resolveToolPath } from '../pathUtils';
-import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
+import type { ToolRegistryEntry } from '../types';
 
 const ANTHROPIC = {
     name: 'EditNotebook',
@@ -147,10 +146,6 @@ Other requirements:
  * ipynb 格式: { cells: [{ cell_type, source: string[], ... }, ...], ... }
  * source 是行数组（每行末尾含 \n，最后一行可能不含）。
  */
-function resolveNotebookPath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
-    return resolveToolPath(input.target_notebook, options?.workspacePath);
-}
-
 export function applyNotebookEditToContent(
     rawContent: string,
     cellIdx: number,
@@ -213,12 +208,12 @@ export const EditNotebookTool: ToolRegistryEntry = {
         anthropic: ANTHROPIC,
         openai: OPENAI,
     },
-    buildStartedArgs: (input, _callId, options) => {
-        const path = resolveNotebookPath(input, options);
+    buildStartedArgs: (input) => {
+        const path = str(input.target_notebook);
         return { path, streamContent: str(input.new_string) };
     },
-    buildExecArgs: (input, callId, options) => {
-        const path = resolveNotebookPath(input, options);
+    buildExecArgs: (input, callId) => {
+        const path = str(input.target_notebook);
         return {
             path,
             streamContent: str(input.new_string),
@@ -227,8 +222,8 @@ export const EditNotebookTool: ToolRegistryEntry = {
             fileBytes: new Uint8Array(),
         };
     },
-    buildEditPlan: (input, _callId, options) => {
-        const path = resolveNotebookPath(input, options);
+    buildEditPlan: (input) => {
+        const path = str(input.target_notebook);
         return {
             kind: 'editNotebook',
             path,

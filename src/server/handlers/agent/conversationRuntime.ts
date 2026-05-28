@@ -15,7 +15,6 @@ import { extractPlainTextContent, flushMessageBlobs, hydrateHistoryEntries, rebu
 import { buildMessages, workspaceUris } from './protocol'
 import { checkpoint, editToolCallStreamDelta, heartbeat, kvMessage, partialToolCall, summary, summaryCompleted, summaryStarted, translateStream, userMessageAppended } from './stream'
 import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
-import { resolveToolPath } from './toolkit/pathUtils'
 import { finalizeTaskResult, launchTaskTool, runToolCall, type TaskLaunchContext } from './toolRuntime'
 import { awaitExecResultAndClose, waitForPromiseWithHeartbeat } from './wait'
 import { restoreBlobMessageToLLMMessage } from './transcript'
@@ -130,14 +129,8 @@ export function detectEditPathFromToolInput(toolName: string, rawInput: string):
   return ''
 }
 
-export function normalizeDetectedEditPath(rawPath: string, workspacePath?: string): string {
-  if (!rawPath) return ''
-  try {
-    return resolveToolPath(rawPath, workspacePath)
-  }
-  catch {
-    return rawPath
-  }
+export function normalizeDetectedEditPath(rawPath: string): string {
+  return rawPath || ''
 }
 
 /**
@@ -745,7 +738,6 @@ export async function* handleConversationRun(
     const roundAssistantBlocks: LLMContentBlock[] = []
     let currentThinking = ''
     let currentText = ''
-    const workspacePath = parsed.env.workspacePaths?.[0] ?? parsed.env.projectFolder
 
     try {
       const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, undefined, parsed.mode, {
@@ -815,7 +807,7 @@ export async function* handleConversationRun(
               const frames: AgentServerMessage[] = []
               if (extractor.detectedPath && !editPathSent.has(event.id)) {
                 editPathSent.add(event.id)
-                const normalizedPath = normalizeDetectedEditPath(extractor.detectedPath, workspacePath)
+                const normalizedPath = normalizeDetectedEditPath(extractor.detectedPath)
                 frames.push(partialToolCall(event.id, 'editToolCall', mcid, { path: normalizedPath }))
                 logger.debug({ callId: event.id, path: normalizedPath, rawPath: extractor.detectedPath, mcid }, '[EDIT_T] 2.partialToolCall{path}')
                 const streamDiag = editStreamDiagnostics.get(event.id)
@@ -956,7 +948,6 @@ export async function* handleConversationRun(
             conversationId: parsed.conversationId,
             currentModelId: parsed.modelId,
             subagentModelOverrides: parsed.subagentModelOverrides,
-            workspacePath,
             round,
             allocateExecMessageId: () => ++blobCounter,
           })
@@ -979,7 +970,6 @@ export async function* handleConversationRun(
           conversationId: parsed.conversationId,
           currentModelId: parsed.modelId,
           subagentModelOverrides: parsed.subagentModelOverrides,
-          workspacePath,
           round,
           session,
           roundContext,

@@ -1,7 +1,6 @@
 import { extname } from 'node:path';
 import { str } from '../shared';
-import { resolveToolPath } from '../pathUtils';
-import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types';
+import type { ToolRegistryEntry } from '../types';
 
 const DESCRIPTION = `Performs exact string replacements in files.
 
@@ -137,10 +136,6 @@ export function applyStringEditToContent(params: {
     };
 }
 
-function resolveEditPath(input: Record<string, unknown>, options?: ToolExecBuildOptions): string {
-    return resolveToolPath(input.path, options?.workspacePath);
-}
-
 export const EditTool: ToolRegistryEntry = {
     canonicalName: 'Edit',
     aliases: ['Edit'],
@@ -151,11 +146,11 @@ export const EditTool: ToolRegistryEntry = {
         // OpenAI 使用 ApplyPatch — 见 ApplyPatch.ts
         gemini: GEMINI,
     },
-    buildStartedArgs: (input, _callId, options) => {
-        return { path: resolveEditPath(input, options) };
+    buildStartedArgs: (input) => {
+        return { path: str(input.path) };
     },
-    buildExecArgs: (input, callId, options) => {
-        const path = resolveEditPath(input, options);
+    buildExecArgs: (input, callId) => {
+        const path = str(input.path);
         return {
             path,
             oldString: str(input.old_string),
@@ -164,8 +159,8 @@ export const EditTool: ToolRegistryEntry = {
             toolCallId: callId,
         };
     },
-    buildEditPlan: (input, _callId, options) => {
-        const path = resolveEditPath(input, options);
+    buildEditPlan: (input) => {
+        const path = str(input.path);
         return {
             kind: 'stringReplace',
             path,

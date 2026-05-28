@@ -494,7 +494,7 @@ export function kvMessage(id: number | undefined, blobId: string, blobData: stri
  *  - turns                  : ConversationTurnStructure blob IDs（客户端 hydrate / restore 主路径）
  *  - readPaths              : 空占位 []，未跟踪 Read 工具访问文件 (P5)
  *  - mode                   : AGENT_MODE_* enum
- *  - previousWorkspaceUris  : 当前工作区 file:// URI 列表
+ *  - previousWorkspaceUris  : 由 env.workspacePaths 合成的 file://-prefixed 兼容字符串，不是真实 workspace URI
  *  - agentType              : 固定 "ide" (对标官方实测样本, Cursor 客户端永远是 IDE agent)
  *  - trackedGitRepoBranches : 从 parsed.gitRepos 映射为 {repoPath, branchName}[]
  *  - activeBranchName       : 第一个 git repo 的 branch (官方样本表明仅取主 branch)

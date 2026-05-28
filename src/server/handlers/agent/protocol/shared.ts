@@ -58,9 +58,14 @@ export function emptyParsed(): ParsedRunRequest {
   }
 }
 
-/** parsed.env.workspacePaths → file:// URI 列表 (用于 checkpoint.previousWorkspaceUris) */
+/**
+ * requestContext.env.workspacePaths 是 fsPath 字符串，不是真实 workspace URI。
+ *
+ * Cursor checkpoint.previousWorkspaceUris 仍期望 URI-ish 值；这里仅为该兼容位
+ * 合成 file:// 前缀字符串。不要把返回值当作真实 URI，更不要用于 remote/path 语义判断。
+ */
 export function workspaceUris(parsed: ParsedRunRequest): string[] {
   return (parsed.env.workspacePaths ?? [])
     .filter(p => p.length > 0)
-    .map(p => p.startsWith('file://') ? p : `file://${p}`)
+    .map(p => `file://${p}`)
 }

@@ -5,7 +5,6 @@ import type { EditPlan } from './editPlans';
 export interface ToolExecBuildOptions {
     conversationId?: string;
     currentModelId?: string;
-    workspacePath?: string;
 }
 
 /**

@@ -59,7 +59,6 @@ export async function* runToolCall(params: {
     conversationId: string;
     currentModelId: string;
     subagentModelOverrides?: SubagentModelOverride[];
-    workspacePath?: string;
     round: number;
     session: AgentSession | null;
     roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>;
@@ -85,28 +84,17 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     //     官方 fallback 路由名通过 schema 之外的途径溜进来 (例如 LLM 在
     //     arguments 里塞了非 schema 字段)。客户端侧 SubAgent 靠这个字段决定
     //     走哪个模型, 错了就直接挂。
-    //
-    //   - shellToolCall: LLM 没指定 cwd 时补上当前 workspace 路径。
     let sanitizedInput = resolvedTool.sanitizedInput;
     if (cursorToolType === 'taskToolCall') {
         const subagentType = (sanitizedInput.subagent_type ?? sanitizedInput.subagentType ?? 'explore') as string;
         const resolvedModelId = resolveSubagentModel(subagentType, params.currentModelId, params.subagentModelOverrides);
         sanitizedInput = { ...sanitizedInput, model: resolvedModelId, modelId: resolvedModelId };
     }
-    else if (
-        cursorToolType === 'shellToolCall'
-        && typeof sanitizedInput.workingDirectory !== 'string'
-        && typeof sanitizedInput.cwd !== 'string'
-        && params.workspacePath
-    ) {
-        sanitizedInput = { ...sanitizedInput, workingDirectory: params.workspacePath };
-    }
     let startedArgs: Record<string, unknown>;
     try {
         startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
             currentModelId: params.currentModelId,
-            workspacePath: params.workspacePath,
         });
     } catch (e) {
         // server 端 buildArgs 失败（如文件读取/解析错误）→ 发送 proto error result，不发 exec
@@ -134,7 +122,6 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             plan = buildEditPlan(tc.name, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: params.currentModelId,
-                workspacePath: params.workspacePath,
             });
         } catch (e) {
             const errorMsg = e instanceof Error ? e.message : String(e);
@@ -206,7 +193,6 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: execModelId,
-                workspacePath: params.workspacePath,
             });
         } catch (e) {
             // server 端 buildExecArgs 失败 → 发送 error result
@@ -458,7 +444,6 @@ export async function* launchTaskTool(params: {
     conversationId: string;
     currentModelId: string;
     subagentModelOverrides?: SubagentModelOverride[];
-    workspacePath?: string;
     round: number;
     allocateExecMessageId: () => number;
 }): AsyncGenerator<AgentServerMessage, TaskLaunchContext | null, void> {
@@ -485,7 +470,6 @@ export async function* launchTaskTool(params: {
         startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
             currentModelId: params.currentModelId,
-            workspacePath: params.workspacePath,
         });
     }
     catch (e) {
@@ -504,7 +488,6 @@ export async function* launchTaskTool(params: {
         args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
             currentModelId: execModelId,
-            workspacePath: params.workspacePath,
         });
     }
     catch (e) {

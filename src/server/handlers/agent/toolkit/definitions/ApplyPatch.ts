@@ -1,7 +1,6 @@
 import { structuredPatch } from 'diff'
 import { str } from '../shared'
-import { resolveToolPath } from '../pathUtils'
-import type { ToolExecBuildOptions, ToolRegistryEntry } from '../types'
+import type { ToolRegistryEntry } from '../types'
 
 // ── Patch 解析器 (移植自 Codex apply-patch crate) ──
 
@@ -315,14 +314,6 @@ function applyReplacements(lines: string[], replacements: Array<[number, number,
   return result
 }
 
-export function resolveParsedPatchPaths(patch: ParsedPatch, workspacePath?: string): ParsedPatch {
-  return {
-    ...patch,
-    path: resolveToolPath(patch.path, workspacePath),
-    ...(patch.movePath ? { movePath: resolveToolPath(patch.movePath, workspacePath) } : {}),
-  }
-}
-
 export function applyPatchToContent(patch: ParsedPatch, beforeContent: string): string {
   if (patch.action === 'add')
     return normalizeTextForCursorWrite(patch.addContents ?? '')
@@ -447,14 +438,14 @@ export const ApplyPatchTool: ToolRegistryEntry = {
     // ApplyPatch 仅 OpenAI provider 使用
     openai: OPENAI,
   },
-  buildStartedArgs: (input, _callId, options) => {
+  buildStartedArgs: (input) => {
     // 官方: toolCallStarted 只发 path，不含 streamContent
     // patch 内容通过 editToolCallDelta 发送
     const patchStr = getPatchString(input)
     const parsed = parsePatch(patchStr)
     if (!parsed)
       throw new Error('Failed to parse patch: invalid format')
-    return { path: resolveParsedPatchPaths(parsed, options?.workspacePath).path }
+    return { path: parsed.path }
   },
   buildExecArgs: (input, callId, options) => {
     const plan = ApplyPatchTool.buildEditPlan?.(input, callId, options)
@@ -465,12 +456,11 @@ export const ApplyPatchTool: ToolRegistryEntry = {
       toolCallId: callId,
     }
   },
-  buildEditPlan: (input, _callId, options) => {
+  buildEditPlan: (input) => {
     const patchStr = getPatchString(input)
-    const parsedRaw = parsePatch(patchStr)
-    if (!parsedRaw)
+    const parsed = parsePatch(patchStr)
+    if (!parsed)
       throw new Error('Failed to parse patch: invalid format')
-    const parsed = resolveParsedPatchPaths(parsedRaw, options?.workspacePath)
     // streamContent = patch 格式内容（用于 editToolCallDelta）
     const normalizedPatchStr = patchStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     const patchBody = normalizedPatchStr
