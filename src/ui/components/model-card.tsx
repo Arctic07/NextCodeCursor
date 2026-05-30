@@ -252,16 +252,29 @@ export function ModelCard() {
           <div class="field">
             <label>
               {'Max Output Tokens '}
-              <span style="color:var(--vscode-errorForeground);font-weight:normal">*</span>
+              <span style="color:var(--vscode-errorForeground);font-weight:normal" x-show="!m.noMaxTokens">*</span>
             </label>
-            <input
-              type="number"
-              x-effect="if(document.activeElement !== $el) $el.value = m.maxOutputTokens ?? ''"
-              x-on:input="$store.app.updateModelNumber(p.id, m.id, 'maxOutputTokens', $event.target.value)"
-              placeholder="required"
-              title="Maximum tokens per LLM response"
-              x-bind:class="{'invalid': me?.maxOutputTokens}"
-            />
+            <div style="display:flex;align-items:center;gap:6px">
+              <input
+                type="number"
+                x-effect="if(document.activeElement !== $el) $el.value = m.noMaxTokens ? '' : (m.maxOutputTokens ?? '')"
+                x-on:input="$store.app.updateModelNumber(p.id, m.id, 'maxOutputTokens', $event.target.value)"
+                placeholder={`\${m.noMaxTokens ? 'disabled' : 'required'}`}
+                x-bind:placeholder="m.noMaxTokens ? 'disabled' : 'required'"
+                x-bind:disabled="m.noMaxTokens"
+                title="Maximum tokens per LLM response"
+                x-bind:class="{'invalid': me?.maxOutputTokens}"
+                style="flex:1"
+              />
+              <label class="check" style="white-space:nowrap;font-size:10px" title="Don't send max_output_tokens to LLM (for gateways that reject this param)">
+                <input
+                  type="checkbox"
+                  x-bind:checked="m.noMaxTokens === true"
+                  x-on:change="$store.app.updateModelField(p.id, m.id, 'noMaxTokens', $event.target.checked || undefined); if($event.target.checked) $store.app.updateModelField(p.id, m.id, 'maxOutputTokens', undefined)"
+                />
+                {' Off'}
+              </label>
+            </div>
             <div class="err" x-show="me?.maxOutputTokens" x-text="me?.maxOutputTokens"></div>
           </div>
         </div>

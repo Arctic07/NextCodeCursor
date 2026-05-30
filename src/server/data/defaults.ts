@@ -155,6 +155,11 @@ export interface ProviderModel {
   contextTokenLimit?: number
   /** 单次输出最大 token 数 — 不填默认 8192 */
   maxOutputTokens?: number
+  /**
+   * 不向 LLM 发送 max_output_tokens 参数 (仅 openai-responses) —
+   * 某些自建网关/代理不接受此参数,开启后由模型自行决定输出长度
+   */
+  noMaxTokens?: boolean
   supportsSandboxing?: boolean
   defaultOn?: boolean
   /** Fast 模式 — OpenAI: service_tier=priority / Anthropic: fast-mode beta */

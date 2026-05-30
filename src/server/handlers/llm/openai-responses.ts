@@ -60,7 +60,8 @@ export class OpenAIResponsesProvider implements LLMProvider {
       stream: true,
       store: false,
       input: encoded.items,
-      max_output_tokens: request.maxTokens ?? 8192,
+      // noMaxTokens 开启时不发 max_output_tokens,由模型自行决定输出长度
+      ...(request.maxTokens != null ? { max_output_tokens: request.maxTokens } : {}),
       ...(request.conversationId ? { prompt_cache_key: request.conversationId } : {}),
       ...(request.serviceTier ? { service_tier: request.serviceTier } : {}),
     }

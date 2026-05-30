@@ -278,12 +278,14 @@ export function initApp(Alpine: AlpineType) {
         else if (!Number.isFinite(Number(m.contextTokenLimit)) || Number(m.contextTokenLimit) <= 0 || !Number.isInteger(Number(m.contextTokenLimit))) {
           me.contextTokenLimit = 'Must be a positive integer'
         }
-        // maxOutputTokens 必填
-        if (m.maxOutputTokens === undefined || m.maxOutputTokens === null || m.maxOutputTokens === '') {
-          me.maxOutputTokens = 'Max output tokens is required'
-        }
-        else if (!Number.isFinite(Number(m.maxOutputTokens)) || Number(m.maxOutputTokens) <= 0 || !Number.isInteger(Number(m.maxOutputTokens))) {
-          me.maxOutputTokens = 'Must be a positive integer'
+        // maxOutputTokens — noMaxTokens 开启时跳过必填校验
+        if (!m.noMaxTokens) {
+          if (m.maxOutputTokens === undefined || m.maxOutputTokens === null || m.maxOutputTokens === '') {
+            me.maxOutputTokens = 'Max output tokens is required'
+          }
+          else if (!Number.isFinite(Number(m.maxOutputTokens)) || Number(m.maxOutputTokens) <= 0 || !Number.isInteger(Number(m.maxOutputTokens))) {
+            me.maxOutputTokens = 'Must be a positive integer'
+          }
         }
         for (const f of OPTIONAL_NUM_FIELDS) {
           const v = m[f]

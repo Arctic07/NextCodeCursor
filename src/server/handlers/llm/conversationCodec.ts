@@ -515,7 +515,10 @@ function toGeminiContent(msg: LLMMessage): Content {
       }
     }
     if (block.type === 'tool_use')
-      return { functionCall: { id: block.id, name: block.name, args: block.input } }
+      // Gemini SDK FunctionCall 定义含 id?(optional), 但 API 后端当前不接受此字段
+      // (传 id → 400 INVALID_ARGUMENT "Unknown name 'id' at function_call")。
+      // 仅发 name + args; 待 API 支持后可恢复 id 透传。
+      return { functionCall: { name: block.name, args: block.input } }
     return { text: '' }
   })
 

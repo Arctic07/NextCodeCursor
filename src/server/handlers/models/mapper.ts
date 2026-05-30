@@ -37,6 +37,8 @@ export interface ResolvedModel extends ModelContextMetadata {
   thinkingLevel?: ThinkingLevel
   thinkingBudgetTokens?: number
   maxOutputTokens: number
+  /** 不向 LLM 发送 max_output_tokens (仅 openai-responses) */
+  noMaxTokens?: boolean
   serviceTier?: 'priority'
   anthropicBetas?: string[]
 }
@@ -65,6 +67,7 @@ export function resolveModel(modelId: string): ResolvedModel {
     thinkingLevel: hit.model.thinkingLevel,
     thinkingBudgetTokens: hit.model.thinkingBudgetTokens,
     maxOutputTokens: hit.model.maxOutputTokens ?? 8192,
+    ...(hit.model.noMaxTokens ? { noMaxTokens: true } : {}),
     ...(hit.model.fastMode && hit.provider.type !== 'anthropic' ? { serviceTier: 'priority' as const } : {}),
     ...(hit.provider.type === 'anthropic' ? (() => {
       const betas: string[] = []

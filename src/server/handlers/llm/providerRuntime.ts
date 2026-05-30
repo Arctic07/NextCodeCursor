@@ -157,7 +157,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         maxOutputTokens: resolved.maxOutputTokens,
         contextTokenLimit: resolved.contextTokenLimit,
         prepareConversation,
-        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean, disabledTools?: Set<string>): PreparedProviderRequest {
+        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.noMaxTokens ? undefined : resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean, disabledTools?: Set<string>): PreparedProviderRequest {
             const conversation = prepareConversation(messages);
             // 客户端运行时参数覆盖静态配置 (undefined = 不覆盖, 保留 providers.json 值)
             const thinking = thinkingOverride?.thinking ?? resolved.thinking;
@@ -188,7 +188,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                             additionalInfo: { model: resolved.apiModel, budget: String(thinkingBudgetTokens) },
                         });
                     }
-                    if (thinkingBudgetTokens >= maxTokens) {
+                    if (maxTokens !== undefined && thinkingBudgetTokens >= maxTokens) {
                         throw makeByokConnectError({
                             errorCode: ErrorDetails_Error.CUSTOM,
                             title: 'Thinking budget exceeds output limit',
