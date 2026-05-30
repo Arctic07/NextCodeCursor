@@ -11,8 +11,8 @@
 import os from 'node:os'
 import type { ProviderType } from '../../data/defaults'
 
-const CLAUDE_CODE_VERSION = '2.1.120'
-const CODEX_VERSION = '0.125.0'
+const CLAUDE_CODE_VERSION = '2.1.154'
+const CODEX_VERSION = '0.133.0'
 
 function getOsToken(): string {
     const platform = os.platform()

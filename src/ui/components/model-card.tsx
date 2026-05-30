@@ -123,7 +123,7 @@ export function ModelCard() {
               thinking=false → 灰色提示
               Anthropic → Level/Budget 模式切换器,互斥
               OpenAI → Level 下拉 (thinking 开启时自动设 medium)
-              Gemini → Level 下拉 (thinking 开启时自动设 medium) */}
+              Gemini → Level/Budget 模式切换器,互斥 (Level 需 2.5+; Budget 兼容旧模型) */}
           <template x-if="!m.thinking">
             <div class="check thinking-sub-disabled">
               <span style="opacity:.35;font-size:10px">—</span>
@@ -186,15 +186,49 @@ export function ModelCard() {
             </div>
           </template>
 
-          {/* ── Gemini: Level only ── */}
+          {/* ── Gemini: 模式选择 Level ↔ Budget ──
+              Level (thinkingLevel) 需 Gemini 2.5+; Budget (thinkingBudget tokens) 兼容旧模型并可精确控制。
+              后端 gemini.ts 优先级: budget > level > auto(-1)。 */}
           <template x-if="m.thinking && p.type === 'gemini'">
-            <div class="check thinking-level-cell">
-              <CustomSelect
-                valueExpr="m.thinkingLevel || 'medium'"
-                changeExpr="$store.app.updateModelField(p.id, m.id, 'thinkingLevel', $value)"
-                options={THINKING_LEVELS_GEMINI}
-                title="thinkingLevel"
-              />
+            <div class="check thinking-mode-group">
+              <div class="thinking-mode-tabs">
+                <button
+                  class="thinking-mode-tab"
+                  x-bind:class="{'active': !!m.thinkingLevel && !m.thinkingBudgetTokens}"
+                  x-on:click="$store.app.setThinkingMode(p.id, m.id, 'level')"
+                  title="thinkingLevel (Gemini 2.5+)"
+                >
+                  Level
+                </button>
+                <button
+                  class="thinking-mode-tab"
+                  x-bind:class="{'active': !m.thinkingLevel && !!m.thinkingBudgetTokens}"
+                  x-on:click="$store.app.setThinkingMode(p.id, m.id, 'budget')"
+                  title="thinkingBudget (兼容旧模型 / 精确控制)"
+                >
+                  Budget
+                </button>
+              </div>
+              <div class="thinking-mode-value" x-show="!!m.thinkingLevel">
+                <CustomSelect
+                  valueExpr="m.thinkingLevel || ''"
+                  changeExpr="$store.app.updateModelField(p.id, m.id, 'thinkingLevel', $value || undefined)"
+                  options={THINKING_LEVELS_GEMINI}
+                  title="Gemini thinkingLevel: minimal → high"
+                />
+              </div>
+              <div class="thinking-mode-value" x-show="!m.thinkingLevel">
+                <input
+                  type="number"
+                  x-effect="if(document.activeElement !== $el) $el.value = m.thinkingBudgetTokens ?? ''"
+                  x-on:input="$store.app.updateModelNumber(p.id, m.id, 'thinkingBudgetTokens', $event.target.value)"
+                  placeholder="tokens / -1 auto"
+                  title="thinkingBudget (tokens; -1=auto, 0=off on supported models)"
+                  x-bind:class="{'invalid': me?.thinkingBudgetTokens}"
+                  style="height:20px;padding:0 4px;font-size:10px;width:80px"
+                />
+                <div class="err" x-show="me?.thinkingBudgetTokens" x-text="me?.thinkingBudgetTokens" style="font-size:9px"></div>
+              </div>
             </div>
           </template>
         </div>

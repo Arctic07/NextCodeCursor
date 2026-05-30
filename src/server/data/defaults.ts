@@ -207,7 +207,7 @@ export interface ProviderEntry {
   auth: ProviderAuth
   models: ProviderModel[]
   /**
-   * HTTP 代理 URL — 对 Anthropic / OpenAI provider 生效 (Gemini 暂不支持)。
+   * HTTP 代理 URL — 对 Anthropic / OpenAI provider 生效。
    *
    * 用途:
    *   1. 抓包调试: mitmproxy / Charles 等工具观察最终 LLM request/response
@@ -215,6 +215,10 @@ export interface ProviderEntry {
    *
    * 格式: "http://host:port" (undici ProxyAgent 仅支持 HTTP proxy)
    * 留空则不走代理。
+   *
+   * Gemini 不支持: @google/genai SDK (经核实含最新 2.7.0) 的 GoogleGenAIOptions /
+   * HttpOptions 均无 fetch/dispatcher 注入点,无法像 Anthropic/OpenAI 那样传
+   * createProxiedFetch。前端对 gemini 隐藏此字段 (provider-fields.tsx)。
    */
   proxyUrl?: string
   /**

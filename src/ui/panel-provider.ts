@@ -110,12 +110,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           const url = p.type === 'anthropic'
             ? `${base}/v1/models`
             : p.type === 'gemini'
-              ? `${base}/models?key=${encodeURIComponent(p.auth.value)}`
+              // Gemini Developer API: GET {host}/v1beta/models (key 走 x-goog-api-key header)
+              ? `${base}/v1beta/models`
               : `${base}/models`
           try {
             const headers: Record<string, string> = {}
             if (p.type === 'gemini') {
-              // Gemini 用 ?key= query param，不需要 header
+              headers['x-goog-api-key'] = p.auth.value
+              headers['x-goog-api-client'] = 'google-genai-sdk/2.7.0'
             }
             else {
               headers.Authorization = `Bearer ${p.auth.value}`
@@ -137,10 +139,13 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               break
             }
             const json = await resp.json() as any
-            const models = (json.data || json.models || []).map((m: any) => ({
-              id: m.id || m.model || '',
+            const raw = json.data || json.models || []
+            const models = raw.map((m: any) => ({
+              // OpenAI: m.id; Anthropic: m.id; Gemini: m.name (e.g. "models/gemini-2.5-flash")
+              id: m.id || m.name || m.model || '',
               created: m.created || 0,
               ownedBy: m.owned_by || '',
+              displayName: m.displayName || '',
             })).filter((m: any) => m.id)
             models.sort((a: any, b: any) => (b.created || 0) - (a.created || 0))
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models })

@@ -11,7 +11,7 @@
   ],
   "extensionDependencies": [],
   "engines": {
-    "vscode": "^1.98.0"
+    "vscode": "^1.100.0"
   },
   "activationEvents": [
     "*"
@@ -117,38 +117,38 @@
     "vsix:obf": "pnpm run package && node obfuscate.js && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --allow-star-activation"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.91.1",
-    "@bufbuild/protobuf": "^2.11.0",
+    "@anthropic-ai/sdk": "^0.100.1",
+    "@bufbuild/protobuf": "^2.12.0",
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-fastify": "^2.1.1",
     "@connectrpc/connect-node": "^2.1.1",
     "@fastify/cors": "^11.2.0",
-    "@google/genai": "^1.49.0",
+    "@google/genai": "^2.7.0",
     "@vakra-dev/supermarkdown": "^0.0.6",
     "acorn": "^8.14.0",
     "acorn-walk": "^8.3.4",
     "diff": "^9.0.0",
-    "fastify": "^5.8.2",
+    "fastify": "^5.8.5",
     "fuse.js": "^7.3.0",
     "gpt-tokenizer": "^3.4.0",
-    "hono": "^4.12.15",
-    "openai": "^6.34.0",
+    "hono": "^4.12.23",
+    "openai": "^6.39.1",
     "pino": "^10.3.1",
-    "undici": "^8.0.2",
-    "ws": "^8.20.0"
+    "undici": "^8.3.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
-    "@antfu/eslint-config": "^8.1.1",
+    "@antfu/eslint-config": "^9.0.0",
     "@types/alpinejs": "^3.13.11",
     "@types/node": "22.x",
-    "@types/vscode": "^1.98.0",
+    "@types/vscode": "^1.100.0",
     "@types/ws": "^8.18.0",
-    "@vscode/vsce": "^3.7.1",
-    "alpinejs": "^3.15.11",
+    "@vscode/vsce": "^3.9.1",
+    "alpinejs": "^3.15.12",
     "esbuild": "^0.28.0",
-    "eslint": "^10.2.0",
+    "eslint": "^10.4.0",
     "npm-run-all": "^4.1.5",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.4"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
   }
 }
