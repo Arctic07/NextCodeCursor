@@ -448,11 +448,30 @@ export function encodeGeminiRequestMessages(messages: LLMMessage[]): {
   contents: Content[]
 } {
   const systemMessage = messages.find(m => m.role === 'system')
+  const rawContents = messages
+    .filter(m => m.role !== 'system')
+    .map(m => toGeminiContent(m))
+
+  // Gemini 要求: model turn 含 N 个 functionCall → 紧接的 user turn 必须含恰好 N 个 functionResponse。
+  // BYOK 上游(normalizeSemanticTurns)把多 tool_results 拆成独立 LLMMessage(Anthropic/OpenAI 需要),
+  // 但 Gemini 需要合并——相邻的 role:user + 全 functionResponse 的 Content 合为一个。
+  const contents: Content[] = []
+  for (const c of rawContents) {
+    const prev = contents[contents.length - 1]
+    const cParts = c.parts ?? []
+    const prevParts = prev?.parts ?? []
+    const isAllFuncResp = c.role === 'user' && cParts.length > 0 && cParts.every(p => 'functionResponse' in p)
+    const prevIsAllFuncResp = prev?.role === 'user' && prevParts.length > 0 && prevParts.every(p => 'functionResponse' in p)
+    if (isAllFuncResp && prevIsAllFuncResp && prev) {
+      prev.parts = [...prevParts, ...cParts]
+    } else {
+      contents.push(c)
+    }
+  }
+
   return {
     systemInstruction: systemMessage ? collapseTextContent(systemMessage.content) : undefined,
-    contents: messages
-      .filter(m => m.role !== 'system')
-      .map(m => toGeminiContent(m)),
+    contents,
   }
 }
 

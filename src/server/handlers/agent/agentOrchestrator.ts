@@ -64,8 +64,9 @@ export async function* handleRunRequest(
             return;
         }
 
-        if (!parsed.userText && !parsed.isResume && !parsed.isExecutePlan && !parsed.isBackgroundTaskCompletion) {
-            logger.warn({ keys: Object.keys(msg) }, '[AGENT] runRequest without userText, resume, executePlan, summarizeAction, or backgroundTaskCompletionAction');
+        const hasUserContent = parsed.userText || parsed.selectedImages.length > 0
+        if (!hasUserContent && !parsed.isResume && !parsed.isExecutePlan && !parsed.isBackgroundTaskCompletion) {
+            logger.warn({ keys: Object.keys(msg) }, '[AGENT] runRequest without userText/images, resume, executePlan, summarizeAction, or backgroundTaskCompletionAction');
             return;
         }
 
