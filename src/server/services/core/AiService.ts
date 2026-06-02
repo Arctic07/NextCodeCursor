@@ -39,6 +39,7 @@ import {
   updateKnowledgeItem,
 } from '../../config/knowledgeBaseStore'
 import { buildByokAvailableModels } from '../../handlers/models/byokModelBuilder'
+import { flattenModels } from '../../config/providersStore'
 import { logger } from '../../logger'
 
 /**
@@ -86,7 +87,21 @@ export default (router: ConnectRouter) => {
 
     availableModels: handleAvailableModels,
 
-    getDefaultModel: async () => ({}),
+    // GetDefaultModel — 从 providers.json 推送 BYOK 默认模型到 Composer + Cmd+K
+    // 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
+    // 返回空 {} = 不推送(客户端保留上次选择)
+    getDefaultModel: async () => {
+      const all = flattenModels().filter(x => x.model.defaultOn !== false)
+      const first = all[0]
+      if (!first) return {}
+      const thinkingModel = all.find(x => x.model.thinking)
+      return {
+        model: first.model.id,
+        thinkingModel: thinkingModel?.model.id ?? '',
+        maxMode: false,
+        nextDefaultSetDate: String(Date.now()),
+      }
+    },
     getDefaultModelNudgeData: async () => ({ nudgeDate: '0' }),
     cppConfig: async () => ({
       isOn: true,

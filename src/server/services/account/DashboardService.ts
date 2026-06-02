@@ -69,6 +69,16 @@ export default (router: ConnectRouter) => {
         getManagedSkills: async () => ({}),
         getTeamAdminSettingsOrEmptyIfNotInTeam: async () => ({}),
         getTeamReposOrEmptyIfNotInTeam: async () => ({}),
+        // 3.6 新增: 不带 OrEmpty 后缀 — 非 team 用户打官方返回 unauthenticated 重试风暴
+        getTeamAdminSettings: async () => ({}),
+        getTeamBackgroundAgentSettings: async () => ({}),
+        getTeamRepos: async () => ({}),
+        // GetMe — 合成 BYOK 身份 (无 teamId = 非 team 用户,不触发 team 相关逻辑)
+        getMe: async () => ({
+            authId: 'byok-local',
+            userId: 1,
+            isEnterpriseUser: false,
+        }),
         getGlobalCommands: async () => ({}),
         getTeamCommands: async () => ({}),
         getSlackInstallUrl: async () => ({}),
