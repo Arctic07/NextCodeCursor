@@ -68,7 +68,7 @@ export class GeminiProvider implements LLMProvider {
 
         if (request.thinking) {
             // 优先级: 精确 budget > level > 自动 (-1)
-            const tc: ThinkingConfig = {};
+            const tc: ThinkingConfig = { includeThoughts: true };
             if (request.thinkingBudgetTokens !== undefined) {
                 tc.thinkingBudget = request.thinkingBudgetTokens;
             }

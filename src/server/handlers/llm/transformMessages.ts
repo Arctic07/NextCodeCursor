@@ -225,8 +225,8 @@ function createSyntheticToolResult(toolCallId: string, toolName: string): LLMMes
     role: 'tool',
     toolCallId,
     toolName,
-    content: 'No result provided (cross-provider handoff)',
-    isError: true,
+    content: 'Tool call was interrupted before completion. Do not retry — continue with the conversation.',
+    isError: false,
   }
 }
 
