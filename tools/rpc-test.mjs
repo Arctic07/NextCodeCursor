@@ -27,11 +27,21 @@ import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { ProxyAgent, EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
 
 // ── Auth (与 server/src/extract-agent-tools.ts 同源) ──
 
-// TOKEN: 环境变量 CURSOR_AUTH_TOKEN 或直接粘贴 (格式: "Bearer eyJ...")
-const TOKEN = process.env.CURSOR_AUTH_TOKEN || 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJnb29nbGUtb2F1dGgyfHVzZXJfMDFKVE02QTVCOEdHU0ZKS0o2MDUzVE44RDUiLCJ0aW1lIjoiMTc3NTg4NDgzNiIsInJhbmRvbW5lc3MiOiI4NmFjOWI5Zi1lN2EwLTRiOTMiLCJleHAiOjE3ODEwNjg4MzYsImlzcyI6Imh0dHBzOi8vYXV0aGVudGljYXRpb24uY3Vyc29yLnNoIiwic2NvcGUiOiJvcGVuaWQgcHJvZmlsZSBlbWFpbCBvZmZsaW5lX2FjY2VzcyIsImF1ZCI6Imh0dHBzOi8vY3Vyc29yLmNvbSIsInR5cGUiOiJzZXNzaW9uIn0.XQDevxFfHuNGrbQhchMDy8YogHSjNql71RGvVxmB59M';
+// TOKEN: 环境变量 CURSOR_AUTH_TOKEN,或自动从 state.vscdb 读取
+function getAccessToken() {
+  if (process.env.CURSOR_AUTH_TOKEN) return process.env.CURSOR_AUTH_TOKEN;
+  const dbPath = join(homedir(), 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
+  try {
+    const token = execSync(`sqlite3 "${dbPath}" "SELECT value FROM ItemTable WHERE key='cursorAuth/accessToken'"`, { encoding: 'utf-8' }).trim();
+    if (token) return `Bearer ${token}`;
+  } catch {}
+  return '';
+}
+const TOKEN = getAccessToken();
 
 function getMachineId() {
   const dbPath = join(homedir(), 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
@@ -63,8 +73,10 @@ function getChecksum() {
 
 const DEFAULT_HOST = 'https://api2.cursor.sh';
 
+const DEFAULT_PROXY = 'http://127.0.0.1:7890';
+
 function parseArgs(argv) {
-  const args = { method: null, host: DEFAULT_HOST, body: '{}', headers: {}, verbose: false, save: null };
+  const args = { method: null, host: DEFAULT_HOST, body: '{}', headers: {}, verbose: false, save: null, proxy: DEFAULT_PROXY };
   let i = 2;
   while (i < argv.length) {
     const a = argv[i];
@@ -73,6 +85,8 @@ function parseArgs(argv) {
     else if (a === '--headers') { args.headers = JSON.parse(argv[++i]); }
     else if (a === '--verbose') { args.verbose = true; }
     else if (a === '--save') { args.save = argv[++i]; }
+    else if (a === '--proxy') { args.proxy = argv[++i]; }
+    else if (a === '--no-proxy') { args.proxy = null; }
     else if (!a.startsWith('--') && !args.method) { args.method = a; }
     else { console.error(`Unknown option: ${a}`); process.exit(1); }
     i++;
@@ -85,7 +99,7 @@ function buildHeaders(host) {
     'Connect-Protocol-Version': '1',
     'Content-Type': 'application/json',
     'User-Agent': 'connect-es/2.0.0-rc.3',
-    'x-cursor-client-version': '3.0.16',
+    'x-cursor-client-version': '3.6.31',
     'x-cursor-timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
   // 打官方 API 时附带 auth + checksum;打本地 server 跳过
@@ -107,6 +121,7 @@ async function callRpc(method, host, body, extraHeaders, verbose) {
   if (verbose) {
     console.error('\x1b[36m── Request ──\x1b[0m');
     console.error(`  POST ${url}`);
+    if (process.env.HTTPS_PROXY) console.error(`  Proxy: ${process.env.HTTPS_PROXY}`);
     console.error(`  Headers: ${JSON.stringify(headers, null, 2)}`);
     console.error(`  Body: ${JSON.stringify(parsedBody, null, 2)}`);
     console.error('');
@@ -184,12 +199,20 @@ async function main() {
 
   if (!args.method) { printUsage(); process.exit(0); }
 
+  // 代理: 设 HTTPS_PROXY 环境变量 + EnvHttpProxyAgent 全局 dispatcher (支持 h2 隧道)
+  if (args.proxy) {
+    process.env.HTTPS_PROXY = args.proxy;
+    process.env.HTTP_PROXY = args.proxy;
+    setGlobalDispatcher(new EnvHttpProxyAgent());
+  }
+
   if (args.host.includes('cursor.sh') && TOKEN.includes('<PASTE')) {
     console.error('\x1b[31m✗ 打官方 API 需要 token。编辑 rpc-test.mjs 顶部的 TOKEN 常量。\x1b[0m');
     process.exit(1);
   }
 
   try {
+    if (args.proxy) console.error(`\x1b[34m[proxy]\x1b[0m ${args.proxy}`);
     const result = await callRpc(args.method, args.host, args.body, args.headers, args.verbose);
     printResult(result, args.save);
     process.exit(result.status >= 200 && result.status < 300 ? 0 : 1);
