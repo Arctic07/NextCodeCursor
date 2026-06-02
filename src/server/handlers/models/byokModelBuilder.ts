@@ -221,17 +221,20 @@ function buildVariantSuffix(combo: VariantCombo, providerType: ProviderType, con
   const fast = combo.params.get('fast')
   const context = combo.params.get('context')
 
-  // thinking segment
+  // thinking segment: effort/budget 隐含 thinking 状态(无需 thinking 轴也显示);
+  // thinking='false' 时不显示(用户在 Quick Switch 里关了 thinking)
+  const thinkingOff = thinking === 'false'
   if (reasoning && reasoning !== 'none') {
     segments.push(`:icon-brain: ${LEVEL_LABELS[reasoning] ?? reasoning}`)
   }
+  else if (effort && !thinkingOff) {
+    segments.push(`:icon-brain: ${LEVEL_LABELS[effort] ?? effort}`)
+  }
+  else if (budget && !thinkingOff) {
+    segments.push(`:icon-brain: ${formatBudgetLabel(Number(budget))}`)
+  }
   else if (thinking === 'true') {
-    if (effort)
-      segments.push(`:icon-brain: ${LEVEL_LABELS[effort] ?? effort}`)
-    else if (budget)
-      segments.push(`:icon-brain: ${formatBudgetLabel(Number(budget))}`)
-    else
-      segments.push(':icon-brain:')
+    segments.push(':icon-brain:')
   }
 
   if (fast === 'true')

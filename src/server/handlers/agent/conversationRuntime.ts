@@ -19,7 +19,7 @@ import { finalizeTaskResult, launchTaskTool, runToolCall, type TaskLaunchContext
 import { awaitExecResultAndClose, waitForPromiseWithHeartbeat } from './wait'
 import { restoreBlobMessageToLLMMessage } from './transcript'
 import { ActiveTurnTracker, createCurrentTurnUserMessageBlob } from './turnTracker'
-import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, shouldTriggerCompaction } from './usage'
+import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, getAutoCompactThreshold, shouldTriggerCompaction } from './usage'
 import { isAgentRunAbortedError } from './wait'
 import { makeProviderError, makeToolError } from '../errors'
 import { createRepairDiagnostics, hasRepairMutations, repairConversationHistory } from '../llm/transformMessages'
@@ -343,8 +343,9 @@ const editExtractors = new Map<string, EditDeltaExtractor>()
 const editPathSent = new Set<string>()
 const editStreamDiagnostics = new Map<string, EditStreamDiagnostics>()
 
-/** Auto-summarize 阈值（与客户端的 speculative summarization 70% 区分，服务端在更激进的阈值触发） */
-const AUTO_SUMMARIZE_THRESHOLD_PERCENT = 85
+// Auto-summarize 阈值: 不再用百分比，改为绝对 buffer 模式 (对齐 Claude Code):
+//   threshold = (contextTokenLimit - 20K outputReserve) - 13K buffer
+// 效果: 200K 模型 ~83.5% 触发, 1M 模型 ~96.7% 触发
 
 function flushPendingAssistantPrefix(params: {
   roundAssistantBlocks: LLMContentBlock[]
@@ -630,7 +631,10 @@ export async function* handleConversationRun(
   let turnBlobIds = [...parsed.historyTurnBlobIds]
   let messages: LLMMessage[] = []
   let currentSummaryArchiveIds = [...parsed.historySummaryArchiveIds]
-  let autoSummarizePerformed = false
+  // 连续失败熔断 (对齐 Claude Code MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES=3)
+  // 不再用 autoSummarizePerformed 一次性限制——每轮都可重复触发,直至连续失败 3 次停止
+  let autoCompactConsecutiveFailures = 0
+  const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
   const syntheticUserMessageId = parsed.isBackgroundTaskCompletion
     ? `background-completion-${Date.now()}`
     : parsed.rawUserMessage?.messageId && typeof parsed.rawUserMessage.messageId === 'string'
@@ -1074,14 +1078,17 @@ export async function* handleConversationRun(
       })
 
       // 链路①: 服务端 Agent Run 内自动 summarize
-      // 当 context window 使用量超过阈值时，在继续下一轮 LLM 调用前自动执行 compaction
-      if (!autoSummarizePerformed && shouldTriggerCompaction(usedTokensEstimate, contextTokenLimit, AUTO_SUMMARIZE_THRESHOLD_PERCENT)) {
+      // 每轮都检查——超阈值就触发 compaction,可重复触发,连续失败 3 次才熔断
+      // (对齐 Claude Code autoCompactIfNeeded 的 consecutiveFailures 熔断机制)
+      if (autoCompactConsecutiveFailures < MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
+        && shouldTriggerCompaction(usedTokensEstimate, contextTokenLimit)) {
         logger.info({
           conversationId: parsed.conversationId,
           round,
           usedTokensEstimate,
           contextTokenLimit,
-          thresholdPercent: AUTO_SUMMARIZE_THRESHOLD_PERCENT,
+          threshold: getAutoCompactThreshold(contextTokenLimit),
+          consecutiveFailures: autoCompactConsecutiveFailures,
         }, '[AGENT] auto-summarize: threshold exceeded, triggering inline compaction')
 
         const compactionResult = yield* performInlineAutoSummarize({
@@ -1104,13 +1111,20 @@ export async function* handleConversationRun(
           blobIds = []
           blobCounter = 0
           nextBlobbedMessageIndex = messages.length
-          autoSummarizePerformed = true
+          autoCompactConsecutiveFailures = 0 // 成功后重置
 
           logger.info({
             conversationId: parsed.conversationId,
             newMessageCount: messages.length,
             newUsedTokens: usedTokensEstimate,
           }, '[AGENT] auto-summarize: state replaced, continuing agent loop')
+        } else {
+          autoCompactConsecutiveFailures++
+          logger.warn({
+            conversationId: parsed.conversationId,
+            consecutiveFailures: autoCompactConsecutiveFailures,
+            maxFailures: MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
+          }, '[AGENT] auto-summarize: compaction failed, incrementing failure counter')
         }
       }
     }
