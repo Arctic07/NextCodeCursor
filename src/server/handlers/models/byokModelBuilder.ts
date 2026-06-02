@@ -32,7 +32,7 @@ import {
 } from '../../gen/aiserver_v1_pb'
 
 const VARIANT_SUFFIX_STYLE = 'color: var(--cursor-text-tertiary); font-size: 0.85em;'
-const LARGE_CTX_THRESHOLD = 500_000
+const LARGE_CTX_THRESHOLD = 1_000_000
 
 const LEVEL_LABELS: Record<string, string> = {
   none: 'None',
@@ -211,7 +211,7 @@ function cartesianProduct(axes: ParamAxis[]): VariantCombo[] {
   return result
 }
 
-function buildVariantSuffix(combo: VariantCombo, providerType: ProviderType): string | null {
+function buildVariantSuffix(combo: VariantCombo, providerType: ProviderType, contextTokenLimit?: number): string | null {
   const segments: string[] = []
 
   const reasoning = combo.params.get('reasoning')
@@ -237,8 +237,15 @@ function buildVariantSuffix(combo: VariantCombo, providerType: ProviderType): st
   if (fast === 'true')
     segments.push('Fast')
 
+  // context: combo 有 context 轴 → 完全由选中值决定(272K 不显示, 1M 显示);
+  // combo 无 context 轴 → 从 model.contextTokenLimit 兜底(≥1M 才显示)
   if (context) {
     const label = formatContextLabel(Number(context))
+    if (label)
+      segments.push(label)
+  }
+  else if (context === undefined && contextTokenLimit !== undefined) {
+    const label = formatContextLabel(contextTokenLimit)
     if (label)
       segments.push(label)
   }
@@ -380,7 +387,7 @@ function buildAvailableModelFromByok(
   if (defs.length > 0 && axes.length > 0) {
     const combos = cartesianProduct(axes)
     variants = combos.map((combo) => {
-      const suffix = buildVariantSuffix(combo, provider.type)
+      const suffix = buildVariantSuffix(combo, provider.type, model.contextTokenLimit)
       const displayName = wrapDisplayName(model.displayName, suffix)
       const isDefault = isDefaultCombo(combo, model, provider.type)
       return create(AvailableModelsResponse_ModelVariantConfigSchema, {
