@@ -369,7 +369,8 @@ export const TaskTool: ToolRegistryEntry = {
             subagentType,
             modelId,
             prompt: input.prompt || input.description || '',
-            readonly: input.readonly ?? true,
+            // proto3 bool 默认 false — LLM 不传 readonly 时 subagent 可读写(Agent 模式)
+            readonly: input.readonly ?? false,
             ...(typeof input.resume === 'string' ? { resumeAgentId: input.resume } : {}),
             ...(typeof input.run_in_background === 'boolean' || typeof input.runInBackground === 'boolean'
                 ? { runInBackground: input.run_in_background ?? input.runInBackground } : {}),
