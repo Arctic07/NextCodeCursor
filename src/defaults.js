@@ -57,9 +57,15 @@ export const BYOK_REDIRECT = [
   'aiserver.v1.AiService/KnowledgeBaseAdd',
   'aiserver.v1.AiService/KnowledgeBaseUpdate',
   'aiserver.v1.AiService/KnowledgeBaseRemove',
+  // AiService: 模型/配置端点 — BYOK 拦截返回本地配置,不打官方
+  'aiserver.v1.AiService/ServerTime',
+  'aiserver.v1.AiService/GetDefaultModel',
+  'aiserver.v1.AiService/GetDefaultModelNudgeData',
 
   // ── BYOK 流程下需要 stub 的服务 ──
   'aiserver.v1.AuthService',
+  // AnalyticsService: 遥测上报返空; BootstrapStatsig 不拦截(直通官方拿真实 feature gate 配置)
+  'aiserver.v1.AnalyticsService/Batch',
   // DashboardService: 逐方法挂入 — 未列出的方法 (如 ListMarketplacePlugins) 直接透传官方 API
   'aiserver.v1.DashboardService/GetPlanInfo',
   'aiserver.v1.DashboardService/GetCurrentPeriodUsage',
@@ -71,6 +77,11 @@ export const BYOK_REDIRECT = [
   'aiserver.v1.DashboardService/GetManagedSkills',
   'aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam',
   'aiserver.v1.DashboardService/GetTeamReposOrEmptyIfNotInTeam',
+  // 3.6 新增: 不带 OrEmpty 后缀的 Team 端点 (非 team 用户打官方返回 unauthenticated 重试风暴)
+  'aiserver.v1.DashboardService/GetTeamAdminSettings',
+  'aiserver.v1.DashboardService/GetTeamBackgroundAgentSettings',
+  'aiserver.v1.DashboardService/GetTeamRepos',
+  'aiserver.v1.DashboardService/GetMe',
   'aiserver.v1.DashboardService/GetGlobalCommands',
   'aiserver.v1.DashboardService/GetTeamCommands',
   'aiserver.v1.DashboardService/GetSlackInstallUrl',
