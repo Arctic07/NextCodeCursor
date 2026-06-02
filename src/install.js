@@ -3,18 +3,20 @@
  *
  * 顺序：
  *   0. 定位 Cursor 安装目录 + 预检
- *   1. 安装扩展到 extensions/cursor2plus/
- *   2. 注入 renderer hook (workbench.js)
- *   3. 注入 always-local 拦截 + 签名绕过 + 优先加载 (extensionHostProcess.js)
- *   4. 复制 KaTeX fonts 到 workbench 相对路径
- *   5. 提示重启
+ *   1. 释放默认配置到 ~/.ccursor/
+ *   2. 安装扩展到 extensions/cursor2plus/
+ *   3. 注入 renderer hook (workbench.js)
+ *   4. 注入 always-local 拦截 + 签名绕过 + 优先加载 (extensionHostProcess.js)
+ *   5. KaTeX CSS link 修补 (workbench.html)
+ *   6. 提示重启
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
 import { installExtension, isExtensionInstalled } from './extension-embed.js';
 import { hasBackup } from './backup.js';
 import { patchInject } from './patch-inject.js';
 import { patchAlwaysLocal } from './patch-always-local.js';
+import { patchKatex } from './patch-katex.js';
 // delete-fix 已移除 — 3.2.11 原生 tombstoneDeletedComposer 已覆盖
 import { releaseDefaults } from './release-defaults.js';
 
@@ -22,25 +24,6 @@ const ok = msg => console.log(`\x1b[32m[OK]\x1b[0m ${msg}`);
 const info = msg => console.log(`\x1b[34m[>]\x1b[0m ${msg}`);
 const warn = msg => console.log(`\x1b[33m[!]\x1b[0m ${msg}`);
 const fail = msg => console.log(`\x1b[31m[X]\x1b[0m ${msg}`);
-
-function copyKatexFonts(paths, log) {
-  const sourceDir = `${paths.appRoot}/extensions/markdown-math/notebook-out/fonts`;
-  const targetDir = `${paths.appRoot}/out/vs/workbench/fonts`;
-  if (!existsSync(sourceDir)) {
-    log(`[katex-fonts] WARNING: source not found: ${sourceDir}`);
-    return;
-  }
-  const fontFiles = readdirSync(sourceDir)
-    .filter(name => name.startsWith('KaTeX_') && /\.(?:woff2?|ttf)$/i.test(name));
-  if (fontFiles.length === 0) {
-    log(`[katex-fonts] WARNING: no KaTeX fonts found: ${sourceDir}`);
-    return;
-  }
-  mkdirSync(targetDir, { recursive: true });
-  for (const name of fontFiles)
-    copyFileSync(`${sourceDir}/${name}`, `${targetDir}/${name}`);
-  log(`[katex-fonts] copied ${fontFiles.length} font file(s) to out/vs/workbench/fonts`);
-}
 
 export async function install() {
   info('Cursor++ BYOK Installer');
@@ -88,8 +71,8 @@ export async function install() {
   // 4. Always-local + sig bypass
   patchAlwaysLocal(paths, info);
 
-  // 5. KaTeX fonts: workbench 中的 KaTeX CSS 使用 url(fonts/...),需要补齐相对路径
-  copyKatexFonts(paths, info);
+  // 5. KaTeX CSS link (workbench.html + checksum)
+  patchKatex(paths, info);
 
   console.log('');
   ok('Installation complete!');
