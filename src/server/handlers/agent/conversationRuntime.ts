@@ -1181,4 +1181,10 @@ export async function* handleConversationRun(
     gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
     breakdownCategories,
   })
+
+  // SSE transport 在 response stream 结束后立即关闭底层 WritableIterable,
+  // 而客户端 ControlledKvManager 异步处理 setBlobArgs (setBlob + write setBlobResult)
+  // 可能还没完成, 导致 "WritableIterable already closed" 错误。
+  // 尾部 heartbeat 延长 stream 存活时间, 让客户端处理完最后一批 blob ACK。
+  yield heartbeat()
 }

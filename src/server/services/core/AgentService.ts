@@ -27,6 +27,7 @@ import { ConnectError } from '@connectrpc/connect'
 import { AgentClientMessageSchema, AgentService } from '../../gen/agent_v1_pb'
 import { handleRunRequest } from '../../handlers/agent/agentOrchestrator'
 import { cacheBlob } from '../../handlers/agent/blobStore'
+import { registerCloneLineage } from '../../handlers/agent/cloneRegistry'
 import { ModelNotFoundError } from '../../handlers/models/mapper'
 import { makeByokConnectError, makeModelNotFoundError, makeProviderError } from '../../handlers/errors'
 import { ErrorDetails_Error } from '../../gen/aiserver_v1_pb'
@@ -223,6 +224,29 @@ export default (router: ConnectRouter) => {
       logger.debug(
         { conversationId, chunkIndex, totalChunks, cached, received: blobs.length },
         '[SVC] UploadConversationBlobs chunk received',
+      )
+      return {}
+    },
+
+    /**
+     * NotifyConversationClone — Fork Chat 血缘登记
+     *
+     * 客户端 "Fork Chat" 时 deepCloneComposer 在本地复制整个对话(重映射所有
+     * bubbleId/blobId),完成后调用此 RPC 通知后端这是一次克隆。请求只含血缘元数据
+     * (新对话 id ← 源对话 id + 源 requestId),**不含 blob 内容** —— cloned blob
+     * 由 UploadConversationBlobs 单独上传并缓存,fork 对话首次 Run 时即可命中重建。
+     *
+     * 此前未实现导致客户端收到 unimplemented、重试 3 次并打 metric。现在登记血缘
+     * 并 ACK,消除噪音,同时为诊断 / transcript 关联保留映射。
+     */
+    async notifyConversationClone(req) {
+      const { conversationId, sourceConversationId, sourceRequestId } = req
+      if (conversationId && sourceConversationId) {
+        registerCloneLineage(conversationId, { sourceConversationId, sourceRequestId })
+      }
+      logger.info(
+        { conversationId, sourceConversationId, sourceRequestId },
+        '[SVC] NotifyConversationClone (fork chat lineage)',
       )
       return {}
     },
