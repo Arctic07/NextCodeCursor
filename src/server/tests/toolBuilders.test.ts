@@ -268,6 +268,46 @@ it('task tool exec args fall back to current run model when subagent model is un
   expect(args.parentConversationId).toBe('conv-parent')
 })
 
+it('task tool maps resume="self" to forkAgentId (self-fork), not resumeAgentId', () => {
+  // 官方 Task schema: resume="self" = self-fork(fork 当前父对话为新子 agent)。
+  // 必须翻译成 forkAgentId=当前 conversationId,否则客户端会把 "self" 当真实 agentId 找不到。
+  const args = buildExecArgs('Task', {
+    description: 'Fork current agent',
+    prompt: 'Continue exploring from current state',
+    subagentType: 'generalPurpose',
+    resume: 'self',
+  }, 'call-self-fork', {
+    conversationId: 'conv-parent',
+    currentModelId: 'claude-sonnet-4',
+  })
+
+  expect(args.forkAgentId).toBe('conv-parent')
+  expect(args.resumeAgentId).toBeUndefined()
+  expect(args.parentConversationId).toBe('conv-parent')
+})
+
+it('task tool maps "SELF" case-insensitively to forkAgentId', () => {
+  const args = buildExecArgs('Task', {
+    description: 'Fork',
+    prompt: 'go',
+    resume: ' Self ',
+  }, 'call-self-fork-2', { conversationId: 'conv-x', currentModelId: 'claude-sonnet-4' })
+
+  expect(args.forkAgentId).toBe('conv-x')
+  expect(args.resumeAgentId).toBeUndefined()
+})
+
+it('task tool maps a normal resume id to resumeAgentId (not fork)', () => {
+  const args = buildExecArgs('Task', {
+    description: 'Resume agent',
+    prompt: 'follow up',
+    resume: 'agent-123',
+  }, 'call-resume', { conversationId: 'conv-parent', currentModelId: 'claude-sonnet-4' })
+
+  expect(args.resumeAgentId).toBe('agent-123')
+  expect(args.forkAgentId).toBeUndefined()
+})
+
 it('task tool result maps subagent success into official task success shape', () => {
   const result = normalizeToolResult('taskToolCall', buildExecToolResult('taskToolCall', {
     subagentResult: {

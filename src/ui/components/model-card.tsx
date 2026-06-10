@@ -252,16 +252,19 @@ export function ModelCard() {
           <div class="field">
             <label>
               {'Max Output Tokens '}
-              <span style="color:var(--vscode-errorForeground);font-weight:normal" x-show="!m.noMaxTokens">*</span>
+              <span style="color:var(--vscode-errorForeground);font-weight:normal" x-show="m.noMaxTokens !== true">*</span>
             </label>
             <div style="display:flex;align-items:center;gap:6px">
+              {/* Off 仅切换 noMaxTokens 标志, 不清空 maxOutputTokens —
+                  发送侧 (providerRuntime: noMaxTokens ? undefined : maxOutputTokens) 已守卫,
+                  保留值才能在取消 Off 后恢复, 且禁用态灰显原值更直观 */}
               <input
                 type="number"
-                x-effect="if(document.activeElement !== $el) $el.value = m.noMaxTokens ? '' : (m.maxOutputTokens ?? '')"
+                x-effect="if(document.activeElement !== $el) $el.value = m.maxOutputTokens ?? ''"
                 x-on:input="$store.app.updateModelNumber(p.id, m.id, 'maxOutputTokens', $event.target.value)"
-                placeholder={`\${m.noMaxTokens ? 'disabled' : 'required'}`}
-                x-bind:placeholder="m.noMaxTokens ? 'disabled' : 'required'"
-                x-bind:disabled="m.noMaxTokens"
+                placeholder="required"
+                x-bind:placeholder="m.noMaxTokens === true ? 'disabled (omitted)' : 'required'"
+                x-bind:disabled="m.noMaxTokens === true"
                 title="Maximum tokens per LLM response"
                 x-bind:class="{'invalid': me?.maxOutputTokens}"
                 style="flex:1"
@@ -270,7 +273,7 @@ export function ModelCard() {
                 <input
                   type="checkbox"
                   x-bind:checked="m.noMaxTokens === true"
-                  x-on:change="$store.app.updateModelField(p.id, m.id, 'noMaxTokens', $event.target.checked || undefined); if($event.target.checked) $store.app.updateModelField(p.id, m.id, 'maxOutputTokens', undefined)"
+                  x-on:change="$store.app.updateModelField(p.id, m.id, 'noMaxTokens', $event.target.checked)"
                 />
                 {' Off'}
               </label>

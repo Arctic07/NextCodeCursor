@@ -115,7 +115,7 @@ When choosing a model, prefer \`fast\` for quick, straightforward tasks to minim
                     },
                     "resume": {
                             "type": "string",
-                            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete."
+                            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete. Use \"self\" to start a new agent with your own entire conversation history as a starting point (aka 'self-fork')."
                     },
                     "attachments": {
                             "type": "array",
@@ -196,7 +196,7 @@ When choosing a model, prefer \`fast\` for quick, straightforward tasks to minim
                     },
                     "resume": {
                             "type": "string",
-                            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete."
+                            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete. Use \"self\" to start a new agent with your own entire conversation history as a starting point (aka 'self-fork')."
                     },
                     "readonly": {
                             "type": "boolean",
@@ -312,7 +312,7 @@ When choosing a model, prefer \`fast\` for quick, straightforward tasks to minim
                     },
                     "resume": {
                             "type": "STRING",
-                            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete."
+                            "description": "Optional agent ID to resume from. If provided, sends a follow-up message to the agent when its turn is complete. Use \"self\" to start a new agent with your own entire conversation history as a starting point (aka 'self-fork')."
                     },
                     "run_in_background": {
                             "type": "BOOLEAN",
@@ -364,6 +364,11 @@ export const TaskTool: ToolRegistryEntry = {
                 ? input.subagentType
                 : 'explore';
         const modelId = options.currentModelId || '';
+        // resume="self" 是官方 Task schema 的 self-fork 语义(见 resume 参数描述):
+        // 把当前父对话 fork 成新子 agent。客户端 createOrResumeSubagent 收到 forkAgentId 后
+        // deepCloneComposer 复制当前对话历史 —— 而非 resume 一个名为 "self" 的 agent
+        // (若误当 resumeAgentId="self",客户端 getComposerHandleById("self") 找不到会报错)。
+        const isSelfFork = typeof input.resume === 'string' && input.resume.trim().toLowerCase() === 'self'
         return {
             toolCallId: callId,
             subagentType,
@@ -371,7 +376,10 @@ export const TaskTool: ToolRegistryEntry = {
             prompt: input.prompt || input.description || '',
             // proto3 bool 默认 false — LLM 不传 readonly 时 subagent 可读写(Agent 模式)
             readonly: input.readonly ?? false,
-            ...(typeof input.resume === 'string' ? { resumeAgentId: input.resume } : {}),
+            // self-fork → forkAgentId=当前 conversationId;普通 resume → resumeAgentId
+            ...(isSelfFork
+                ? (options.conversationId ? { forkAgentId: options.conversationId } : {})
+                : typeof input.resume === 'string' ? { resumeAgentId: input.resume } : {}),
             ...(typeof input.run_in_background === 'boolean' || typeof input.runInBackground === 'boolean'
                 ? { runInBackground: input.run_in_background ?? input.runInBackground } : {}),
             ...(options.conversationId ? { parentConversationId: options.conversationId } : {}),

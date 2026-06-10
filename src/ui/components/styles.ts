@@ -16,6 +16,15 @@ export const styles = /* css */ `
   input:not([type=checkbox]):not([type=radio]), select, textarea { width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 3px 6px; font-size: 11px; border-radius: 2px; outline: none; font-family: var(--vscode-editor-font-family); resize: vertical; }
   input:not([type=checkbox]):not([type=radio]):focus, select:focus, textarea:focus { border-color: var(--vscode-focusBorder); }
   input[type=radio], input[type=checkbox] { outline: none; }
+  /* 禁用态强调 — webview 默认 disabled 几乎无视觉差异。
+     删除线表达"值保留但不生效"(如 Max Output Tokens 的 Off 开关) */
+  input:not([type=checkbox]):not([type=radio]):disabled, select:disabled, textarea:disabled {
+    opacity: 0.45;
+    color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+    border-style: dashed;
+    text-decoration: line-through;
+    cursor: not-allowed;
+  }
 
   /* 移除 number input 的原生上下 spinner — 视觉冗余, 用户直接输入数字即可 */
   input[type=number] { -moz-appearance: textfield; }
