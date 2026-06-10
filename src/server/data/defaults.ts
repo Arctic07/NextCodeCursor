@@ -268,6 +268,7 @@ export const DEFAULT_PROVIDERS: ProvidersConfig = {
 
 export const MODELS_CATALOG_FILE_NAME = 'models-catalog.json'
 export const WEB_TOOLS_FILE_NAME = 'web-tools.json'
+export const MANAGED_SKILLS_FILE_NAME = 'managed-skills.json'
 
 // ── Web Tools (Search + Fetch) ──
 

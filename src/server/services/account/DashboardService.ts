@@ -28,6 +28,7 @@ import {
     GetUsageLimitStatusAndActiveGrantsResponse_UsageLimitPolicyStatusSchema,
 } from '../../gen/aiserver_v1_pb';
 import { exportCanvasHtml, getCanvasesDir, lookupCanvasByKey, storeCanvas } from '../../handlers/canvas/canvasStore';
+import { fetchManagedSkills } from '../../config/managedSkillsStore';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -66,7 +67,9 @@ export default (router: ConnectRouter) => {
         // 插件市场 — 后续可考虑透传到官方 API 获取真实数据
         listMarketplacePlugins: async () => ({ plugins: [] }),
         isOnNewPricing: async () => ({ isOnNewPricing: true }),
-        getManagedSkills: async () => ({}),
+        getManagedSkills: async (_req, { requestHeader }) => {
+            return await fetchManagedSkills(requestHeader ?? new Headers()) as any
+        },
         getTeamAdminSettingsOrEmptyIfNotInTeam: async () => ({}),
         getTeamReposOrEmptyIfNotInTeam: async () => ({}),
         // 3.6 新增: 不带 OrEmpty 后缀 — 非 team 用户打官方返回 unauthenticated 重试风暴

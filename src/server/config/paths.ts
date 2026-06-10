@@ -5,7 +5,7 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { CCURSOR_DIR_NAME, DB_FILE_NAME, KNOWLEDGE_BASE_FILE_NAME, MODELS_CATALOG_FILE_NAME, PROVIDERS_FILE_NAME, ROUTES_FILE_NAME, WEB_TOOLS_FILE_NAME } from '../data/defaults'
+import { CCURSOR_DIR_NAME, DB_FILE_NAME, KNOWLEDGE_BASE_FILE_NAME, MANAGED_SKILLS_FILE_NAME, MODELS_CATALOG_FILE_NAME, PROVIDERS_FILE_NAME, ROUTES_FILE_NAME, WEB_TOOLS_FILE_NAME } from '../data/defaults'
 
 export function getCcursorDir(): string {
   return join(homedir(), CCURSOR_DIR_NAME)
@@ -42,6 +42,10 @@ export function getModelsCatalogFilePath(): string {
 
 export function getWebToolsFilePath(): string {
   return join(getCcursorDir(), WEB_TOOLS_FILE_NAME)
+}
+
+export function getManagedSkillsFilePath(): string {
+  return join(getCcursorDir(), MANAGED_SKILLS_FILE_NAME)
 }
 
 /** 日志目录 ~/.ccursor/logs */
