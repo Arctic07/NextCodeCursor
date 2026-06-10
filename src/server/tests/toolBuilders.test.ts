@@ -249,7 +249,8 @@ it('task tool exec args match official subagent launch fields (方案 A: LLM 传
   expect(args.subagentType).toBe('explore')
   expect(args.modelId).toBe('claude-sonnet-4')
   expect(args.prompt).toBe('Please find the name of the Python script that captures Claude status in this repository. Return just the filename.')
-  expect(args.readonly).toBe(true)
+  // proto3 bool 默认 false — LLM 不传 readonly 时 subagent 可读写(Agent 模式)
+  expect(args.readonly).toBe(false)
   expect(args.parentConversationId).toBe('conv-parent')
 })
 

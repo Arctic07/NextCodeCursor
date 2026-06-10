@@ -104,7 +104,7 @@ describe('transformMessages — ID 标准化', () => {
 })
 
 describe('transformMessages — 孤立 tool call 补全', () => {
-  it('孤立的 tool_use 得到合成空 result', () => {
+  it('孤立的 tool_use 得到合成中断 result', () => {
     const messages: LLMMessage[] = [
       { role: 'assistant', content: [
         { type: 'tool_use', id: 'call_1', name: 'Shell', input: { command: 'ls' } },
@@ -117,7 +117,9 @@ describe('transformMessages — 孤立 tool call 补全', () => {
     expect(result.length).toBe(3) // assistant + synthetic tool + user
     expect(result[1].role).toBe('tool')
     expect(result[1].toolCallId).toBe('call_1')
-    expect(result[1].isError).toBe(true)
+    // isError:false + 引导文案 "do not retry" — 避免 LLM 把中断当失败而反复重试
+    expect(result[1].isError).toBe(false)
+    expect(result[1].content).toMatch(/interrupted/i)
   })
 
   it('有 result 的 tool_use 不会被重复补全', () => {
@@ -149,7 +151,9 @@ describe('transformMessages — 孤立 tool call 补全', () => {
     expect(toolResults.length).toBe(2) // call_1 真实 + call_2 合成
     const synthetic = toolResults.find(m => m.toolCallId === 'call_2')
     expect(synthetic).toBeDefined()
-    expect(synthetic!.isError).toBe(true)
+    // 合成的中断 result 用 isError:false (见 createSyntheticToolResult)
+    expect(synthetic!.isError).toBe(false)
+    expect(synthetic!.content).toMatch(/interrupted/i)
   })
 
   it('连续多个 assistant 都有孤立 tool call', () => {

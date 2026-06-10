@@ -14,6 +14,9 @@
  *   composer-* / 其他未登记的 modelId 仍然会触发 ModelNotFoundError —
  *   前者走 promptProfile.ts 的 fallback 分支绕过 resolveModel,
  *   后者本就是测试"未登记 → 拒绝请求"的预期行为。
+ *
+ *   auth.value 必须非空: openai SDK v6+ 在 client 构造时就校验 apiKey,
+ *   空字符串会让 resolveProviderRuntime/routeModel 直接抛 Missing credentials。
  */
 import type { ProvidersConfig } from '../data/defaults'
 import { setProvidersForTests } from '../config/providersStore'
@@ -26,7 +29,7 @@ const TEST_PROVIDERS: ProvidersConfig = {
       name: 'Test OpenAI',
       type: 'openai-chat',
       baseUrl: '',
-      auth: { kind: 'apiKey', value: '' },
+      auth: { kind: 'apiKey', value: 'test-key' },
       models: [
         {
           id: 'gpt-5.4-medium',
@@ -49,7 +52,7 @@ const TEST_PROVIDERS: ProvidersConfig = {
       name: 'Test Gemini',
       type: 'gemini',
       baseUrl: '',
-      auth: { kind: 'apiKey', value: '' },
+      auth: { kind: 'apiKey', value: 'test-key' },
       models: [
         {
           id: 'gemini-3.1-pro-preview',
@@ -65,7 +68,7 @@ const TEST_PROVIDERS: ProvidersConfig = {
       name: 'Test Anthropic',
       type: 'anthropic',
       baseUrl: '',
-      auth: { kind: 'apiKey', value: '' },
+      auth: { kind: 'apiKey', value: 'test-key' },
       models: [
         {
           id: 'claude-sonnet-4',

@@ -9,7 +9,7 @@ import { encodeBlob } from '../handlers/agent/blob'
 import { cacheBlob, resetBlobCacheForTests } from '../handlers/agent/blobStore'
 import { createCompactionArtifacts, estimateMessagesTokens, formatMessageForSummary, planCompaction } from '../handlers/agent/compactionStrategy'
 import { hydrateHistoryEntries, isSummaryBlobMessage } from '../handlers/agent/historyManager'
-import { clampTokenDetails, computeContextUsagePercent, shouldTriggerCompaction } from '../handlers/agent/usage'
+import { clampTokenDetails, computeContextUsagePercent, getAutoCompactThreshold, shouldTriggerCompaction } from '../handlers/agent/usage'
 
 // ─── helpers ───
 
@@ -78,9 +78,20 @@ it('shouldTriggerCompaction returns true at/above threshold', () => {
   expect(shouldTriggerCompaction(100000, 100000, 85)).toBe(true)
 })
 
-it('shouldTriggerCompaction default threshold is 90%', () => {
-  expect(shouldTriggerCompaction(89000, 100000)).toBe(false)
-  expect(shouldTriggerCompaction(90000, 100000)).toBe(true)
+it('shouldTriggerCompaction default uses absolute buffer threshold', () => {
+  // 绝对 buffer 模式 (对齐 Claude Code):
+  //   threshold = maxTokens - min(maxOutputTokens, 20K outputReserve) - 20K buffer
+  // 默认 maxOutputTokens=8192 → 100K 模型 threshold = 100000 - 8192 - 20000 = 71808
+  expect(getAutoCompactThreshold(100000)).toBe(71808)
+  expect(shouldTriggerCompaction(71807, 100000)).toBe(false)
+  expect(shouldTriggerCompaction(71808, 100000)).toBe(true)
+})
+
+it('getAutoCompactThreshold caps output reserve at 20K', () => {
+  // maxOutputTokens 超过 20K 时按 20K 计 — 200K 模型 threshold=160K (~80%, 基准)
+  expect(getAutoCompactThreshold(200000, 64000)).toBe(160000)
+  // 1M 模型 threshold=960K (~96%)
+  expect(getAutoCompactThreshold(1000000, 32000)).toBe(960000)
 })
 
 // ─── clampTokenDetails tests ───
