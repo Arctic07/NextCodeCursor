@@ -463,6 +463,10 @@ export function initApp(Alpine: AlpineType) {
         if (field === 'contextTokenLimit')
           m.contextTokenLimitForMaxMode = n
       }
+
+      // QS 联动: budget 模式 (thinkingBudgetTokens) 变更时同样自动开启 QS 开关
+      if (field === 'thinkingBudgetTokens')
+        this._syncQsFromDefaults(pid, mid)
     },
 
     // ── Provider / Model 增删 ──
@@ -526,6 +530,14 @@ export function initApp(Alpine: AlpineType) {
           if (!Array.isArray(m.parameters.effort))
             m.parameters.effort = this._qsLevelsForType(pType)
         }
+      }
+      // budget 模式 (Anthropic/Gemini): QS 没有 budget 轴, 只联动 Thinking Toggle,
+      // 运行时由 resolved.thinkingBudgetTokens 兜底
+      else if (m.thinking && m.thinkingBudgetTokens && !isOpenAI) {
+        if (!m.parameters)
+          m.parameters = {}
+        if (m.parameters.thinking !== true)
+          m.parameters.thinking = true
       }
     },
 

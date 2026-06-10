@@ -60,7 +60,7 @@ export interface ProviderRuntime {
     thinking: boolean;
     contextTokenLimit: number;
     prepareConversation(messages: LLMMessage[]): PreparedProviderConversation;
-    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean, fastOverride?: boolean, disabledTools?: Set<string>): PreparedProviderRequest;
+    prepareStreamRequest(messages: LLMMessage[], extraTools?: LLMTool[], maxTokens?: number, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent?: boolean, fastOverride?: boolean, disabledTools?: Set<string>, contextTokenLimitOverride?: number): PreparedProviderRequest;
     /** 模型配置的最大输出 token 数 */
     maxOutputTokens: number;
     listRuntimeTools(extraTools?: LLMTool[], mode?: string, isSubagent?: boolean, disabledTools?: Set<string>): LLMTool[];
@@ -157,7 +157,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
         maxOutputTokens: resolved.maxOutputTokens,
         contextTokenLimit: resolved.contextTokenLimit,
         prepareConversation,
-        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.noMaxTokens ? undefined : resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean, disabledTools?: Set<string>): PreparedProviderRequest {
+        prepareStreamRequest(messages: LLMMessage[], extraTools: LLMTool[] = [], maxTokens = resolved.noMaxTokens ? undefined : resolved.maxOutputTokens, mode?: string, thinkingOverride?: { thinking?: boolean, level?: string, budget?: number }, conversationId?: string, isSubagent = false, fastOverride?: boolean, disabledTools?: Set<string>, contextTokenLimitOverride?: number): PreparedProviderRequest {
             const conversation = prepareConversation(messages);
             // 客户端运行时参数覆盖静态配置 (undefined = 不覆盖, 保留 providers.json 值)
             const thinking = thinkingOverride?.thinking ?? resolved.thinking;
@@ -166,6 +166,11 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
             let thinkingBudgetTokens = thinkingOverride?.budget ?? resolved.thinkingBudgetTokens;
             if (thinkingLevel && thinkingBudgetTokens) {
                 thinkingBudgetTokens = undefined;
+            }
+            // 客户端显式开 thinking 但静态配置无 level/budget 时兜底默认档位
+            // (QS 只开 Thinking Toggle 而顶层 thinking=false 的场景), 与 UI 开 thinking 时的默认值一致
+            if (thinkingOverride?.thinking === true && !thinkingLevel && !thinkingBudgetTokens) {
+                thinkingLevel = resolved.provider === 'anthropic' ? 'high' : 'medium';
             }
             // 后端校验: thinking 配置合规性
             if (thinking) {
@@ -200,14 +205,24 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                 }
             }
             // fast override: clientFast 覆盖静态 fastMode 配置
+            // 非 Anthropic: fastOverride=false 必须清掉静态 serviceTier, 否则 picker 关 Fast 后仍发 priority
             const effectiveFast = fastOverride ?? !!resolved.serviceTier
-            const serviceTier = effectiveFast && resolved.provider !== 'anthropic' ? 'priority' as const : resolved.serviceTier
+            const serviceTier = resolved.provider !== 'anthropic'
+                ? (effectiveFast ? 'priority' as const : undefined)
+                : resolved.serviceTier
+            const effectiveContextLimit = contextTokenLimitOverride ?? resolved.contextTokenLimit
             const anthropicBetas = (() => {
-              const base = resolved.anthropicBetas ? [...resolved.anthropicBetas] : []
-              if (fastOverride === true && resolved.provider === 'anthropic' && !base.some(b => b.startsWith('fast-mode')))
+              if (resolved.provider !== 'anthropic')
+                return resolved.anthropicBetas ? [...resolved.anthropicBetas] : []
+              let base = resolved.anthropicBetas ? [...resolved.anthropicBetas] : []
+              if (fastOverride === true && !base.some(b => b.startsWith('fast-mode')))
                 base.push('fast-mode-2026-02-01')
-              if (fastOverride === false && resolved.provider === 'anthropic')
-                return base.filter(b => !b.startsWith('fast-mode'))
+              if (fastOverride === false)
+                base = base.filter(b => !b.startsWith('fast-mode'))
+              // 客户端 context 轴选 ≥1M 时动态补 1M beta (静态 mapper 只看顶层 contextTokenLimit)。
+              // 只补不删: 输入 ≤200K 时该 beta 无副作用, 移除反而会让超 200K 的输入被 API 拒绝
+              if (effectiveContextLimit >= 1_000_000 && !base.some(b => b.startsWith('context-1m')))
+                base.push('context-1m-2025-08-07')
               return base
             })()
 

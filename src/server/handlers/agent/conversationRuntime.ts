@@ -753,7 +753,7 @@ export async function* handleConversationRun(
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
-      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledToolsForRun.size > 0 ? disabledToolsForRun : undefined)
+      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledToolsForRun.size > 0 ? disabledToolsForRun : undefined, contextTokenLimit)
 
       if (!breakdownCategories) {
         breakdownCategories = buildContextBreakdown({

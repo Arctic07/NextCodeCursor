@@ -671,6 +671,11 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   }
   const clientThinkingBudgetRaw = paramMap.get('budget')
   const clientThinkingBudget = clientThinkingBudgetRaw ? Number(clientThinkingBudgetRaw) : undefined
+  // effort/budget 轴存在但无 thinking 轴时隐含 thinking 开启 (QS 只开 Effort Levels 的场景),
+  // 对齐 buildVariantSuffix 的显示语义——picker 显示 :icon-brain: 档位就必须真的思考。
+  // legacy 'level' 参数不触发隐含: legacy 路径 thinking=true 时总会显式回传 thinking 参数
+  if (clientThinking === undefined && (paramMap.has('effort') || paramMap.has('budget')))
+    clientThinking = true
   const clientContextTokenLimitRaw = paramMap.get('context')
   const clientContextTokenLimit = clientContextTokenLimitRaw ? Number(clientContextTokenLimitRaw) : undefined
   const clientFast = paramMap.has('fast') ? paramMap.get('fast') === 'true' : undefined

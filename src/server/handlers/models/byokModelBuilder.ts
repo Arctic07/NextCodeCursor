@@ -268,7 +268,7 @@ function isDefaultCombo(combo: VariantCombo, model: ProviderModel, providerType:
           return false
         break
       case 'thinking':
-        if (val !== String(model.thinking))
+        if (val !== String(!!model.thinking))
           return false
         break
       case 'effort':
@@ -337,9 +337,11 @@ function buildLegacyParamValues(model: ProviderModel): RequestedModel_ModelParam
   const values: RequestedModel_ModelParameterValue[] = []
   if (model.thinking)
     values.push(pv('thinking', 'true'))
-  if (model.thinkingLevel)
+  // level/budget 受 thinking 门控: thinking=false 时不回传,
+  // 避免 parseRunRequest 的 effort/budget 隐含规则误开 thinking
+  if (model.thinking && model.thinkingLevel)
     values.push(pv('level', model.thinkingLevel))
-  if (model.thinkingBudgetTokens !== undefined && model.thinkingBudgetTokens > 0)
+  if (model.thinking && model.thinkingBudgetTokens !== undefined && model.thinkingBudgetTokens > 0)
     values.push(pv('budget', String(model.thinkingBudgetTokens)))
   if (model.contextTokenLimit !== undefined)
     values.push(pv('context', String(model.contextTokenLimit)))
@@ -350,9 +352,9 @@ function buildLegacyStringRepr(model: ProviderModel): string {
   const parts: string[] = []
   if (model.thinking)
     parts.push('thinking=true')
-  if (model.thinkingLevel)
+  if (model.thinking && model.thinkingLevel)
     parts.push(`level=${model.thinkingLevel}`)
-  if (model.thinkingBudgetTokens !== undefined && model.thinkingBudgetTokens > 0)
+  if (model.thinking && model.thinkingBudgetTokens !== undefined && model.thinkingBudgetTokens > 0)
     parts.push(`budget=${model.thinkingBudgetTokens}`)
   if (model.contextTokenLimit !== undefined) {
     const ctxLabel = formatContextLabel(model.contextTokenLimit)
