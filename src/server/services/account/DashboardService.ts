@@ -36,9 +36,9 @@ export default (router: ConnectRouter) => {
     router.service(DashboardService, {
         getPlanInfo: async () => ({
             planInfo: create(GetPlanInfoResponse_PlanInfoSchema, {
-                planName: 'Pro',
+                planName: 'Cometix',
                 includedAmountCents: 999900,
-                price: '$0/mo (BYOK)',
+                price: '$200/mo (BYOK)',
                 billingCycleEnd: BigInt(Date.now() + 365 * 86400000),
             }),
         }),
@@ -66,7 +66,11 @@ export default (router: ConnectRouter) => {
         getEffectiveUserPlugins: async () => ({}),
         // 插件市场 — 后续可考虑透传到官方 API 获取真实数据
         listMarketplacePlugins: async () => ({ plugins: [] }),
-        isOnNewPricing: async () => ({ isOnNewPricing: true }),
+        // hasAutoSpillover: true → Settings 侧边栏显示 "Plan & Usage" (对齐官方)
+        isOnNewPricing: async () => ({
+            isOnNewPricing: true,
+            hasAutoSpillover: true,
+        }),
         getManagedSkills: async (_req, { requestHeader }) => {
             return await fetchManagedSkills(requestHeader ?? new Headers()) as any
         },

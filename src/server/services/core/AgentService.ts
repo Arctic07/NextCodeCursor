@@ -66,6 +66,7 @@ export default (router: ConnectRouter) => {
 
       const iterator = requests[Symbol.asyncIterator]()
       let firstMsg: Record<string, unknown> | null = null
+      let bidiQueuedUserText: string | undefined
 
       while (true) {
         const next = await iterator.next()
@@ -74,7 +75,27 @@ export default (router: ConnectRouter) => {
         const msg = toJson(AgentClientMessageSchema, next.value) as Record<string, unknown>
         if ('clientHeartbeat' in msg || 'kvClientMessage' in msg)
           continue
+        if ('conversationAction' in msg && !bidiQueuedUserText) {
+          const ca = msg.conversationAction as Record<string, unknown> | undefined
+          const ua = ca?.userMessageAction as Record<string, unknown> | undefined
+          const um = ua?.userMessage as Record<string, unknown> | undefined
+          bidiQueuedUserText = typeof um?.text === 'string' && um.text ? um.text : undefined
+          logger.info({ queuedUserText: bidiQueuedUserText?.slice(0, 80) }, '[SVC] Run bidi got conversationAction before runRequest')
+          continue
+        }
         if ('runRequest' in msg) {
+          if (bidiQueuedUserText) {
+            const rr = msg.runRequest as Record<string, unknown>
+            const action = rr?.action as Record<string, unknown> | undefined
+            if (action && !action.userMessageAction && action.resumeAction) {
+              action.userMessageAction = {
+                userMessage: { text: bidiQueuedUserText },
+                requestContext: (action.resumeAction as Record<string, unknown>)?.requestContext,
+              }
+              delete action.resumeAction
+              logger.info({ textLen: bidiQueuedUserText.length }, '[SVC] bidi: injected queued userText into resumeAction → userMessageAction')
+            }
+          }
           firstMsg = msg
           break
         }
@@ -157,8 +178,40 @@ export default (router: ConnectRouter) => {
 
         logger.info({ requestId, keys: Object.keys(firstMsg) }, '[SVC] RunSSE first message')
 
-        if ('runRequest' in firstMsg) {
-          for await (const frame of handleRunRequest(firstMsg, session)) {
+        // 队列消息场景: 客户端先发 conversationAction(含用户文本), 再发 runRequest。
+        // 如果首条不是 runRequest, 提取 conversationAction 中的 userText, 继续等 runRequest。
+        let queuedUserText: string | undefined
+        let actualFirstMsg = firstMsg
+
+        if (!('runRequest' in firstMsg) && 'conversationAction' in firstMsg) {
+          const ca = firstMsg.conversationAction as Record<string, unknown> | undefined
+          const ua = ca?.userMessageAction as Record<string, unknown> | undefined
+          const um = ua?.userMessage as Record<string, unknown> | undefined
+          queuedUserText = typeof um?.text === 'string' && um.text ? um.text : undefined
+          logger.info({ requestId, queuedUserText: queuedUserText?.slice(0, 80) }, '[SVC] RunSSE got conversationAction before runRequest — waiting for runRequest')
+          const nextMsg = await waitForMessage(session)
+          if (!nextMsg || !('runRequest' in nextMsg)) {
+            logger.warn({ requestId, nextMsgKeys: nextMsg ? Object.keys(nextMsg) : null }, '[SVC] RunSSE never received runRequest after conversationAction')
+            return
+          }
+          actualFirstMsg = nextMsg
+        }
+
+        if ('runRequest' in actualFirstMsg) {
+          // 如果 runRequest 是 resumeAction 且有来自 conversationAction 的用户文本, 注入
+          if (queuedUserText) {
+            const rr = actualFirstMsg.runRequest as Record<string, unknown>
+            const action = rr?.action as Record<string, unknown> | undefined
+            if (action && !action.userMessageAction && action.resumeAction) {
+              action.userMessageAction = {
+                userMessage: { text: queuedUserText },
+                requestContext: (action.resumeAction as Record<string, unknown>)?.requestContext,
+              }
+              delete action.resumeAction
+              logger.info({ requestId, textLen: queuedUserText.length }, '[SVC] injected queued userText into resumeAction → userMessageAction')
+            }
+          }
+          for await (const frame of handleRunRequest(actualFirstMsg, session)) {
             yield frame
           }
         }
