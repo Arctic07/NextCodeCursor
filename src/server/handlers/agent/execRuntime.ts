@@ -1,7 +1,7 @@
 import type { AgentServerMessage } from '../../gen/agent_v1_pb';
 import { logger } from '../../logger';
 import type { ProviderRoundContext } from '../llm/providerRuntime';
-import type { LLMMessage } from '../llm/types';
+import type { LLMContentBlock, LLMMessage } from '../llm/types';
 import {
     buildExecToolResult,
     buildShellToolResult,
@@ -51,6 +51,7 @@ export async function* finalizeExecTool(params: {
     input: Record<string, unknown>;
     roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>;
     messages: LLMMessage[];
+    imageCollector?: LLMContentBlock[];
 }): AsyncGenerator<AgentServerMessage, AgentServerMessage, void> {
     let toolResult: ToolResultEnvelope = { result: { case: 'error', value: { message: 'no result' } } };
     let completedFrame: AgentServerMessage | null = null;
@@ -175,6 +176,8 @@ export async function* finalizeExecTool(params: {
         });
         toolResult = finalized.toolResult;
         completedFrame = finalized.frame;
+        if (finalized.imageBlock && params.imageCollector)
+            params.imageCollector.push(finalized.imageBlock);
         logger.info({
             tool: params.toolName,
             stdoutLen: stdout.length,
@@ -203,6 +206,8 @@ export async function* finalizeExecTool(params: {
             });
             toolResult = finalized.toolResult;
             completedFrame = finalized.frame;
+            if (finalized.imageBlock && params.imageCollector)
+                params.imageCollector.push(finalized.imageBlock);
             logger.info({ tool: params.toolName }, '[TOOL] exec result received');
         } else {
             logger.warn({ tool: params.toolName }, '[TOOL] exec ended without result');

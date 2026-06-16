@@ -9,12 +9,32 @@ import {
     type ToolResultEnvelope,
 } from './shared';
 
-function normalizeReadOutput(value: unknown): { case: 'content' | 'data'; value: unknown } {
+type ReadOutputCase = 'content' | 'data' | 'dataBlobId' | 'contentBlobId';
+
+/** base64 / Uint8Array / Buffer → Uint8Array。protobuf bytes 经 toJson() 后变成 base64 string。 */
+function toBytes(value: unknown): Uint8Array {
+    if (value instanceof Uint8Array) return value;
+    if (typeof value === 'string') return Uint8Array.from(Buffer.from(value, 'base64'));
+    return new Uint8Array(0);
+}
+
+function resolveReadOutput(success: Record<string, unknown>): { case: ReadOutputCase; value: unknown } {
+    if (success.dataBlobId !== undefined) return { case: 'dataBlobId', value: toBytes(success.dataBlobId) };
+    if (success.contentBlobId !== undefined) return { case: 'contentBlobId', value: toBytes(success.contentBlobId) };
+    if (success.data !== undefined) return { case: 'data', value: toBytes(success.data) };
+    return { case: 'content', value: str(success.content) };
+}
+
+function normalizeReadOutput(value: unknown): { case: ReadOutputCase; value: unknown } {
     const output = obj(value);
+    if (output.case === 'dataBlobId') return { case: 'dataBlobId', value: toBytes(output.value) };
+    if (output.case === 'contentBlobId') return { case: 'contentBlobId', value: toBytes(output.value) };
+    if (output.case === 'data') return { case: 'data', value: toBytes(output.value) };
     if (output.case === 'content') return { case: 'content', value: str(output.value) };
-    if (output.case === 'data') return { case: 'data', value: output.value };
+    if (output.dataBlobId !== undefined) return { case: 'dataBlobId', value: toBytes(output.dataBlobId) };
+    if (output.contentBlobId !== undefined) return { case: 'contentBlobId', value: toBytes(output.contentBlobId) };
+    if (output.data !== undefined) return { case: 'data', value: toBytes(output.data) };
     if (typeof output.content === 'string') return { case: 'content', value: output.content };
-    if (output.data !== undefined) return { case: 'data', value: output.data };
     return { case: 'content', value: '' };
 }
 
@@ -28,16 +48,14 @@ export function buildFileExecToolResult(
             const rr = obj(execClientMsg.readResult);
             if (rr.success) {
                 const success = obj(rr.success);
-                const output = success.data !== undefined
-                    ? { case: 'data', value: success.data }
-                    : { case: 'content', value: str(success.content) };
+                const output = resolveReadOutput(success);
                 return {
                     result: {
                         case: 'success',
                         value: {
                             path: str(success.path, str(input.path)),
                             totalLines: num(success.totalLines),
-                            fileSize: success.fileSize ?? 0,
+                            fileSize: num(success.fileSize),
                             truncated: bool(success.truncated),
                             rangeApplied: bool(success.rangeApplied),
                             ...(success.outputBlobId ? { outputBlobId: success.outputBlobId } : {}),
@@ -119,12 +137,14 @@ export function normalizeFileToolResult(
         case 'readToolCall': {
             if (resultCaseName === 'success') {
                 const normalizedOutput = normalizeReadOutput(
-                    value.output ?? (value.data !== undefined ? { data: value.data } : { content: value.content }),
+                    value.output ?? (value.dataBlobId !== undefined ? { dataBlobId: value.dataBlobId }
+                        : value.contentBlobId !== undefined ? { contentBlobId: value.contentBlobId }
+                            : value.data !== undefined ? { data: value.data } : { content: value.content }),
                 );
                 return envelope('success', {
                     path: str(value.path, str(input.path)),
                     totalLines: num(value.totalLines),
-                    fileSize: value.fileSize ?? 0,
+                    fileSize: num(value.fileSize),
                     truncated: bool(value.truncated),
                     rangeApplied: bool(value.rangeApplied),
                     ...(value.outputBlobId ? { outputBlobId: value.outputBlobId } : {}),
@@ -174,6 +194,8 @@ export function buildFileToolResultText(
                 const output = obj(value.output);
                 if (output.case === 'content' && typeof output.value === 'string') return truncate(output.value, 12000);
                 if (typeof output.content === 'string') return truncate(output.content, 12000);
+                if (output.case === 'data' || output.case === 'dataBlobId' || output.case === 'contentBlobId')
+                    return `[Binary file: ${str(value.path, str(input.path))} (${num(value.fileSize)} bytes)]`;
                 return truncate(JSON.stringify(value));
             }
             return `Read ${resultCaseName || 'error'}: ${JSON.stringify(value)}`;

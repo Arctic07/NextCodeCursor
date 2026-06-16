@@ -945,6 +945,7 @@ export async function* handleConversationRun(
         yield cacheAndBuildKvBlob(++blobCounter, blob)
 
       const roundContext = route.createRoundContext()
+      const roundImageBlocks: LLMContentBlock[] = []
 
       // ── Phase 1: 批量发送 Task tool 的 started + exec（不等待结果） ──
       const taskLaunches: TaskLaunchContext[] = []
@@ -985,6 +986,7 @@ export async function* handleConversationRun(
           messages,
           allocateExecMessageId: () => ++blobCounter,
           allocateInteractionId: () => interactionIdCounter++,
+          imageCollector: roundImageBlocks,
         })
         for await (const frame of toolFrames) {
           const completedToolCall = extractCompletedToolCall(frame)
@@ -1043,6 +1045,11 @@ export async function* handleConversationRun(
       }
       const transition = roundContext.transition(messages, assistantContent)
       flushedToolResults = transition.flushedToolResults;
+
+      if (roundImageBlocks.length > 0) {
+        messages.push({ role: 'user', content: roundImageBlocks })
+        logger.info({ count: roundImageBlocks.length }, '[AGENT] injected image blocks from Read tool results')
+      }
 
       ({ nextIndex: nextBlobbedMessageIndex, blobCounter } = yield* flushMessageBlobs(
         kvMessage,

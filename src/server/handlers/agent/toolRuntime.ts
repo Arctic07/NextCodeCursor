@@ -1,7 +1,7 @@
 import type { AgentServerMessage } from '../../gen/agent_v1_pb';
 import { logger } from '../../logger';
 import type { ProviderRoundContext } from '../llm/providerRuntime';
-import type { LLMMessage } from '../llm/types';
+import type { LLMContentBlock, LLMMessage } from '../llm/types';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
 import { finalizeInteractionTool } from './interactionRuntime';
@@ -64,6 +64,7 @@ export async function* runToolCall(params: {
     messages: LLMMessage[];
     allocateExecMessageId: () => number;
     allocateInteractionId: () => number;
+    imageCollector?: LLMContentBlock[];
 }): AsyncGenerator<AgentServerMessage, void, void> {
     yield* runToolCallInner(params);
 }
@@ -218,6 +219,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
                 input: sanitizedInput,
                 roundContext: params.roundContext,
                 messages: params.messages,
+                imageCollector: params.imageCollector,
             });
             return;
         }
@@ -249,6 +251,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             input: sanitizedInput,
             roundContext: params.roundContext,
             messages: params.messages,
+            imageCollector: params.imageCollector,
         });
         return;
     }
@@ -291,6 +294,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             input: sanitizedInput,
             roundContext: params.roundContext,
             messages: params.messages,
+            imageCollector: params.imageCollector,
                     });
         return;
     }
