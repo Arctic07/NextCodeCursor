@@ -143,11 +143,16 @@ function loadCatalog(): CatalogEntry[] {
 
 /**
  * Fuse.js 模糊搜索 id + name,返回前 N 条。
- * query 为空时返回空数组 (不给"浏览全库"能力,避免无意义的大面板)。
+ * query 为空时返回按 releaseDate 降序的最新条目 (browse 模式)。
  */
 export function searchCatalog(query: string, limit = 20): CatalogEntry[] {
-  loadCatalog()
-  if (!query.trim() || !fuse)
+  const entries = loadCatalog()
+  if (!query.trim()) {
+    return [...entries]
+      .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? ''))
+      .slice(0, limit)
+  }
+  if (!fuse)
     return []
   return fuse.search(query, { limit })
     .map(r => r.item)

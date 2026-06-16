@@ -3,9 +3,13 @@ export function Autocomplete() {
   return (
     <div
       class="autocomplete-list"
-      x-show="$store.app.ac && $store.app.ac.pid === p.id && $store.app.ac.mid === m.id && $store.app.ac.results.length > 0"
+      x-show="$store.app.ac && $store.app.ac.pid === p.id && $store.app.ac.mid === m.id"
       x-cloak
     >
+      {/* 结果未到达时显示 loading */}
+      <div class="ac-loading" x-show="!$store.app.ac?.results?.length">
+        <span class="ac-spinner"></span>
+      </div>
       <template x-for="(r, i) in ($store.app.ac?.results || [])" x-bind:key="r.id + '-' + i">
         <div
           class="autocomplete-item"

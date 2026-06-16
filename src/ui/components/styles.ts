@@ -111,6 +111,15 @@ export const styles = /* css */ `
   .err { color: var(--vscode-errorForeground); font-size: 10px; margin-top: 2px; }
 
   .autocomplete { position: relative; }
+  .ac-input-wrap { display: flex; align-items: stretch; }
+  .ac-input-wrap input { flex: 1; border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; min-width: 0; }
+  .ac-toggle { display: flex; align-items: center; justify-content: center; width: 28px; padding: 0; border: 1px solid var(--vscode-input-border, var(--vscode-widget-border)); border-left: none; border-radius: 0 2px 2px 0; background: var(--vscode-input-background); color: var(--vscode-foreground); cursor: pointer; opacity: 0.55; font-size: 16px; min-width: auto; line-height: 1; }
+  .ac-toggle:hover { opacity: 1; background: var(--vscode-list-hoverBackground); }
+  .ac-toggle-caret { display: inline-block; transition: transform 0.15s ease; }
+  .ac-toggle-caret.open { transform: rotate(180deg); }
+  .ac-loading { display: flex; align-items: center; justify-content: center; padding: 12px 0; }
+  @keyframes ac-spin { to { transform: rotate(360deg); } }
+  .ac-spinner { width: 16px; height: 16px; border: 2px solid var(--vscode-widget-border, #555); border-top-color: var(--vscode-focusBorder, #007acc); border-radius: 50%; animation: ac-spin 0.6s linear infinite; }
   .autocomplete-list { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; background: var(--vscode-quickInput-background, var(--vscode-editorWidget-background)); border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border)); box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-height: 200px; overflow-y: auto; margin-top: 1px; }
   .autocomplete-item { padding: 4px 8px; cursor: pointer; font-size: 11px; border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border)); }
   .autocomplete-item:last-child { border-bottom: none; }

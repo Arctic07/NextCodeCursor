@@ -683,15 +683,26 @@ export function initApp(Alpine: AlpineType) {
       if (acTimer)
         clearTimeout(acTimer)
       const q = query.trim()
-      if (q.length < 2) {
-        this.ac = null
+      if (q.length < 2 && !this.ac) {
         return
       }
       acTimer = setTimeout(() => {
         const reqId = ++this.acReqId
         this.ac = { pid, mid, results: [], selected: 0, reqId }
-        vscode.postMessage({ type: 'searchCatalog', query: q, requestId: reqId })
+        vscode.postMessage({ type: 'searchCatalog', query: q.length >= 2 ? q : '', requestId: reqId })
       }, 120)
+    },
+
+    toggleCatalog(pid: string, mid: string, inputEl: HTMLInputElement | null) {
+      if (this.ac?.pid === pid && this.ac?.mid === mid) {
+        this.ac = null
+        return
+      }
+      const q = (inputEl?.value ?? '').trim()
+      const reqId = ++this.acReqId
+      this.ac = { pid, mid, results: [], selected: 0, reqId }
+      vscode.postMessage({ type: 'searchCatalog', query: q, requestId: reqId })
+      inputEl?.focus()
     },
 
     applyCatalogEntry(pid: string, mid: string, entry: any) {
@@ -723,10 +734,13 @@ export function initApp(Alpine: AlpineType) {
         m.supportsImages = entry.hasImages
 
       this.ac = null
-      // blur input 使 x-effect 同步 DOM 值
+      // x-effect 在 input 聚焦时不回写 DOM，blur 后又不重跑（m.apiModel 无二次变化）。
+      // 因此手动将选中的 entry.id 写入 DOM 再 blur，确保完整 model ID 上屏。
       queueMicrotask(() => {
-        if (document.activeElement instanceof HTMLInputElement)
+        if (document.activeElement instanceof HTMLInputElement) {
+          document.activeElement.value = m.apiModel || ''
           document.activeElement.blur()
+        }
       })
     },
 

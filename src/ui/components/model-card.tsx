@@ -65,18 +65,30 @@ export function ModelCard() {
             {'API Model '}
             <span style="opacity:.5;font-weight:normal;text-transform:none">(fuzzy catalog search)</span>
           </label>
-          <input
-            type="text"
-            x-effect="if(document.activeElement !== $el) $el.value = m.apiModel || ''"
-            x-on:input="$store.app.updateModelField(p.id, m.id, 'apiModel', $event.target.value); $store.app.searchCatalog(p.id, m.id, $event.target.value)"
-            {...{ 'x-on:blur': '$store.app.syncModelId(p.id, m.id)' }}
-            {...{ 'x-on:keydown.arrow-down.prevent': '$store.app.acNavigate(1)' }}
-            {...{ 'x-on:keydown.arrow-up.prevent': '$store.app.acNavigate(-1)' }}
-            {...{ 'x-on:keydown.enter.prevent': '$store.app.acSelect(p.id, m.id)' }}
-            {...{ 'x-on:keydown.escape.prevent': '$store.app.acClose()' }}
-            autocomplete="off"
-            x-bind:class="{'invalid': me?.apiModel}"
-          />
+          <div class="ac-input-wrap">
+            <input
+              type="text"
+              x-ref="acInput"
+              x-effect="if(document.activeElement !== $el) $el.value = m.apiModel || ''"
+              x-on:input="$store.app.updateModelField(p.id, m.id, 'apiModel', $event.target.value); $store.app.searchCatalog(p.id, m.id, $event.target.value)"
+              {...{ 'x-on:blur': '$store.app.syncModelId(p.id, m.id)' }}
+              {...{ 'x-on:keydown.arrow-down.prevent': '$store.app.acNavigate(1)' }}
+              {...{ 'x-on:keydown.arrow-up.prevent': '$store.app.acNavigate(-1)' }}
+              {...{ 'x-on:keydown.enter.prevent': '$store.app.acSelect(p.id, m.id)' }}
+              {...{ 'x-on:keydown.escape.prevent': '$store.app.acClose()' }}
+              autocomplete="off"
+              x-bind:class="{'invalid': me?.apiModel}"
+            />
+            <button
+              class="ac-toggle"
+              type="button"
+              title="Browse model catalog"
+              tabindex={-1}
+              {...{ 'x-on:mousedown.prevent': '$store.app.toggleCatalog(p.id, m.id, $refs.acInput)' }}
+            >
+              <span class="ac-toggle-caret" x-bind:class="{ 'open': $store.app.ac?.pid === p.id && $store.app.ac?.mid === m.id }">&#x25BE;</span>
+            </button>
+          </div>
           <div class="err" x-show="me?.apiModel" x-text="me?.apiModel"></div>
           <Autocomplete />
         </div>
