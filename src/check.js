@@ -23,18 +23,22 @@ export async function check() {
 
   let allOk = true;
 
-  // 1. Renderer hook anchor (inject patch)
-  if (existsSync(paths.workbenchJs)) {
-    const wb = readFileSync(paths.workbenchJs, 'utf-8');
+  // 1. Renderer hook anchor (inject patch) — desktop + glass
+  for (const [file, label] of [[paths.workbenchJs, 'desktop'], [paths.glassJs, 'glass']]) {
+    if (!existsSync(file)) {
+      if (label === 'glass') console.log(info('Glass workbench not found (pre-3.8, OK)'));
+      continue;
+    }
+    const wb = readFileSync(file, 'utf-8');
     const anchors = [
       'bufbuild/connect/callback-client',
       'bufbuild/connect/promise-client',
     ];
     const found = anchors.find(a => wb.includes(a));
     if (found) {
-      console.log(ok(`Inject anchor: "${found}"`));
+      console.log(ok(`Inject anchor (${label}): "${found}"`));
     } else {
-      console.log(fail('Inject anchor not found'));
+      console.log(fail(`Inject anchor (${label}) not found`));
       allOk = false;
     }
   }

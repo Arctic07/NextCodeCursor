@@ -28,13 +28,22 @@ export async function status() {
   const extInstalled = isExtensionInstalled(paths);
   console.log(extInstalled ? ok('Extension installed') : fail('Extension not installed'));
 
-  // Inject
+  // Inject (desktop)
   if (existsSync(paths.workbenchJs)) {
     const wb = readFileSync(paths.workbenchJs, 'utf-8');
     const injected = wb.includes('__byokWrapTransport');
-    console.log(injected ? ok('Renderer hook injected') : fail('Renderer hook not injected'));
+    console.log(injected ? ok('Renderer hook injected (desktop)') : fail('Renderer hook not injected (desktop)'));
   } else {
-    console.log(na('workbench.js not found'));
+    console.log(na('workbench.desktop.main.js not found'));
+  }
+
+  // Inject (glass / Agent Window)
+  if (existsSync(paths.glassJs)) {
+    const gl = readFileSync(paths.glassJs, 'utf-8');
+    const injected = gl.includes('__byokWrapTransport');
+    console.log(injected ? ok('Renderer hook injected (glass)') : fail('Renderer hook not injected (glass)'));
+  } else {
+    console.log(na('workbench.glass.main.js not found (pre-3.8)'));
   }
 
   // Always-local
@@ -71,7 +80,7 @@ export async function status() {
 
   // Backups
   console.log('');
-  const backupFiles = [paths.workbenchJs, paths.alwaysLocalMain, paths.extensionHostJs, paths.productJson];
+  const backupFiles = [paths.workbenchJs, paths.glassJs, paths.alwaysLocalMain, paths.extensionHostJs, paths.productJson];
   const backupCount = backupFiles.filter(f => hasBackup(f)).length;
   console.log(`Backups: ${backupCount}/${backupFiles.length} files backed up`);
 }

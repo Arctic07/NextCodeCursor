@@ -3,7 +3,7 @@
  *
  * 从 patcher/src/inject.js 移植，与原版逻辑完全一致。
  */
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import * as acorn from 'acorn';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
@@ -590,12 +590,11 @@ function patchGlassExtensionAllowlist(code, log) {
   return result;
 }
 
-export function patchInject(paths, log) {
-  log?.('[inject] Patching workbench.js...');
-  const code = readFileSync(paths.workbenchJs, 'utf-8');
+function patchSingleWorkbench(filePath, label, paths, log) {
+  const code = readFileSync(filePath, 'utf-8');
 
   if (code.includes(HOOK_MARKER)) {
-    log?.('[inject] Already patched');
+    log?.(`[inject] ${label}: already patched`);
     return;
   }
 
@@ -613,19 +612,33 @@ export function patchInject(paths, log) {
   const payload = buildHookPayload();
   patched = `/* CURSOR-BYOK-HOOK-START */${payload}/* CURSOR-BYOK-HOOK-END */;${patched}`;
   // 4. MAX Mode toggle: 数据驱动隐藏
-  //    原始: S = !i   (i = hideMaxToggle prop, 始终 false → toggle 始终显示)
-  //    补丁: S = !i && o.some(...)  (o = models 数组, 无 supportsMaxMode 时隐藏)
-  //    锚定: 同一行包含 '"max mode".includes(d)' 的唯一行
   patched = patchMaxModeToggle(patched, log);
   // 5. KaTeX math SVG sanitizer: 放行根号 / stretchy delimiter 所需 inline SVG
   patched = patchKatexMathSvgSanitizer(patched, log);
   // 6. Glass Window (Agent Window) 扩展白名单放行
   patched = patchGlassExtensionAllowlist(patched, log);
 
-  if (!patched.includes(HOOK_MARKER)) throw new Error('Verification failed');
+  if (!patched.includes(HOOK_MARKER)) throw new Error(`Verification failed for ${label}`);
 
-  createBackup(paths.workbenchJs, 'inject', log);
-  writeFileSync(paths.workbenchJs, patched);
-  updateChecksums(paths, [paths.workbenchJs], 'inject', log);
+  createBackup(filePath, 'inject', log);
+  writeFileSync(filePath, patched);
+  updateChecksums(paths, [filePath], 'inject', log);
+}
+
+export function patchInject(paths, log) {
+  const targets = [
+    { path: paths.workbenchJs, label: 'desktop' },
+    { path: paths.glassJs, label: 'glass' },
+  ];
+
+  for (const { path, label } of targets) {
+    if (!existsSync(path)) {
+      log?.(`[inject] ${label}: not found, skipping (pre-3.8)`);
+      continue;
+    }
+    log?.(`[inject] Patching ${label} workbench.js...`);
+    patchSingleWorkbench(path, label, paths, log);
+  }
+
   log?.('[inject] Done');
 }

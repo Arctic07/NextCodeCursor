@@ -41,9 +41,11 @@ export async function install() {
   info(`Cursor: ${paths.appRoot}`);
 
   const extInstalled = isExtensionInstalled(paths);
-  const hookInjected = existsSync(paths.workbenchJs) && readFileSync(paths.workbenchJs, 'utf-8').includes('__byokWrapTransport');
+  const desktopPatched = existsSync(paths.workbenchJs) && readFileSync(paths.workbenchJs, 'utf-8').includes('__byokWrapTransport');
+  const glassPatched = !existsSync(paths.glassJs) || readFileSync(paths.glassJs, 'utf-8').includes('__byokWrapTransport');
+  const hookInjected = desktopPatched && glassPatched;
   const alPatched = existsSync(paths.alwaysLocalMain) && readFileSync(paths.alwaysLocalMain, 'utf-8').includes('__byokUrlRewrite');
-  const hasBackups = hasBackup(paths.workbenchJs) || hasBackup(paths.alwaysLocalMain) || hasBackup(paths.extensionHostJs);
+  const hasBackups = hasBackup(paths.workbenchJs) || hasBackup(paths.glassJs) || hasBackup(paths.alwaysLocalMain) || hasBackup(paths.extensionHostJs);
 
   if (extInstalled && hookInjected && alPatched) {
     ok('Already fully installed');
