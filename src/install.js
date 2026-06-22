@@ -39,6 +39,7 @@ export async function install() {
     throw new Error('Cursor installation not found');
   }
   info(`Cursor: ${paths.appRoot}`);
+  info(`Version: ${paths.cursorVersion}${paths.hasGlass ? ' (glass)' : ''}`);
 
   const extInstalled = isExtensionInstalled(paths);
   const desktopPatched = existsSync(paths.workbenchJs) && readFileSync(paths.workbenchJs, 'utf-8').includes('__byokWrapTransport');

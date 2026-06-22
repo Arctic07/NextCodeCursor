@@ -22,7 +22,7 @@
  *   CCURSOR_CURSOR_ROOT=/path/to/cursor/app   —— 绝对路径指向 resources/app 目录
  *   优先级最高,绕过所有自动检测
  */
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { homedir, platform } from 'os';
 import { join } from 'path';
 
@@ -72,9 +72,28 @@ function getExtensionHostPath(appRoot) {
   return join(appRoot, 'out', 'vs', 'workbench', 'api', 'node', 'extensionHostProcess.js');
 }
 
+function readCursorVersion(appRoot) {
+  try {
+    const pkg = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf-8'));
+    return pkg.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+function parseSemver(v) {
+  const [major = 0, minor = 0, patch = 0] = v.split('.').map(Number);
+  return { major, minor, patch };
+}
+
 function buildPaths(appRoot) {
+  const cursorVersion = readCursorVersion(appRoot);
+  const semver = parseSemver(cursorVersion);
+  const hasGlass = semver.major > 3 || (semver.major === 3 && semver.minor >= 8);
   return {
     appRoot,
+    cursorVersion,
+    hasGlass,
     workbenchJs: join(appRoot, 'out', 'vs', 'workbench', 'workbench.desktop.main.js'),
     glassJs: join(appRoot, 'out', 'vs', 'workbench', 'workbench.glass.main.js'),
     alwaysLocalMain: join(appRoot, 'extensions', 'cursor-always-local', 'dist', 'main.js'),
