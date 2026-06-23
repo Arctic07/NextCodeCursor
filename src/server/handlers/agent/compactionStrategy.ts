@@ -23,7 +23,7 @@ export interface CompactionArtifacts {
     summaryText: string;
     summaryBlobId: string;
     summaryBlobData: string;
-    archiveBlobs: Array<{ blobId: string; blobData: string }>;
+    archiveBlobs: Array<{ blobId: string; blobData: string; blobDataRaw?: Uint8Array }>;
     nextRootBlobIds: string[];
     nextSummaryArchiveIds: string[];
 }
@@ -130,10 +130,10 @@ function hasToolUse(message: LLMMessage): boolean {
     return message.content.some(b => b.type === 'tool_use');
 }
 
-function encodeBinaryBlob(bytes: Uint8Array): { blobId: string; blobData: string } {
+function encodeBinaryBlob(bytes: Uint8Array): { blobId: string; blobData: string; blobDataRaw: Uint8Array } {
     const blobData = Buffer.from(bytes).toString('base64');
     const blobId = createHash('sha256').update(blobData).digest('base64');
-    return { blobId, blobData };
+    return { blobId, blobData, blobDataRaw: bytes };
 }
 
 export function createCompactionArtifacts(params: {
@@ -152,7 +152,7 @@ export function createCompactionArtifacts(params: {
         .filter(entry => !isSummaryBlobMessage(entry.raw))
         .map(entry => entry.blobId);
 
-    const archiveBlobs: Array<{ blobId: string; blobData: string }> = [];
+    const archiveBlobs: Array<{ blobId: string; blobData: string; blobDataRaw?: Uint8Array }> = [];
     let nextSummaryArchiveIds = [...params.previousSummaryArchiveIds];
     if (archiveSourceBlobIds.length > 0) {
         const encoder = new TextEncoder();

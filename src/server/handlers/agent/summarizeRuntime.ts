@@ -198,7 +198,7 @@ export async function* handleSummarizeAction(
 
     yield kvMessage(1, artifacts.summaryBlobId, artifacts.summaryBlobData);
     for (const [index, archiveBlob] of artifacts.archiveBlobs.entries()) {
-        yield kvMessage(2 + index, archiveBlob.blobId, archiveBlob.blobData);
+        yield kvMessage(2 + index, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw);
     }
 
     const compactedUsedTokens = clampTokenDetails(

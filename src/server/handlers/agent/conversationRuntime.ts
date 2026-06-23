@@ -300,9 +300,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function cacheAndBuildKvBlob(id: number, blob: { blobId: string, blobData: string }): AgentServerMessage {
+function cacheAndBuildKvBlob(id: number, blob: { blobId: string; blobData: string; blobDataRaw?: Uint8Array }): AgentServerMessage {
   cacheBlob(blob.blobId, blob.blobData)
-  return kvMessage(id, blob.blobId, blob.blobData)
+  return kvMessage(id, blob.blobId, blob.blobData, blob.blobDataRaw)
 }
 
 function recordAssistantBlocksIntoTurn(turn: ActiveTurnTracker | null, blocks: LLMContentBlock[]): Array<{ blobId: string, blobData: string }> {
@@ -475,7 +475,7 @@ async function* performInlineAutoSummarize(params: {
 
   yield kvMessage(1, artifacts.summaryBlobId, artifacts.summaryBlobData)
   for (const [index, archiveBlob] of artifacts.archiveBlobs.entries()) {
-    yield kvMessage(2 + index, archiveBlob.blobId, archiveBlob.blobData)
+    yield kvMessage(2 + index, archiveBlob.blobId, archiveBlob.blobData, archiveBlob.blobDataRaw)
   }
 
   const compactedTokenDetails = clampTokenDetails(

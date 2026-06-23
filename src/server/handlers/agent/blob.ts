@@ -23,9 +23,11 @@ export function encodeBlob(data: unknown): { blobId: string; blobData: string } 
     return finalizeBlobData(Buffer.from(json).toString('base64'));
 }
 
-/** 将 protobuf / binary 数据编码为 blob (base64) 并计算 blobId (sha256) */
-export function encodeBinaryBlob(bytes: Uint8Array): { blobId: string; blobData: string } {
-    return finalizeBlobData(Buffer.from(bytes).toString('base64'));
+/** 将 protobuf / binary 数据编码为 blob (base64) 并计算 blobId (sha256)。
+ *  blobDataRaw 保留原始 bytes，供 kvMessage 直接发给客户端（fork 时客户端 fromBinary 需要 raw protobuf）。 */
+export function encodeBinaryBlob(bytes: Uint8Array): { blobId: string; blobData: string; blobDataRaw: Uint8Array } {
+    const { blobId, blobData } = finalizeBlobData(Buffer.from(bytes).toString('base64'));
+    return { blobId, blobData, blobDataRaw: bytes };
 }
 
 /** 解码 blob base64 → JSON */

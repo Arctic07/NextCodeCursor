@@ -466,15 +466,15 @@ export function kvGetBlob(id: number, blobId: Uint8Array): AgentServerMessage {
  * - system scaffold blob 使用 id=0 (proto scalar default，JSON 中通常省略)
  * - 首个 ordered blob 从 id=1 开始
  *
- * blobData 存的是 base64 文本的 UTF-8 字节 —— 官方抓包确认 blobData 内容就是
- * base64 编码的 JSON (e.g. eyJyb2xlIjoic3lzdGVtIi...)。Client blob store 按原样
- * 存储这些 base64 文本字节。fork (deepCloneComposer) 不解析 blobData 内容，
- * 只做 key lookup + 整体搬运。
+ * blobData 分两种场景:
+ *   - JSON blob (encodeBlob): base64 文本 → TextEncoder.encode → 客户端按原样存储
+ *   - Protobuf blob (encodeBinaryBlob): blobDataRaw 直接传 raw protobuf bytes，
+ *     客户端存 raw bytes，fork 时 fromBinary 可直接解析
  *
- * blobId 同理，存的是 base64 文本的 UTF-8 字节（sha256 hash 的 base64 表示），
+ * blobId 始终存的是 base64 文本的 UTF-8 字节（sha256 hash 的 base64 表示），
  * 与 checkpoint.turns / turn 内部引用保持一致。
  */
-export function kvMessage(id: number | undefined, blobId: string, blobData: string): AgentServerMessage {
+export function kvMessage(id: number | undefined, blobId: string, blobData: string, blobDataRaw?: Uint8Array): AgentServerMessage {
   return create(AgentServerMessageSchema, {
     message: {
       case: 'kvServerMessage',
@@ -484,7 +484,7 @@ export function kvMessage(id: number | undefined, blobId: string, blobData: stri
           case: 'setBlobArgs',
           value: {
             blobId: new TextEncoder().encode(blobId),
-            blobData: new TextEncoder().encode(blobData),
+            blobData: blobDataRaw ?? new TextEncoder().encode(blobData),
           },
         } as any,
       }),
