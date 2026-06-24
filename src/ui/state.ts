@@ -97,10 +97,14 @@ export async function probeByokServer(host: string, port: number): Promise<Serve
     const data = await response.json().catch(() => null) as any
     if (response.ok && data?.ok === true && data?.mode === 'byok')
       return { kind: 'byok' }
+    // HTTP 响应了但不是 BYOK server — 真正被占用
     return { kind: 'occupied', reason: `unexpected /health response: HTTP ${response.status}` }
   }
-  catch (err) {
-    return { kind: 'occupied', reason: err instanceof Error ? err.message : String(err) }
+  catch {
+    // TCP reachable 但 HTTP fetch 失败 (connection reset, timeout, non-HTTP service)
+    // 不判定为 occupied — 可能是 Windows 网络栈假阳性或 always-local patch 干扰。
+    // 让 Fastify listen 的 EADDRINUSE 做最终仲裁。
+    return { kind: 'offline' }
   }
   finally {
     clearTimeout(timer)
