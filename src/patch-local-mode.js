@@ -1,68 +1,86 @@
 /**
- * Local Mode Patch — 启用 Cursor 官方 Local Agent 配置能力
+ * Local Mode Patcher — 独立补丁
  *
- * Cursor 内置了 localMode 构建标志 (buildFlags.localMode)，控制:
- *   - Local Agent Configuration Modal (API key + base URL 配置界面)
- *   - Agent 运行路径切换 (runLocalAgentInExtensionHost 替代 ConnectRPC)
- *   - 环境变量读取 (CURSOR_LOCAL_AGENT_BASE_URL / CURSOR_LOCAL_AGENT_API_KEY)
- *   - 遥测禁用、Canvas 分享禁用等
+ * 翻转 Cursor 内置的 buildFlags.localMode 编译标志:
+ *   localMode:!1 → localMode:!0
  *
- * 当前所有发布版硬编码 localMode: false。此 patch 翻转为 true。
+ * 影响所有进程的构建产物:
+ *   - main.js (主进程: Sentry/更新 URL)
+ *   - workbench.desktop.main.js (Editor Window: Agent 运行/模型/遥测/UI)
+ *   - workbench.glass.main.js (Agent Window: 同上)
+ *   - extensionHostProcess.js (EHP: agentExecProvider.runLocalAgent)
+ *   - alwaysLocalSingletonMain.js (utility process: 编译标志引用)
  *
- * 目标文件 (所有包含 buildFlags 定义的 bundle):
- *   - main.js (主进程)
- *   - workbench.desktop.main.js (Editor Window renderer)
- *   - workbench.glass.main.js (Agent Window renderer, 3.8+)
- *   - extensionHostProcess.js (extension host)
- *   - alwaysLocalSingletonMain.js (utility process, 3.8+)
+ * 启用后 Cursor 进入 Local Agent 模式:
+ *   - Agent 运行走 extension host 内的 agentExecProvider，直接调 LLM API
+ *   - 模型列表从 storage.localProviderModelIds 读取
+ *   - Settings UI 显示 Local Agent Configuration Modal
+ *   - 通过 CURSOR_LOCAL_AGENT_BASE_URL / CURSOR_LOCAL_AGENT_API_KEY 环境变量配置
+ *   - 或通过 Settings UI 的 Base URL + API Key 输入框配置
+ *
+ * 此补丁独立于 inject/always-local/katex 补丁管线:
+ *   - 使用独立的 backup tag 'local-mode'
+ *   - 可单独 install/uninstall
+ *   - 不影响 BYOK Server 的 ConnectRPC 代理方案
  */
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 
-const NEEDLE = 'cursorPredictionOptions:!1,localMode:!1';
-const REPLACEMENT = 'cursorPredictionOptions:!1,localMode:!0';
+const TAG = 'local-mode';
+const PATTERN = 'localMode:!1';
+const REPLACEMENT = 'localMode:!0';
+
+const TARGET_FILES = [
+  'out/main.js',
+  'out/vs/workbench/workbench.desktop.main.js',
+  'out/vs/workbench/workbench.glass.main.js',
+  'out/vs/workbench/api/node/extensionHostProcess.js',
+  'out/vs/code/electron-utility/alwaysLocalSingleton/alwaysLocalSingletonMain.js',
+];
 
 export function patchLocalMode(paths, log) {
-  const targets = [
-    { path: paths.workbenchJs, label: 'desktop' },
-    { path: paths.glassJs, label: 'glass' },
-    { path: paths.extensionHostJs, label: 'extensionHost' },
-    { path: join(paths.appRoot, 'out', 'main.js'), label: 'main' },
-    { path: join(paths.appRoot, 'out', 'vs', 'code', 'electron-utility', 'alwaysLocalSingleton', 'alwaysLocalSingletonMain.js'), label: 'alwaysLocalSingleton' },
-  ];
+  log?.('[local-mode] Patching buildFlags.localMode...');
 
-  const patched = [];
-  const checksumFiles = [];
+  let patched = 0;
+  const modifiedFiles = [];
 
-  for (const { path, label } of targets) {
-    if (!existsSync(path)) {
-      log?.(`  [local-mode] ${label}: not found, skipping`);
+  for (const rel of TARGET_FILES) {
+    const filePath = join(paths.appRoot, rel);
+    if (!existsSync(filePath)) {
+      log?.(`  [local-mode] ${rel}: not found, skipping`);
       continue;
     }
-    const code = readFileSync(path, 'utf-8');
+
+    const code = readFileSync(filePath, 'utf-8');
     if (code.includes(REPLACEMENT)) {
-      log?.(`  [local-mode] ${label}: already patched`);
+      log?.(`  [local-mode] ${rel}: already patched`);
+      patched++;
       continue;
     }
-    if (!code.includes(NEEDLE)) {
-      log?.(`  [local-mode] ${label}: needle not found, skipping`);
+    if (!code.includes(PATTERN)) {
+      log?.(`  [local-mode] ${rel}: pattern not found, skipping`);
       continue;
     }
-    createBackup(path, 'local-mode', log);
-    writeFileSync(path, code.replace(NEEDLE, REPLACEMENT));
-    checksumFiles.push(path);
-    patched.push(label);
+
+    createBackup(filePath, TAG, log);
+    writeFileSync(filePath, code.replace(PATTERN, REPLACEMENT));
+    modifiedFiles.push(filePath);
+    patched++;
+    log?.(`  [local-mode] ${rel}: patched`);
   }
 
-  if (checksumFiles.length > 0) {
-    updateChecksums(paths, checksumFiles, 'local-mode', log);
+  if (modifiedFiles.length > 0) {
+    updateChecksums(paths, modifiedFiles, TAG, log);
   }
 
-  if (patched.length > 0) {
-    log?.(`  [local-mode] patched ${patched.length} file(s): ${patched.join(', ')}`);
-  } else {
-    log?.('  [local-mode] no files needed patching');
-  }
+  log?.(`[local-mode] Done (${patched}/${TARGET_FILES.length} files)`);
+  return patched;
+}
+
+export function isLocalModePatched(paths) {
+  const mainJs = join(paths.appRoot, TARGET_FILES[0]);
+  if (!existsSync(mainJs)) return false;
+  return readFileSync(mainJs, 'utf-8').includes(REPLACEMENT);
 }
