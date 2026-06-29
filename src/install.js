@@ -8,7 +8,8 @@
  *   3. 注入 renderer hook (workbench.js)
  *   4. 注入 always-local 拦截 + 签名绕过 + 优先加载 (extensionHostProcess.js)
  *   5. KaTeX CSS link 修补 (workbench.html)
- *   6. 提示重启
+ *   6. 启用 Local Agent 配置能力 (buildFlags.localMode)
+ *   7. 提示重启
  */
 import { existsSync, readFileSync } from 'fs';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
@@ -17,6 +18,7 @@ import { hasBackup } from './backup.js';
 import { patchInject } from './patch-inject.js';
 import { patchAlwaysLocal } from './patch-always-local.js';
 import { patchKatex } from './patch-katex.js';
+import { patchLocalMode } from './patch-local-mode.js';
 // delete-fix 已移除 — 3.2.11 原生 tombstoneDeletedComposer 已覆盖
 import { releaseDefaults } from './release-defaults.js';
 
@@ -76,6 +78,10 @@ export async function install() {
 
   // 5. KaTeX CSS link (workbench.html + checksum)
   patchKatex(paths, info);
+
+  // 6. Local Agent 配置能力 (buildFlags.localMode → true)
+  info('[local-mode] Enabling local agent configuration...');
+  patchLocalMode(paths, info);
 
   console.log('');
   ok('Installation complete!');

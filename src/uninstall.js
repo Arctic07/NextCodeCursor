@@ -2,10 +2,11 @@
  * ccursor uninstall — full rollback
  *
  * Reverse order (opposite of install):
- *   1. Restore katex group (product.json → workbench.html)
- *   2. Restore always-local group (product.json → extensionHostProcess.js → always-local.js)
- *   3. Restore inject group (product.json → workbench.js)
- *   4. Remove extensions/cursor2plus/
+ *   1. Restore local-mode group (product.json → all patched files)
+ *   2. Restore katex group (product.json → workbench.html)
+ *   3. Restore always-local group (product.json → extensionHostProcess.js → always-local.js)
+ *   4. Restore inject group (product.json → workbench.js)
+ *   5. Remove extensions/cursor2plus/
  */
 import { join } from 'path';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
@@ -34,7 +35,15 @@ export async function uninstall() {
   let restored = 0;
   const workbenchHtml = join(paths.appRoot, 'out', 'vs', 'code', 'electron-sandbox', 'workbench', 'workbench.html');
 
-  // 1. 倒序恢复 katex 组 (install 步骤 5 的逆操作)
+  // 1. 倒序恢复 local-mode 组 (install 步骤 6 的逆操作)
+  const mainJs = join(paths.appRoot, 'out', 'main.js');
+  const singletonJs = join(paths.appRoot, 'out', 'vs', 'code', 'electron-utility', 'alwaysLocalSingleton', 'alwaysLocalSingletonMain.js');
+  info('Restoring local-mode patches...');
+  for (const file of [paths.productJson, singletonJs, paths.extensionHostJs, paths.glassJs, paths.workbenchJs, mainJs]) {
+    if (restoreBackup(file, 'local-mode', info)) restored++;
+  }
+
+  // 2. 倒序恢复 katex 组 (install 步骤 5 的逆操作)
   info('Restoring katex patches...');
   for (const file of [paths.productJson, workbenchHtml]) {
     if (restoreBackup(file, 'katex', info)) restored++;
