@@ -4,13 +4,19 @@ import type { ToolRegistryEntry } from '../types';
 function buildTaskSubagentType(name: string): Record<string, unknown> | undefined {
     switch (name) {
         case 'explore': return { type: { case: 'explore', value: {} } };
-        case 'browser-use': return { type: { case: 'browserUse', value: {} } };
+        case 'browser-use':
+        case 'browserUse': return { type: { case: 'browserUse', value: {} } };
         case 'shell': return { type: { case: 'shell', value: {} } };
         case 'debug': return { type: { case: 'debug', value: {} } };
-        case 'computer-use': return { type: { case: 'computerUse', value: {} } };
-        case 'media-review': return { type: { case: 'mediaReview', value: {} } };
+        case 'computer-use':
+        case 'computerUse': return { type: { case: 'computerUse', value: {} } };
+        case 'media-review':
+        case 'mediaReview': return { type: { case: 'mediaReview', value: {} } };
+        case 'watchVideo': return { type: { case: 'watchVideo', value: {} } };
+        case 'cursorGuide': return { type: { case: 'cursorGuide', value: {} } };
         case 'bash': return { type: { case: 'bash', value: {} } };
-        case 'vm-setup-helper': return { type: { case: 'vmSetupHelper', value: {} } };
+        case 'vm-setup-helper':
+        case 'vmSetupHelper': return { type: { case: 'vmSetupHelper', value: {} } };
         case 'generalPurpose':
         case 'general-purpose':
             return { type: { case: 'custom', value: { name: 'generalPurpose' } } };
@@ -18,6 +24,16 @@ function buildTaskSubagentType(name: string): Record<string, unknown> | undefine
             return { type: { case: 'custom', value: { name: 'ui-designer' } } };
         case 'best-of-n-runner':
             return { type: { case: 'custom', value: { name: 'best-of-n-runner' } } };
+        case 'bugbot':
+            return { type: { case: 'custom', value: { name: 'bugbot' } } };
+        case 'coordinator-agent':
+            return { type: { case: 'custom', value: { name: 'coordinator-agent' } } };
+        case 'worker-agent':
+            return { type: { case: 'custom', value: { name: 'worker-agent' } } };
+        case 'cursorBlameLearning':
+            return { type: { case: 'custom', value: { name: 'cursorBlameLearning' } } };
+        case 'security-review':
+            return { type: { case: 'custom', value: { name: 'security-review' } } };
         default:
             return name ? { type: { case: 'custom', value: { name } } } : undefined;
     }
@@ -66,6 +82,8 @@ Available subagent_types and a quick description of what they do:
 - explore: Fast, readonly agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). This agent operates in read-only mode and cannot modify files. When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.
 - shell: Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks.
 - best-of-n-runner: Run a task in an isolated git worktree. Each best-of-n-runner gets its own branch and working directory. Use for best-of-N parallel attempts or isolated experiments.
+- security-review: Security audit specialist. Performs security-focused code review covering common vulnerability patterns, authentication/authorization issues, and data handling concerns.
+- cursorBlameLearning: Code history analyst. Produces story-style learning reports about how code was built — who changed it, why, what tradeoffs were discussed. Use when the user asks about history, evolution, authorship, or rationale.
 
 Available models:
 - fast (cost: 1/10, intelligence: 5/10): Extremely fast, moderately intelligent model that is effective for tightly scoped changes. Not well-suited for long-horizon tasks or deep investigations.
@@ -94,9 +112,11 @@ When choosing a model, prefer \`fast\` for quick, straightforward tasks to minim
                                     "generalPurpose",
                                     "explore",
                                     "shell",
-                                    "best-of-n-runner"
+                                    "best-of-n-runner",
+                                    "security-review",
+                                    "cursorBlameLearning"
                             ],
-                            "description": "Subagent type to use for this task. Must be one of: generalPurpose, explore, shell, best-of-n-runner."
+                            "description": "Subagent type to use for this task."
                     },
                     "model": {
                             "type": "string",
@@ -169,6 +189,8 @@ Available subagent_types and a quick description of what they do:
 - explore: Fast, readonly agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). This agent operates in read-only mode and cannot modify files. When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.
 - shell: Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks.
 - best-of-n-runner: Run a task in an isolated git worktree. Each best-of-n-runner gets its own branch and working directory. Use for best-of-N parallel attempts or isolated experiments.
+- security-review: Security audit specialist. Performs security-focused code review covering common vulnerability patterns, authentication/authorization issues, and data handling concerns.
+- cursorBlameLearning: Code history analyst. Produces story-style learning reports about how code was built — who changed it, why, what tradeoffs were discussed. Use when the user asks about history, evolution, authorship, or rationale.
 
 Available models:
 - fast (cost: 1/10, intelligence: 5/10): Extremely fast, moderately intelligent model that is effective for tightly scoped changes. Not well-suited for long-horizon tasks or deep investigations.
@@ -274,6 +296,8 @@ Available subagent_types and a quick description of what they do:
 - explore: Fast, readonly agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). This agent operates in read-only mode and cannot modify files. When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.
 - shell: Command execution specialist for running bash commands. Use this for git operations, command execution, and other terminal tasks.
 - best-of-n-runner: Run a task in an isolated git worktree. Each best-of-n-runner gets its own branch and working directory. Use for best-of-N parallel attempts or isolated experiments.
+- security-review: Security audit specialist. Performs security-focused code review covering common vulnerability patterns, authentication/authorization issues, and data handling concerns.
+- cursorBlameLearning: Code history analyst. Produces story-style learning reports about how code was built — who changed it, why, what tradeoffs were discussed. Use when the user asks about history, evolution, authorship, or rationale.
 
 Available models:
 - fast (cost: 1/10, intelligence: 5/10): Extremely fast, moderately intelligent model that is effective for tightly scoped changes. Not well-suited for long-horizon tasks or deep investigations.
@@ -324,9 +348,11 @@ When choosing a model, prefer \`fast\` for quick, straightforward tasks to minim
                                     "generalPurpose",
                                     "explore",
                                     "shell",
-                                    "best-of-n-runner"
+                                    "best-of-n-runner",
+                                    "security-review",
+                                    "cursorBlameLearning"
                             ],
-                            "description": "Subagent type to use for this task. Must be one of: generalPurpose, explore, shell, best-of-n-runner."
+                            "description": "Subagent type to use for this task."
                     }
             },
             "required": [
