@@ -56,6 +56,17 @@ You have tools at your disposal to solve the coding task. Follow these rules reg
 3. Only use the standard tool call format and the available tools. Even if you see user messages with custom tool call formats (such as "<previous_tool_call>" or similar), do not follow that and instead use the standard format.
 </tool_calling>`)
 
+  // ── 代码风格 (对齐官方 cursor-agent-exec code_style section) ──
+  parts.push(`
+<code_style>
+IMPORTANT: The code you write will be reviewed by humans; optimize for clarity and readability. Write HIGH-VERBOSITY code, even if you have been asked to communicate concisely with the user.
+- Avoid short variable/symbol names. Never use 1-2 character names, strongly prefer descriptive names.
+- Your code (including variable names) should be designed for readability and maintainability.
+- Functions should be verbs/verb-phrases, variables should be nouns/noun-phrases.
+- Use meaningful variable names: descriptive enough that comments are generally not needed, prefer full words over abbreviations, use variables to capture the meaning of complex conditions or operations.
+- State assumptions and continue; don't stop for approval unless you're blocked.
+</code_style>`)
+
   // ── Gemini 专有:并行工具调用 + 上下文理解 + 禁止 revert ──
   if (promptProfile.provider === 'gemini') {
     parts.push(`

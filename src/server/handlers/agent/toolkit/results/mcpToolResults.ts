@@ -195,7 +195,7 @@ export function buildMcpToolResultText(
                 if (value.structuredContent) return truncate(JSON.stringify(value.structuredContent, null, 2), 12000);
                 return 'MCP tool completed successfully.';
             }
-            return `MCP ${resultCaseName || 'error'}: ${JSON.stringify(value)}`;
+            return `MCP ${resultCaseName || 'error'}: ${JSON.stringify(value)}\n<system_reminder>\nThe MCP server rejected these arguments as invalid. Before retrying, inspect this MCP tool's input schema/tool definition and rebuild the arguments from that schema.\n</system_reminder>`;
         case 'listMcpResourcesToolCall':
             if (resultCaseName === 'success') {
                 const resources = arr<Record<string, unknown>>(value.resources);

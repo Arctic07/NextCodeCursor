@@ -44,7 +44,12 @@ export function finalizeToolCall(params: {
     modelCallId: string;
 }): { toolResult: ToolResultEnvelope; resultText: string; frame: AgentServerMessage; imageBlock: Extract<LLMContentBlock, { type: 'image' }> | null } {
     const toolResult = normalizeToolResult(params.cursorToolType, params.rawToolResult, params.input);
-    const resultText = buildToolResultText(params.cursorToolType, toolResult, params.input);
+    let resultText = buildToolResultText(params.cursorToolType, toolResult, params.input);
+    const isError = isToolResultError(toolResult);
+
+    if (isError) {
+        resultText += '\n\nPlease re-read the tool definition to understand the expected parameters before retrying.';
+    }
 
     params.roundContext.recordToolResult(
         params.messages,
@@ -52,7 +57,7 @@ export function finalizeToolCall(params: {
             toolCallId: params.callId,
             toolName: params.toolName,
             content: resultText,
-            isError: isToolResultError(toolResult),
+            isError,
         }),
     );
 
