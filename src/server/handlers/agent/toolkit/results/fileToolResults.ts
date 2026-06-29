@@ -14,7 +14,8 @@ type ReadOutputCase = 'content' | 'data' | 'dataBlobId' | 'contentBlobId';
 /** base64 / Uint8Array / Buffer → Uint8Array。protobuf bytes 经 toJson() 后变成 base64 string。 */
 function toBytes(value: unknown): Uint8Array {
     if (value instanceof Uint8Array) return value;
-    if (typeof value === 'string') return Uint8Array.from(Buffer.from(value, 'base64'));
+    if (Buffer.isBuffer(value)) return new Uint8Array(value);
+    if (typeof value === 'string' && value.length > 0) return Uint8Array.from(Buffer.from(value, 'base64'));
     return new Uint8Array(0);
 }
 

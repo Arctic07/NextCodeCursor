@@ -417,15 +417,20 @@ async function waitForRemoteByokServer(host: string, port: number, attempts = 8)
 }
 
 async function syncHttp1Setting(byokOn: boolean) {
-  const config = vscode.workspace.getConfiguration('cursor.general')
-  const current = config.get<boolean>('disableHttp2')
-  if (byokOn && !current) {
-    await config.update('disableHttp2', true, vscode.ConfigurationTarget.Global)
-    log('info', '[CFG] cursor.general.disableHttp2 → true (BYOK requires HTTP/1.1)')
+  try {
+    const config = vscode.workspace.getConfiguration('cursor.general')
+    const current = config.get<boolean>('disableHttp2')
+    if (byokOn && !current) {
+      await config.update('disableHttp2', true, vscode.ConfigurationTarget.Global)
+      log('info', '[CFG] cursor.general.disableHttp2 → true (BYOK requires HTTP/1.1)')
+    }
+    else if (!byokOn && current === true) {
+      await config.update('disableHttp2', undefined, vscode.ConfigurationTarget.Global)
+      log('info', '[CFG] cursor.general.disableHttp2 → removed (restored for official HTTP/2)')
+    }
   }
-  else if (!byokOn && current === true) {
-    await config.update('disableHttp2', undefined, vscode.ConfigurationTarget.Global)
-    log('info', '[CFG] cursor.general.disableHttp2 → removed (restored for official HTTP/2)')
+  catch (error) {
+    log('warn', `[CFG] syncHttp1Setting failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
