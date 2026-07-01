@@ -416,24 +416,6 @@ async function waitForRemoteByokServer(host: string, port: number, attempts = 8)
   return false
 }
 
-async function syncHttp1Setting(byokOn: boolean) {
-  try {
-    const config = vscode.workspace.getConfiguration('cursor.general')
-    const current = config.get<boolean>('disableHttp2')
-    if (byokOn && !current) {
-      await config.update('disableHttp2', true, vscode.ConfigurationTarget.Global)
-      log('info', '[CFG] cursor.general.disableHttp2 → true (BYOK requires HTTP/1.1)')
-    }
-    else if (!byokOn && current === true) {
-      await config.update('disableHttp2', undefined, vscode.ConfigurationTarget.Global)
-      log('info', '[CFG] cursor.general.disableHttp2 → removed (restored for official HTTP/2)')
-    }
-  }
-  catch (error) {
-    log('warn', `[CFG] syncHttp1Setting failed: ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
 async function doStartServer() {
   const cfg = getServerConfig()
 
@@ -580,9 +562,6 @@ export async function activate(context: vscode.ExtensionContext) {
       pushRoutesUpdate(restPaths)
       // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用)
       bumpRefreshSignal()
-      // 3. BYOK server 是 HTTP/1.1 (Fastify)，强制客户端 SSE 模式避免 HTTP/2 bidi 失败。
-      //    OFF 时移除覆盖，恢复用户原值或默认 (HTTP/2)。
-      await syncHttp1Setting(!!next.byokMode)
       const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
       vscode.window.showInformationMessage(`${label}. Model list will refresh automatically.`)
     }),
@@ -644,8 +623,6 @@ export async function activate(context: vscode.ExtensionContext) {
     await refreshState()
   }
 
-  // BYOK ON 时确保 HTTP/1.1 模式（首次安装 / 重启后同步）
-  await syncHttp1Setting(!!getState().byokMode)
   if (getState().server === 'remote')
     startHeartbeat()
 
