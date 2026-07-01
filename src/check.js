@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
 import { checkActivateInjection } from './patch-always-local.js';
+import { checkProxy39Patch, needsProxy39Patch } from './patch-proxy-39.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
 const fail = s => `\x1b[31m✗ ${s}\x1b[0m`;
@@ -60,7 +61,16 @@ export async function check() {
   const actOk = checkActivateInjection(paths, s => console.log(info(s)));
   if (!actOk) allOk = false;
 
-  // 4. cursor-always-local main.js
+  // 4. Cursor 3.9+ singleton BYOK router/proxy target
+  if (needsProxy39Patch(paths)) {
+    console.log(info('[check] Verifying Cursor 3.9 singleton BYOK router/proxy patch target...'));
+    const proxyOk = checkProxy39Patch(paths, s => console.log(info(s)));
+    if (!proxyOk) allOk = false;
+  } else {
+    console.log(info('Cursor 3.9 singleton BYOK router/proxy patch not required'));
+  }
+
+  // 5. cursor-always-local main.js
   if (existsSync(paths.alwaysLocalMain)) {
     console.log(ok('cursor-always-local main.js found'));
   } else {

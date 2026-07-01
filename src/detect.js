@@ -97,6 +97,7 @@ function buildPaths(appRoot) {
     workbenchJs: join(appRoot, 'out', 'vs', 'workbench', 'workbench.desktop.main.js'),
     glassJs: join(appRoot, 'out', 'vs', 'workbench', 'workbench.glass.main.js'),
     alwaysLocalMain: join(appRoot, 'extensions', 'cursor-always-local', 'dist', 'main.js'),
+    alwaysLocalSingletonJs: join(appRoot, 'out', 'vs', 'code', 'electron-utility', 'alwaysLocalSingleton', 'alwaysLocalSingletonMain.js'),
     extensionHostJs: getExtensionHostPath(appRoot),
     productJson: join(appRoot, 'product.json'),
     extensionsDir: join(appRoot, 'extensions'),

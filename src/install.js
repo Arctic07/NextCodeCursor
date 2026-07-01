@@ -7,8 +7,8 @@
  *   2. 安装扩展到 extensions/cursor2plus/
  *   3. 注入 renderer hook (workbench.js)
  *   4. 注入 always-local 拦截 + 签名绕过 + 优先加载 (extensionHostProcess.js)
- *   5. KaTeX CSS link 修补 (workbench.html)
- *   6. 启用 Local Agent 配置能力 (buildFlags.localMode)
+ *   5. Cursor 3.9+ always-local singleton BYOK router + HTTP/1.1 proxy 修补
+ *   6. KaTeX CSS link 修补 (workbench.html)
  *   7. 提示重启
  */
 import { existsSync, readFileSync } from 'fs';
@@ -18,7 +18,7 @@ import { hasBackup } from './backup.js';
 import { patchInject } from './patch-inject.js';
 import { patchAlwaysLocal } from './patch-always-local.js';
 import { patchKatex } from './patch-katex.js';
-import { patchLocalMode } from './patch-local-mode.js';
+import { patchProxy39, needsProxy39Patch, isProxy39Patched } from './patch-proxy-39.js';
 // delete-fix 已移除 — 3.2.11 原生 tombstoneDeletedComposer 已覆盖
 import { releaseDefaults } from './release-defaults.js';
 
@@ -48,9 +48,10 @@ export async function install() {
   const glassPatched = !existsSync(paths.glassJs) || readFileSync(paths.glassJs, 'utf-8').includes('__byokWrapTransport');
   const hookInjected = desktopPatched && glassPatched;
   const alPatched = existsSync(paths.alwaysLocalMain) && readFileSync(paths.alwaysLocalMain, 'utf-8').includes('__byokUrlRewrite');
-  const hasBackups = hasBackup(paths.workbenchJs) || hasBackup(paths.glassJs) || hasBackup(paths.alwaysLocalMain) || hasBackup(paths.extensionHostJs);
+  const proxy39Ok = !needsProxy39Patch(paths) || isProxy39Patched(paths);
+  const hasBackups = hasBackup(paths.workbenchJs) || hasBackup(paths.glassJs) || hasBackup(paths.alwaysLocalMain) || hasBackup(paths.alwaysLocalSingletonJs) || hasBackup(paths.extensionHostJs);
 
-  if (extInstalled && hookInjected && alPatched) {
+  if (extInstalled && hookInjected && alPatched && proxy39Ok) {
     ok('Already fully installed');
     info('To reinstall, run "ccursor uninstall" first');
     return;
@@ -76,12 +77,11 @@ export async function install() {
   // 4. Always-local + sig bypass
   patchAlwaysLocal(paths, info);
 
-  // 5. KaTeX CSS link (workbench.html + checksum)
-  patchKatex(paths, info);
+  // 5. Cursor 3.9+ always-local singleton BYOK router + HTTP/1.1 proxy sync
+  patchProxy39(paths, info);
 
-  // 6. Local Agent 配置能力 (buildFlags.localMode → true)
-  info('[local-mode] Enabling local agent configuration...');
-  patchLocalMode(paths, info);
+  // 6. KaTeX CSS link (workbench.html + checksum)
+  patchKatex(paths, info);
 
   console.log('');
   ok('Installation complete!');

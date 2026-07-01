@@ -66,8 +66,8 @@ Commands:
   install          Install Cursor++ extension and apply patches
   uninstall        Remove extension and restore all patches
   update           Upgrade: uninstall then reinstall
-  local-mode       Enable Cursor's built-in Local Agent mode
-  local-mode-off   Disable Local Agent mode (restore originals)
+  local-mode       Standalone tool: enable Cursor's built-in Local Agent mode
+  local-mode-off   Standalone tool: disable Local Agent mode (restore originals)
   status           Check current installation status
   check            Dry-run: verify AST patch targets are matchable
   help             Show this help message

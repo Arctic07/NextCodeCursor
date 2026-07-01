@@ -8,6 +8,7 @@ import { isExtensionInstalled } from './extension-embed.js';
 import { hasBackup } from './backup.js';
 import { CCURSOR_DIR } from './routes.js';
 import { PROVIDERS_FILE_NAME, ROUTES_FILE_NAME } from './defaults.js';
+import { needsProxy39Patch, isProxy39Patched, getProxy39Target } from './patch-proxy-39.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
 const fail = s => `\x1b[31m✗ ${s}\x1b[0m`;
@@ -71,6 +72,13 @@ export async function status() {
     console.log(hasWait ? ok('Server wait injection active') : fail('Server wait injection not active'));
   }
 
+  // Cursor 3.9+ always-local singleton BYOK router/proxy sync
+  if (needsProxy39Patch(paths)) {
+    console.log(isProxy39Patched(paths) ? ok('Cursor 3.9 singleton BYOK router/proxy patch active') : fail('Cursor 3.9 singleton BYOK router/proxy patch missing'));
+  } else if (existsSync(getProxy39Target(paths))) {
+    console.log(na('Cursor 3.9 singleton BYOK router/proxy patch not required'));
+  }
+
   // ~/.ccursor 资源
   console.log('');
   const routesPath = join(CCURSOR_DIR, ROUTES_FILE_NAME);
@@ -80,7 +88,7 @@ export async function status() {
 
   // Backups
   console.log('');
-  const backupFiles = [paths.workbenchJs, paths.glassJs, paths.alwaysLocalMain, paths.extensionHostJs, paths.productJson];
+  const backupFiles = [paths.workbenchJs, paths.glassJs, paths.alwaysLocalMain, paths.alwaysLocalSingletonJs, paths.extensionHostJs, paths.productJson];
   const backupCount = backupFiles.filter(f => hasBackup(f)).length;
   console.log(`Backups: ${backupCount}/${backupFiles.length} files backed up`);
 }
