@@ -81,7 +81,7 @@ export const BYOK_REDIRECT = [
   'aiserver.v1.DashboardService/GetTeamAdminSettings',
   'aiserver.v1.DashboardService/GetTeamBackgroundAgentSettings',
   'aiserver.v1.DashboardService/GetTeamRepos',
-  'aiserver.v1.DashboardService/GetMe',
+  // 'aiserver.v1.DashboardService/GetMe',
   'aiserver.v1.DashboardService/GetGlobalCommands',
   'aiserver.v1.DashboardService/GetTeamCommands',
   'aiserver.v1.DashboardService/GetSlackInstallUrl',
