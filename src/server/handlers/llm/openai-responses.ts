@@ -76,10 +76,9 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
 
     // Reasoning — Responses API 用 reasoning 嵌套对象 (非顶层 reasoning_effort)
-    // max 是 Anthropic 专有,映射到 xhigh
     if (request.thinkingLevel) {
       params.reasoning = {
-        effort: request.thinkingLevel === 'max' ? 'xhigh' : request.thinkingLevel,
+        effort: request.thinkingLevel,
         summary: 'auto',
       }
       // encrypted_content 用于多轮保留推理上下文 (参照 Codex CLI)

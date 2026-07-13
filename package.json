@@ -117,7 +117,7 @@
     "vsix:obf": "pnpm run package && node obfuscate.js && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --allow-star-activation"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.100.1",
+    "@anthropic-ai/sdk": "^0.111.0",
     "@bufbuild/protobuf": "^2.12.0",
     "@connectrpc/connect": "^2.1.1",
     "@connectrpc/connect-fastify": "^2.1.1",
@@ -132,7 +132,7 @@
     "fuse.js": "^7.3.0",
     "gpt-tokenizer": "^3.4.0",
     "hono": "^4.12.23",
-    "openai": "^6.39.1",
+    "openai": "^6.46.0",
     "pino": "^10.3.1",
     "undici": "^8.3.0",
     "ws": "^8.21.0"

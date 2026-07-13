@@ -57,12 +57,9 @@ export class OpenAIChatProvider implements LLMProvider {
             params.tools = tools;
         }
 
-        // OpenAI reasoning_effort: minimal | low | medium | high | xhigh
-        // max 是 Anthropic 专有,映射到 xhigh
+        // OpenAI reasoning_effort: minimal | low | medium | high | xhigh | max
         if (request.thinkingLevel) {
-            params.reasoning_effort = request.thinkingLevel === 'max'
-                ? 'xhigh'
-                : request.thinkingLevel;
+            params.reasoning_effort = request.thinkingLevel;
         }
 
         const stream = await this.client.chat.completions.create(params);
