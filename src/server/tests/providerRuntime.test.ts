@@ -53,9 +53,9 @@ it('provider state strategy preserves tool name on tool results for provider-spe
   if (finalized.frame.message.case !== 'interactionUpdate')
     throw new Error('unexpected case')
   expect(finalized.frame.message.value.message.case).toBe('toolCallCompleted')
-  expect(messages.length).toBe(1)
-  expect(messages[0]?.role).toBe('tool')
-  expect(messages[0]?.toolName).toBe('web_search')
+  expect(messages.length).toBe(0)
+  expect(roundContext.pendingToolResults.length).toBe(1)
+  expect(roundContext.pendingToolResults[0]?.toolName).toBe('web_search')
 })
 
 it('resolvePromptProfile exposes provider-specific prompt and tool metadata', () => {
@@ -329,7 +329,9 @@ it('provider state strategy batches anthropic tool results but flushes canonical
     isError: false,
   })
   geminiStateStrategy.addToolResult(geminiMessages, geminiPending, geminiResult)
-  expect(geminiPending.length).toBe(0)
+  expect(geminiPending.length).toBe(1)
+  expect(geminiMessages.length).toBe(0)
+  geminiStateStrategy.flushToolResults(geminiMessages, geminiPending)
   expect(geminiMessages[0]?.role).toBe('tool')
   expect(geminiMessages[0]?.toolName).toBe('grep')
 })

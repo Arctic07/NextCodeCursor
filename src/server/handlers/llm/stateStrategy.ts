@@ -103,18 +103,22 @@ class ToolRoleStateStrategy implements ProviderStateStrategy {
         };
     }
 
-    addToolResult(messages: LLMMessage[], _pending: LLMToolResultBlock[], result: LLMToolResultBlock): void {
-        messages.push({
-            role: 'tool',
-            content: result.content,
-            toolCallId: result.toolUseId,
-            toolName: result.toolName,
-            ...(result.isError ? { isError: true } : {}),
-        });
+    addToolResult(_messages: LLMMessage[], pending: LLMToolResultBlock[], result: LLMToolResultBlock): void {
+        pending.push(result);
     }
 
-    flushToolResults(_messages: LLMMessage[], _pending: LLMToolResultBlock[]): void {
-        // no-op
+    flushToolResults(messages: LLMMessage[], pending: LLMToolResultBlock[]): void {
+        if (pending.length === 0) return;
+        for (const result of pending) {
+            messages.push({
+                role: 'tool',
+                content: result.content,
+                toolCallId: result.toolUseId,
+                toolName: result.toolName,
+                ...(result.isError ? { isError: true } : {}),
+            });
+        }
+        pending.splice(0, pending.length);
     }
 }
 
