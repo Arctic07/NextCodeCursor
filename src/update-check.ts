@@ -9,6 +9,8 @@ import { version as CURRENT_VERSION } from '../package.json'
 
 const NPM_PACKAGE = '@cometix/ccursor'
 const REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE}/latest`
+/** 提示用户自行在终端执行；不代跑（可能需管理员/Cursor 关闭等权限） */
+const UPDATE_COMMAND = `npx ${NPM_PACKAGE} update`
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
 const STATE_KEY_LAST_CHECK = 'ccursor.updateCheck.lastCheckMs'
 const STATE_KEY_DISMISSED = 'ccursor.updateCheck.dismissedVersion'
@@ -70,15 +72,16 @@ async function checkOnce(state: vscode.Memento, log?: (msg: string) => void) {
   log?.(`[UPDATE] new version available: ${latest} (current=${current})`)
 
   const action = await vscode.window.showInformationMessage(
-    `Cursor++ ${latest} is available (current: ${current})`,
-    'Update',
+    `Cursor++ ${latest} is available (current: ${current}). Run in an external terminal:\n${UPDATE_COMMAND}`,
+    'Copy Command',
     'Dismiss',
   )
 
-  if (action === 'Update') {
-    const terminal = vscode.window.createTerminal('Cursor++ Update')
-    terminal.show()
-    terminal.sendText(`npx ${NPM_PACKAGE}@latest install`)
+  if (action === 'Copy Command') {
+    await vscode.env.clipboard.writeText(UPDATE_COMMAND)
+    void vscode.window.showInformationMessage(
+      `Copied to clipboard: ${UPDATE_COMMAND}\nClose Cursor first if the installer needs write access to the app bundle.`,
+    )
   }
   else if (action === 'Dismiss') {
     state.update(STATE_KEY_DISMISSED, latest)
