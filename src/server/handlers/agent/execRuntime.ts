@@ -127,7 +127,7 @@ export async function* finalizeExecTool(params: {
                     const exit = ss.exit as Record<string, unknown>;
                     cwd = typeof exit.cwd === 'string' ? exit.cwd : '';
                     localExecTime = typeof exit.localExecutionTimeMs === 'number' ? exit.localExecutionTimeMs : 0;
-                    exitCode = typeof exit.code === 'number' ? exit.code : 0;
+                    exitCode = typeof exit.code === 'number' ? (exit.code | 0) : 0;
                     done = true;
                 }
             }
