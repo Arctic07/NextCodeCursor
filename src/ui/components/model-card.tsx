@@ -15,6 +15,7 @@ const THINKING_LEVELS_OPENAI = [
   { value: 'medium', label: 'medium' },
   { value: 'high', label: 'high' },
   { value: 'xhigh', label: 'xhigh' },
+  { value: 'max', label: 'max' },
 ]
 const THINKING_LEVELS_GEMINI = [
   { value: 'minimal', label: 'minimal' },

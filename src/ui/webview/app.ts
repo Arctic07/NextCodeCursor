@@ -546,7 +546,7 @@ export function initApp(Alpine: AlpineType) {
         return ['low', 'medium', 'high', 'xhigh', 'max']
       if (pType === 'gemini')
         return ['minimal', 'low', 'medium', 'high']
-      return ['minimal', 'low', 'medium', 'high', 'xhigh']
+      return ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
     },
 
     // ── Edit Panel parameters helpers ──
