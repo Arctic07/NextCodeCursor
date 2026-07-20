@@ -8,7 +8,7 @@ import { encode } from 'gpt-tokenizer/encoding/o200k_base'
 
 export function countTokens(text: string): number {
   if (!text) return 0
-  return encode(text).length
+  return encode(text, { allowedSpecial: 'all' }).length
 }
 
 export type ContextCategory =
