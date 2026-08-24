@@ -34,11 +34,13 @@
  */
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
+// ErrorDetails / CustomErrorDetails 自 3.17.8 起由 emitter 拆入 shared 包 ——
+// 它们同时被 agent_v1 与 aiserver_v1 引用,触发跨包提取。类型本身未变。
 import {
   CustomErrorDetailsSchema,
   ErrorDetails_Error,
   ErrorDetailsSchema,
-} from '../gen/aiserver_v1_pb'
+} from '../gen/aiserver_v1_shared_pb'
 
 export interface MakeByokErrorOptions {
   /** aiserver.v1.ErrorDetails.Error enum — 决定客户端走哪条 gating 分支 */

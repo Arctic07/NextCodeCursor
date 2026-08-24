@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file aiserver_v1_shared.proto.
  */
 export const file_aiserver_v1_shared: GenFile = /*@__PURE__*/
-  fileDesc("ChhhaXNlcnZlcl92MV9zaGFyZWQucHJvdG8SC2Fpc2VydmVyLnYxIm8KD0JpZGlQb2xsUmVxdWVzdBIuCgpyZXF1ZXN0X2lkGAEgASgLMhouYWlzZXJ2ZXIudjEuQmlkaVJlcXVlc3RJZBIaCg1zdGFydF9yZXF1ZXN0GAIgASgISACIAQFCEAoOX3N0YXJ0X3JlcXVlc3QiSQoQQmlkaVBvbGxSZXNwb25zZRINCgVzZXFubxgBIAEoAxIMCgRkYXRhGAIgASgJEhAKA2VvZhgDIAEoCEgAiAEBQgYKBF9lb2YiIwoNQmlkaVJlcXVlc3RJZBISCgpyZXF1ZXN0X2lkGAEgASgJIo8ECglDb2RlQmxvY2sSHwoXcmVsYXRpdmVfd29ya3NwYWNlX3BhdGgYASABKAkSGgoNZmlsZV9jb250ZW50cxgCIAEoCUgAiAEBEiEKFGZpbGVfY29udGVudHNfbGVuZ3RoGAkgASgFSAGIAQESJwoFcmFuZ2UYAyABKAsyGC5haXNlcnZlci52MS5DdXJzb3JSYW5nZRIQCghjb250ZW50cxgEIAEoCRI1CgpzaWduYXR1cmVzGAUgASgLMiEuYWlzZXJ2ZXIudjEuQ29kZUJsb2NrLlNpZ25hdHVyZXMSHgoRb3ZlcnJpZGVfY29udGVudHMYBiABKAlIAogBARIeChFvcmlnaW5hbF9jb250ZW50cxgHIAEoCUgDiAEBEjEKDmRldGFpbGVkX2xpbmVzGAggAygLMhkuYWlzZXJ2ZXIudjEuRGV0YWlsZWRMaW5lEi4KEGZpbGVfZ2l0X2NvbnRleHQYCiABKAsyFC5haXNlcnZlci52MS5GaWxlR2l0GjYKClNpZ25hdHVyZXMSKAoGcmFuZ2VzGAEgAygLMhguYWlzZXJ2ZXIudjEuQ3Vyc29yUmFuZ2VCEAoOX2ZpbGVfY29udGVudHNCFwoVX2ZpbGVfY29udGVudHNfbGVuZ3RoQhQKEl9vdmVycmlkZV9jb250ZW50c0IUChJfb3JpZ2luYWxfY29udGVudHMiRwoKQ29kZVJlc3VsdBIqCgpjb2RlX2Jsb2NrGAEgASgLMhYuYWlzZXJ2ZXIudjEuQ29kZUJsb2NrEg0KBXNjb3JlGAIgASgCIi4KDkN1cnNvclBvc2l0aW9uEgwKBGxpbmUYASABKAUSDgoGY29sdW1uGAIgASgFInUKC0N1cnNvclJhbmdlEjMKDnN0YXJ0X3Bvc2l0aW9uGAEgASgLMhsuYWlzZXJ2ZXIudjEuQ3Vyc29yUG9zaXRpb24SMQoMZW5kX3Bvc2l0aW9uGAIgASgLMhsuYWlzZXJ2ZXIudjEuQ3Vyc29yUG9zaXRpb24iRwoMRGV0YWlsZWRMaW5lEgwKBHRleHQYASABKAkSEwoLbGluZV9udW1iZXIYAiABKAISFAoMaXNfc2lnbmF0dXJlGAMgASgIIogDCghGaWxlRGlmZhINCgVhZGRlZBgEIAEoBRIPCgdyZW1vdmVkGAUgASgFEgwKBGZyb20YASABKAkSCgoCdG8YAiABKAkSKwoGY2h1bmtzGAMgAygLMhsuYWlzZXJ2ZXIudjEuRmlsZURpZmYuQ2h1bmsSIQoUYmVmb3JlX2ZpbGVfY29udGVudHMYBiABKAlIAIgBARIgChNhZnRlcl9maWxlX2NvbnRlbnRzGAcgASgJSAGIAQESGQoMaXNfZ2VuZXJhdGVkGAggASgISAKIAQEacwoFQ2h1bmsSDwoHY29udGVudBgBIAEoCRINCgVsaW5lcxgCIAMoCRIRCglvbGRfc3RhcnQYAyABKAUSEQoJb2xkX2xpbmVzGAQgASgFEhEKCW5ld19zdGFydBgFIAEoBRIRCgluZXdfbGluZXMYBiABKAVCFwoVX2JlZm9yZV9maWxlX2NvbnRlbnRzQhYKFF9hZnRlcl9maWxlX2NvbnRlbnRzQg8KDV9pc19nZW5lcmF0ZWQiMgoHRmlsZUdpdBInCgdjb21taXRzGAEgAygLMhYuYWlzZXJ2ZXIudjEuR2l0Q29tbWl0IrwFCg5HZXREaWZmUmVxdWVzdBILCgNjd2QYASABKAkSCwoDcmVmGAIgASgJEhAKCGJhc2VfcmVmGAMgASgJEhIKCm1lcmdlX2Jhc2UYBCABKAgSFAoMdGFyZ2V0X3BhdGhzGAUgAygJEiIKFXVuaWZpZWRfY29udGV4dF9saW5lcxgGIAEoBUgAiAEBEhsKE21heF91bnRyYWNrZWRfZmlsZXMYByABKAUSHwoXc3VibW9kdWxlX3JlY3Vyc2VfZGVwdGgYCSABKAUSHQoVaW5jbHVkZV9zcGFjZV9jaGFuZ2VzGAogASgIEhYKDmNvbW1pdHRlZF9vbmx5GAsgASgIEhgKEGNvbXB1dGVfcGF0Y2hfaWQYDCABKAgSHAoPcmV0dXJuX2hlYWRfc2hhGA0gASgISAGIAQESHwoSbWF4X3Jlc3BvbnNlX2J5dGVzGA4gASgFSAKIAQESRAoNb3V0cHV0X2Zvcm1hdBgIIAEoDjIoLmFpc2VydmVyLnYxLkdldERpZmZSZXF1ZXN0Lk91dHB1dEZvcm1hdEgDiAEBIsQBCgxPdXRwdXRGb3JtYXQSHQoZT1VUUFVUX0ZPUk1BVF9VTlNQRUNJRklFRBAAEh0KGU9VVFBVVF9GT1JNQVRfTkFNRV9TVEFUVVMQARIpCiVPVVRQVVRfRk9STUFUX05BTUVfU1RBVFVTX0FORF9OVU1TVEFUEAISHAoYT1VUUFVUX0ZPUk1BVF9GSUxFX0RJRkZTEAMSLQopT1VUUFVUX0ZPUk1BVF9ESUZGU19XSVRIX0JFRk9SRV9BTkRfQUZURVIQBEIYChZfdW5pZmllZF9jb250ZXh0X2xpbmVzQhIKEF9yZXR1cm5faGVhZF9zaGFCFQoTX21heF9yZXNwb25zZV9ieXRlc0IQCg5fb3V0cHV0X2Zvcm1hdCLhAgoPR2V0RGlmZlJlc3BvbnNlEiIKBGRpZmYYASABKAsyFC5haXNlcnZlci52MS5HaXREaWZmEkMKD3N1Ym1vZHVsZV9kaWZmcxgCIAMoCzIqLmFpc2VydmVyLnYxLkdldERpZmZSZXNwb25zZS5TdWJtb2R1bGVEaWZmEhUKCHBhdGNoX2lkGAMgASgJSACIAQESFQoIaGVhZF9zaGEYBCABKAlIAYgBARIkChdoYXNfdW5jb21taXR0ZWRfY2hhbmdlcxgFIAEoCEgCiAEBGlsKDVN1Ym1vZHVsZURpZmYSFQoNcmVsYXRpdmVfcGF0aBgBIAEoCRIiCgRkaWZmGAIgASgLMhQuYWlzZXJ2ZXIudjEuR2l0RGlmZhIPCgdlcnJvcmVkGAMgASgIQgsKCV9wYXRjaF9pZEILCglfaGVhZF9zaGFCGgoYX2hhc191bmNvbW1pdHRlZF9jaGFuZ2VzIkoKCUdpdENvbW1pdBIOCgZjb21taXQYASABKAkSDgoGYXV0aG9yGAIgASgJEgwKBGRhdGUYAyABKAkSDwoHbWVzc2FnZRgEIAEoCSLMAQoHR2l0RGlmZhIkCgVkaWZmcxgBIAMoCzIVLmFpc2VydmVyLnYxLkZpbGVEaWZmEjAKCWRpZmZfdHlwZRgCIAEoDjIdLmFpc2VydmVyLnYxLkdpdERpZmYuRGlmZlR5cGUiaQoIRGlmZlR5cGUSGQoVRElGRl9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRElGRl9UWVBFX0RJRkZfVE9fSEVBRBABEiYKIkRJRkZfVFlQRV9ESUZGX0ZST01fQlJBTkNIX1RPX01BSU4QAmIGcHJvdG8z");
+  fileDesc("ChhhaXNlcnZlcl92MV9zaGFyZWQucHJvdG8SC2Fpc2VydmVyLnYxIm8KD0JpZGlQb2xsUmVxdWVzdBIuCgpyZXF1ZXN0X2lkGAEgASgLMhouYWlzZXJ2ZXIudjEuQmlkaVJlcXVlc3RJZBIaCg1zdGFydF9yZXF1ZXN0GAIgASgISACIAQFCEAoOX3N0YXJ0X3JlcXVlc3QiSQoQQmlkaVBvbGxSZXNwb25zZRINCgVzZXFubxgBIAEoAxIMCgRkYXRhGAIgASgJEhAKA2VvZhgDIAEoCEgAiAEBQgYKBF9lb2YiIwoNQmlkaVJlcXVlc3RJZBISCgpyZXF1ZXN0X2lkGAEgASgJIoIBCgxDbGllbnRBY3Rpb24SEgoKY29tbWFuZF9pZBgBIAEoCRIxCgRhcmdzGAIgAygLMiMuYWlzZXJ2ZXIudjEuQ2xpZW50QWN0aW9uLkFyZ3NFbnRyeRorCglBcmdzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKPBAoJQ29kZUJsb2NrEh8KF3JlbGF0aXZlX3dvcmtzcGFjZV9wYXRoGAEgASgJEhoKDWZpbGVfY29udGVudHMYAiABKAlIAIgBARIhChRmaWxlX2NvbnRlbnRzX2xlbmd0aBgJIAEoBUgBiAEBEicKBXJhbmdlGAMgASgLMhguYWlzZXJ2ZXIudjEuQ3Vyc29yUmFuZ2USEAoIY29udGVudHMYBCABKAkSNQoKc2lnbmF0dXJlcxgFIAEoCzIhLmFpc2VydmVyLnYxLkNvZGVCbG9jay5TaWduYXR1cmVzEh4KEW92ZXJyaWRlX2NvbnRlbnRzGAYgASgJSAKIAQESHgoRb3JpZ2luYWxfY29udGVudHMYByABKAlIA4gBARIxCg5kZXRhaWxlZF9saW5lcxgIIAMoCzIZLmFpc2VydmVyLnYxLkRldGFpbGVkTGluZRIuChBmaWxlX2dpdF9jb250ZXh0GAogASgLMhQuYWlzZXJ2ZXIudjEuRmlsZUdpdBo2CgpTaWduYXR1cmVzEigKBnJhbmdlcxgBIAMoCzIYLmFpc2VydmVyLnYxLkN1cnNvclJhbmdlQhAKDl9maWxlX2NvbnRlbnRzQhcKFV9maWxlX2NvbnRlbnRzX2xlbmd0aEIUChJfb3ZlcnJpZGVfY29udGVudHNCFAoSX29yaWdpbmFsX2NvbnRlbnRzIkcKCkNvZGVSZXN1bHQSKgoKY29kZV9ibG9jaxgBIAEoCzIWLmFpc2VydmVyLnYxLkNvZGVCbG9jaxINCgVzY29yZRgCIAEoAiIyChlDb25maWd1cmVTcGVuZExpbWl0QWN0aW9uEhUKDWNvbmZpcm1fbGFiZWwYASABKAkiLgoOQ3Vyc29yUG9zaXRpb24SDAoEbGluZRgBIAEoBRIOCgZjb2x1bW4YAiABKAUidQoLQ3Vyc29yUmFuZ2USMwoOc3RhcnRfcG9zaXRpb24YASABKAsyGy5haXNlcnZlci52MS5DdXJzb3JQb3NpdGlvbhIxCgxlbmRfcG9zaXRpb24YAiABKAsyGy5haXNlcnZlci52MS5DdXJzb3JQb3NpdGlvbiLZBQoSQ3VzdG9tRXJyb3JEZXRhaWxzEg0KBXRpdGxlGAEgASgJEg4KBmRldGFpbBgCIAEoCRJkCldhbGxvd19jb21tYW5kX2xpbmtzX3BvdGVudGlhbGx5X3Vuc2FmZV9wbGVhc2Vfb25seV91c2VfZm9yX2hhbmR3cml0dGVuX3RydXN0ZWRfbWFya2Rvd24YAyABKAhIAIgBARIZCgxpc19yZXRyeWFibGUYBCABKAhIAYgBARIcCg9zaG93X3JlcXVlc3RfaWQYBSABKAhIAogBARIoChtzaG91bGRfc2hvd19pbW1lZGlhdGVfZXJyb3IYBiABKAhIA4gBARIpCgdidXR0b25zGAggAygLMhguYWlzZXJ2ZXIudjEuRXJyb3JCdXR0b24STAoPYWRkaXRpb25hbF9pbmZvGAcgAygLMjMuYWlzZXJ2ZXIudjEuQ3VzdG9tRXJyb3JEZXRhaWxzLkFkZGl0aW9uYWxJbmZvRW50cnkSLQoMcGxhbl9jaG9pY2VzGAkgAygLMhcuYWlzZXJ2ZXIudjEuUGxhbkNob2ljZRJEChJhbmFseXRpY3NfbWV0YWRhdGEYCiABKAsyIy5haXNlcnZlci52MS5FcnJvckFuYWx5dGljc01ldGFkYXRhSASIAQEaNQoTQWRkaXRpb25hbEluZm9FbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQloKWF9hbGxvd19jb21tYW5kX2xpbmtzX3BvdGVudGlhbGx5X3Vuc2FmZV9wbGVhc2Vfb25seV91c2VfZm9yX2hhbmR3cml0dGVuX3RydXN0ZWRfbWFya2Rvd25CDwoNX2lzX3JldHJ5YWJsZUISChBfc2hvd19yZXF1ZXN0X2lkQh4KHF9zaG91bGRfc2hvd19pbW1lZGlhdGVfZXJyb3JCFQoTX2FuYWx5dGljc19tZXRhZGF0YSK2AQoPRGFzaGJvYXJkQWN0aW9uEg4KBmFjdGlvbhgBIAEoCRI0CgRhcmdzGAIgAygLMiYuYWlzZXJ2ZXIudjEuRGFzaGJvYXJkQWN0aW9uLkFyZ3NFbnRyeRIcCg9zdWNjZXNzX21lc3NhZ2UYAyABKAlIAIgBARorCglBcmdzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUISChBfc3VjY2Vzc19tZXNzYWdlIkcKDERldGFpbGVkTGluZRIMCgR0ZXh0GAEgASgJEhMKC2xpbmVfbnVtYmVyGAIgASgCEhQKDGlzX3NpZ25hdHVyZRgDIAEoCCJKChZFcnJvckFuYWx5dGljc01ldGFkYXRhEhwKD2FjdGlvbl9yZXF1aXJlZBgBIAEoCUgAiAEBQhIKEF9hY3Rpb25fcmVxdWlyZWQiwQMKC0Vycm9yQnV0dG9uEg0KBWxhYmVsGAEgASgJEisKB3VwZ3JhZGUYAiABKAsyGi5haXNlcnZlci52MS5VcGdyYWRlQWN0aW9uEjQKDHN3aXRjaF9tb2RlbBgDIAEoCzIeLmFpc2VydmVyLnYxLlN3aXRjaE1vZGVsQWN0aW9uEkUKFWNvbmZpZ3VyZV9zcGVuZF9saW1pdBgEIAEoCzImLmFpc2VydmVyLnYxLkNvbmZpZ3VyZVNwZW5kTGltaXRBY3Rpb24SIwoDdXJsGAUgASgLMhYuYWlzZXJ2ZXIudjEuVXJsQWN0aW9uEjIKDnVwZ3JhZGVfY2hvaWNlGAYgASgLMhouYWlzZXJ2ZXIudjEuVXBncmFkZUNob2ljZRI2ChBkYXNoYm9hcmRfYWN0aW9uGAcgASgLMhwuYWlzZXJ2ZXIudjEuRGFzaGJvYXJkQWN0aW9uEjYKDXJlbG9hZF93aW5kb3cYCCABKAsyHy5haXNlcnZlci52MS5SZWxvYWRXaW5kb3dBY3Rpb24SMAoNY2xpZW50X2FjdGlvbhgJIAEoCzIZLmFpc2VydmVyLnYxLkNsaWVudEFjdGlvbiLgDgoMRXJyb3JEZXRhaWxzEi4KBWVycm9yGAEgASgOMh8uYWlzZXJ2ZXIudjEuRXJyb3JEZXRhaWxzLkVycm9yEjAKB2RldGFpbHMYAiABKAsyHy5haXNlcnZlci52MS5DdXN0b21FcnJvckRldGFpbHMSGAoLaXNfZXhwZWN0ZWQYAyABKAhIAIgBASLDDQoFRXJyb3ISFQoRRVJST1JfVU5TUEVDSUZJRUQQABIVChFFUlJPUl9CQURfQVBJX0tFWRABEhoKFkVSUk9SX0JBRF9VU0VSX0FQSV9LRVkQKhIXChNFUlJPUl9OT1RfTE9HR0VEX0lOEAISGQoVRVJST1JfSU5WQUxJRF9BVVRIX0lEEAMSJQohRVJST1JfTk9UX0hJR0hfRU5PVUdIX1BFUk1JU1NJT05TEAQSHgoaRVJST1JfQUdFTlRfUkVRVUlSRVNfTE9HSU4QEhIYChRFUlJPUl9CQURfTU9ERUxfTkFNRRAFEhMKD0VSUk9SX05PVF9GT1VORBAnEhQKEEVSUk9SX0RFUFJFQ0FURUQQKBIYChRFUlJPUl9VU0VSX05PVF9GT1VORBAGEicKI0VSUk9SX0ZSRUVfVVNFUl9SQVRFX0xJTUlUX0VYQ0VFREVEEAcSJgoiRVJST1JfUFJPX1VTRVJfUkFURV9MSU1JVF9FWENFRURFRBAIEh8KG0VSUk9SX0ZSRUVfVVNFUl9VU0FHRV9MSU1JVBAJEh4KGkVSUk9SX1BST19VU0VSX1VTQUdFX0xJTUlUEAoSHAoYRVJST1JfUkVTT1VSQ0VfRVhIQVVTVEVEECkSHgoaRVJST1JfQVVUSF9UT0tFTl9OT1RfRk9VTkQQCxIcChhFUlJPUl9BVVRIX1RPS0VOX0VYUElSRUQQDBIQCgxFUlJPUl9PUEVOQUkQDRIkCiBFUlJPUl9PUEVOQUlfUkFURV9MSU1JVF9FWENFRURFRBAOEhQKEEVSUk9SX01BWF9UT0tFTlMQFBIXChNFUlJPUl9QUk9fVVNFUl9PTkxZEBcSHgoaRVJST1JfVVNFUl9BQk9SVEVEX1JFUVVFU1QQFRIRCg1FUlJPUl9USU1FT1VUEBkSJQohRVJST1JfR0VORVJJQ19SQVRFX0xJTUlUX0VYQ0VFREVEEBYSKQolRVJST1JfR1BUXzRfVklTSU9OX1BSRVZJRVdfUkFURV9MSU1JVBAcEhgKFEVSUk9SX0NVU1RPTV9NRVNTQUdFEB0SGQoVRVJST1JfT1VUREFURURfQ0xJRU5UEB4SIAocRVJST1JfQ0xBVURFX0lNQUdFX1RPT19MQVJHRRAfEhgKFEVSUk9SX0ZJTEVfTk9UX0ZPVU5EECESHAoYRVJST1JfQVBJX0tFWV9SQVRFX0xJTUlUECISEwoPRVJST1JfREVCT1VOQ0VEECMSFQoRRVJST1JfQkFEX1JFUVVFU1QQJBI6CjZFUlJPUl9SRVBPU0lUT1JZX1NFUlZJQ0VfUkVQT1NJVE9SWV9JU19OT1RfSU5JVElBTElaRUQQJRIWChJFUlJPUl9VTkFVVEhPUklaRUQQJhIfChtFUlJPUl9DT05WRVJTQVRJT05fVE9PX0xPTkcQKxIgChxFUlJPUl9VU0FHRV9QUklDSU5HX1JFUVVJUkVEECwSKwonRVJST1JfVVNBR0VfUFJJQ0lOR19SRVFVSVJFRF9DSEFOR0VBQkxFEC0SJAogRVJST1JfR0lUSFVCX05PX1VTRVJfQ1JFREVOVElBTFMQLhIfChtFUlJPUl9HSVRIVUJfVVNFUl9OT19BQ0NFU1MQLxIeChpFUlJPUl9HSVRIVUJfQVBQX05PX0FDQ0VTUxAwEiAKHEVSUk9SX0dJVEhVQl9NVUxUSVBMRV9PV05FUlMQMRIWChJFUlJPUl9SQVRFX0xJTUlURUQQMhIhCh1FUlJPUl9SQVRFX0xJTUlURURfQ0hBTkdFQUJMRRAzEhAKDEVSUk9SX0NVU1RPTRA0EhcKE0VSUk9SX0hPT0tTX0JMT0NLRUQQNRIiCh5FUlJPUl9TVVNQSUNJT1VTX1VTQUdFX0JMT0NLRUQQNhIgChxFUlJPUl9FWFRFTlNJT05fSE9TVF9USU1FT1VUEDcSFwoTRVJST1JfTkVUV09SS19FUlJPUhA4EhgKFEVSUk9SX1BST1ZJREVSX0VSUk9SEDkSFwoTRVJST1JfTU9ERUxfQkxPQ0tFRBA6EhIKDkVSUk9SX0lOVEVSTkFMEDsSGwoXRVJST1JfTUFYX01PREVfUkVRVUlSRUQQPBIjCh9FUlJPUl9NT0RFTF9OT19MT05HRVJfU1VQUE9SVEVEED0SGQoVRVJST1JfUFJJQ0lOR19XQVJOSU5HED4SEwoPRVJST1JfU0xPV19QT09MED8SHAoYRVJST1JfVU5TVVBQT1JURURfUkVHSU9OEEASGAoURVJST1JfQUNDT1VOVF9DTE9TRUQQQUIOCgxfaXNfZXhwZWN0ZWQiiAMKCEZpbGVEaWZmEg0KBWFkZGVkGAQgASgFEg8KB3JlbW92ZWQYBSABKAUSDAoEZnJvbRgBIAEoCRIKCgJ0bxgCIAEoCRIrCgZjaHVua3MYAyADKAsyGy5haXNlcnZlci52MS5GaWxlRGlmZi5DaHVuaxIhChRiZWZvcmVfZmlsZV9jb250ZW50cxgGIAEoCUgAiAEBEiAKE2FmdGVyX2ZpbGVfY29udGVudHMYByABKAlIAYgBARIZCgxpc19nZW5lcmF0ZWQYCCABKAhIAogBARpzCgVDaHVuaxIPCgdjb250ZW50GAEgASgJEg0KBWxpbmVzGAIgAygJEhEKCW9sZF9zdGFydBgDIAEoBRIRCglvbGRfbGluZXMYBCABKAUSEQoJbmV3X3N0YXJ0GAUgASgFEhEKCW5ld19saW5lcxgGIAEoBUIXChVfYmVmb3JlX2ZpbGVfY29udGVudHNCFgoUX2FmdGVyX2ZpbGVfY29udGVudHNCDwoNX2lzX2dlbmVyYXRlZCIyCgdGaWxlR2l0EicKB2NvbW1pdHMYASADKAsyFi5haXNlcnZlci52MS5HaXRDb21taXQivAUKDkdldERpZmZSZXF1ZXN0EgsKA2N3ZBgBIAEoCRILCgNyZWYYAiABKAkSEAoIYmFzZV9yZWYYAyABKAkSEgoKbWVyZ2VfYmFzZRgEIAEoCBIUCgx0YXJnZXRfcGF0aHMYBSADKAkSIgoVdW5pZmllZF9jb250ZXh0X2xpbmVzGAYgASgFSACIAQESGwoTbWF4X3VudHJhY2tlZF9maWxlcxgHIAEoBRIfChdzdWJtb2R1bGVfcmVjdXJzZV9kZXB0aBgJIAEoBRIdChVpbmNsdWRlX3NwYWNlX2NoYW5nZXMYCiABKAgSFgoOY29tbWl0dGVkX29ubHkYCyABKAgSGAoQY29tcHV0ZV9wYXRjaF9pZBgMIAEoCBIcCg9yZXR1cm5faGVhZF9zaGEYDSABKAhIAYgBARIfChJtYXhfcmVzcG9uc2VfYnl0ZXMYDiABKAVIAogBARJECg1vdXRwdXRfZm9ybWF0GAggASgOMiguYWlzZXJ2ZXIudjEuR2V0RGlmZlJlcXVlc3QuT3V0cHV0Rm9ybWF0SAOIAQEixAEKDE91dHB1dEZvcm1hdBIdChlPVVRQVVRfRk9STUFUX1VOU1BFQ0lGSUVEEAASHQoZT1VUUFVUX0ZPUk1BVF9OQU1FX1NUQVRVUxABEikKJU9VVFBVVF9GT1JNQVRfTkFNRV9TVEFUVVNfQU5EX05VTVNUQVQQAhIcChhPVVRQVVRfRk9STUFUX0ZJTEVfRElGRlMQAxItCilPVVRQVVRfRk9STUFUX0RJRkZTX1dJVEhfQkVGT1JFX0FORF9BRlRFUhAEQhgKFl91bmlmaWVkX2NvbnRleHRfbGluZXNCEgoQX3JldHVybl9oZWFkX3NoYUIVChNfbWF4X3Jlc3BvbnNlX2J5dGVzQhAKDl9vdXRwdXRfZm9ybWF0IuECCg9HZXREaWZmUmVzcG9uc2USIgoEZGlmZhgBIAEoCzIULmFpc2VydmVyLnYxLkdpdERpZmYSQwoPc3VibW9kdWxlX2RpZmZzGAIgAygLMiouYWlzZXJ2ZXIudjEuR2V0RGlmZlJlc3BvbnNlLlN1Ym1vZHVsZURpZmYSFQoIcGF0Y2hfaWQYAyABKAlIAIgBARIVCghoZWFkX3NoYRgEIAEoCUgBiAEBEiQKF2hhc191bmNvbW1pdHRlZF9jaGFuZ2VzGAUgASgISAKIAQEaWwoNU3VibW9kdWxlRGlmZhIVCg1yZWxhdGl2ZV9wYXRoGAEgASgJEiIKBGRpZmYYAiABKAsyFC5haXNlcnZlci52MS5HaXREaWZmEg8KB2Vycm9yZWQYAyABKAhCCwoJX3BhdGNoX2lkQgsKCV9oZWFkX3NoYUIaChhfaGFzX3VuY29tbWl0dGVkX2NoYW5nZXMiSgoJR2l0Q29tbWl0Eg4KBmNvbW1pdBgBIAEoCRIOCgZhdXRob3IYAiABKAkSDAoEZGF0ZRgDIAEoCRIPCgdtZXNzYWdlGAQgASgJIswBCgdHaXREaWZmEiQKBWRpZmZzGAEgAygLMhUuYWlzZXJ2ZXIudjEuRmlsZURpZmYSMAoJZGlmZl90eXBlGAIgASgOMh0uYWlzZXJ2ZXIudjEuR2l0RGlmZi5EaWZmVHlwZSJpCghEaWZmVHlwZRIZChVESUZGX1RZUEVfVU5TUEVDSUZJRUQQABIaChZESUZGX1RZUEVfRElGRl9UT19IRUFEEAESJgoiRElGRl9UWVBFX0RJRkZfRlJPTV9CUkFOQ0hfVE9fTUFJThACIngKClBsYW5DaG9pY2USDQoFbGFiZWwYASABKAkSFQoIc3VibGFiZWwYAiABKAlIAIgBARIYCgtkZXNjcmlwdGlvbhgDIAEoCUgBiAEBEg0KBXZhbHVlGAQgASgJQgsKCV9zdWJsYWJlbEIOCgxfZGVzY3JpcHRpb24iFAoSUmVsb2FkV2luZG93QWN0aW9uIuMBChFTd2l0Y2hNb2RlbEFjdGlvbhIcCg9zdWdnZXN0ZWRfbW9kZWwYASABKAlIAIgBARJGCgpwYXJhbWV0ZXJzGAIgAygLMjIuYWlzZXJ2ZXIudjEuU3dpdGNoTW9kZWxBY3Rpb24uTW9kZWxQYXJhbWV0ZXJWYWx1ZRIVCghtYXhfbW9kZRgDIAEoCEgBiAEBGjAKE01vZGVsUGFyYW1ldGVyVmFsdWUSCgoCaWQYASABKAkSDQoFdmFsdWUYAiABKAlCEgoQX3N1Z2dlc3RlZF9tb2RlbEILCglfbWF4X21vZGUimQEKDVVwZ3JhZGVBY3Rpb24SIAoYbWVtYmVyc2hpcF90b191cGdyYWRlX3RvGAEgASgJEiIKFXRyeV9pbW1lZGlhdGVfdXBncmFkZRgCIAEoCEgAiAEBEhgKC2FsbG93X3RyaWFsGAMgASgISAGIAQFCGAoWX3RyeV9pbW1lZGlhdGVfdXBncmFkZUIOCgxfYWxsb3dfdHJpYWwiDwoNVXBncmFkZUNob2ljZSIYCglVcmxBY3Rpb24SCwoDdXJsGAEgASgJYgZwcm90bzM");
 
 /**
  * @generated from message aiserver.v1.BidiPollRequest
@@ -79,6 +79,28 @@ export const BidiRequestIdSchema: GenMessage<BidiRequestId> = /*@__PURE__*/
   messageDesc(file_aiserver_v1_shared, 2);
 
 /**
+ * @generated from message aiserver.v1.ClientAction
+ */
+export type ClientAction = Message<"aiserver.v1.ClientAction"> & {
+  /**
+   * @generated from field: string command_id = 1;
+   */
+  commandId: string;
+
+  /**
+   * @generated from field: map<string, string> args = 2;
+   */
+  args: { [key: string]: string };
+};
+
+/**
+ * Describes the message aiserver.v1.ClientAction.
+ * Use `create(ClientActionSchema)` to create a new message.
+ */
+export const ClientActionSchema: GenMessage<ClientAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 3);
+
+/**
  * @generated from message aiserver.v1.CodeBlock
  */
 export type CodeBlock = Message<"aiserver.v1.CodeBlock"> & {
@@ -138,7 +160,7 @@ export type CodeBlock = Message<"aiserver.v1.CodeBlock"> & {
  * Use `create(CodeBlockSchema)` to create a new message.
  */
 export const CodeBlockSchema: GenMessage<CodeBlock> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 3);
+  messageDesc(file_aiserver_v1_shared, 4);
 
 /**
  * @generated from message aiserver.v1.CodeBlock.Signatures
@@ -155,7 +177,7 @@ export type CodeBlock_Signatures = Message<"aiserver.v1.CodeBlock.Signatures"> &
  * Use `create(CodeBlock_SignaturesSchema)` to create a new message.
  */
 export const CodeBlock_SignaturesSchema: GenMessage<CodeBlock_Signatures> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 3, 0);
+  messageDesc(file_aiserver_v1_shared, 4, 0);
 
 /**
  * @generated from message aiserver.v1.CodeResult
@@ -177,7 +199,24 @@ export type CodeResult = Message<"aiserver.v1.CodeResult"> & {
  * Use `create(CodeResultSchema)` to create a new message.
  */
 export const CodeResultSchema: GenMessage<CodeResult> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 4);
+  messageDesc(file_aiserver_v1_shared, 5);
+
+/**
+ * @generated from message aiserver.v1.ConfigureSpendLimitAction
+ */
+export type ConfigureSpendLimitAction = Message<"aiserver.v1.ConfigureSpendLimitAction"> & {
+  /**
+   * @generated from field: string confirm_label = 1;
+   */
+  confirmLabel: string;
+};
+
+/**
+ * Describes the message aiserver.v1.ConfigureSpendLimitAction.
+ * Use `create(ConfigureSpendLimitActionSchema)` to create a new message.
+ */
+export const ConfigureSpendLimitActionSchema: GenMessage<ConfigureSpendLimitAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 6);
 
 /**
  * @generated from message aiserver.v1.CursorPosition
@@ -199,7 +238,7 @@ export type CursorPosition = Message<"aiserver.v1.CursorPosition"> & {
  * Use `create(CursorPositionSchema)` to create a new message.
  */
 export const CursorPositionSchema: GenMessage<CursorPosition> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 5);
+  messageDesc(file_aiserver_v1_shared, 7);
 
 /**
  * @generated from message aiserver.v1.CursorRange
@@ -221,7 +260,96 @@ export type CursorRange = Message<"aiserver.v1.CursorRange"> & {
  * Use `create(CursorRangeSchema)` to create a new message.
  */
 export const CursorRangeSchema: GenMessage<CursorRange> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 6);
+  messageDesc(file_aiserver_v1_shared, 8);
+
+/**
+ * @generated from message aiserver.v1.CustomErrorDetails
+ */
+export type CustomErrorDetails = Message<"aiserver.v1.CustomErrorDetails"> & {
+  /**
+   * @generated from field: string title = 1;
+   */
+  title: string;
+
+  /**
+   * @generated from field: string detail = 2;
+   */
+  detail: string;
+
+  /**
+   * @generated from field: optional bool allow_command_links_potentially_unsafe_please_only_use_for_handwritten_trusted_markdown = 3;
+   */
+  allowCommandLinksPotentiallyUnsafePleaseOnlyUseForHandwrittenTrustedMarkdown?: boolean;
+
+  /**
+   * @generated from field: optional bool is_retryable = 4;
+   */
+  isRetryable?: boolean;
+
+  /**
+   * @generated from field: optional bool show_request_id = 5;
+   */
+  showRequestId?: boolean;
+
+  /**
+   * @generated from field: optional bool should_show_immediate_error = 6;
+   */
+  shouldShowImmediateError?: boolean;
+
+  /**
+   * @generated from field: repeated aiserver.v1.ErrorButton buttons = 8;
+   */
+  buttons: ErrorButton[];
+
+  /**
+   * @generated from field: map<string, string> additional_info = 7;
+   */
+  additionalInfo: { [key: string]: string };
+
+  /**
+   * @generated from field: repeated aiserver.v1.PlanChoice plan_choices = 9;
+   */
+  planChoices: PlanChoice[];
+
+  /**
+   * @generated from field: optional aiserver.v1.ErrorAnalyticsMetadata analytics_metadata = 10;
+   */
+  analyticsMetadata?: ErrorAnalyticsMetadata;
+};
+
+/**
+ * Describes the message aiserver.v1.CustomErrorDetails.
+ * Use `create(CustomErrorDetailsSchema)` to create a new message.
+ */
+export const CustomErrorDetailsSchema: GenMessage<CustomErrorDetails> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 9);
+
+/**
+ * @generated from message aiserver.v1.DashboardAction
+ */
+export type DashboardAction = Message<"aiserver.v1.DashboardAction"> & {
+  /**
+   * @generated from field: string action = 1;
+   */
+  action: string;
+
+  /**
+   * @generated from field: map<string, string> args = 2;
+   */
+  args: { [key: string]: string };
+
+  /**
+   * @generated from field: optional string success_message = 3;
+   */
+  successMessage?: string;
+};
+
+/**
+ * Describes the message aiserver.v1.DashboardAction.
+ * Use `create(DashboardActionSchema)` to create a new message.
+ */
+export const DashboardActionSchema: GenMessage<DashboardAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 10);
 
 /**
  * @generated from message aiserver.v1.DetailedLine
@@ -248,7 +376,409 @@ export type DetailedLine = Message<"aiserver.v1.DetailedLine"> & {
  * Use `create(DetailedLineSchema)` to create a new message.
  */
 export const DetailedLineSchema: GenMessage<DetailedLine> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 7);
+  messageDesc(file_aiserver_v1_shared, 11);
+
+/**
+ * @generated from message aiserver.v1.ErrorAnalyticsMetadata
+ */
+export type ErrorAnalyticsMetadata = Message<"aiserver.v1.ErrorAnalyticsMetadata"> & {
+  /**
+   * @generated from field: optional string action_required = 1;
+   */
+  actionRequired?: string;
+};
+
+/**
+ * Describes the message aiserver.v1.ErrorAnalyticsMetadata.
+ * Use `create(ErrorAnalyticsMetadataSchema)` to create a new message.
+ */
+export const ErrorAnalyticsMetadataSchema: GenMessage<ErrorAnalyticsMetadata> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 12);
+
+/**
+ * @generated from message aiserver.v1.ErrorButton
+ */
+export type ErrorButton = Message<"aiserver.v1.ErrorButton"> & {
+  /**
+   * @generated from field: string label = 1;
+   */
+  label: string;
+
+  /**
+   * @generated from field: aiserver.v1.UpgradeAction upgrade = 2;
+   */
+  upgrade?: UpgradeAction;
+
+  /**
+   * @generated from field: aiserver.v1.SwitchModelAction switch_model = 3;
+   */
+  switchModel?: SwitchModelAction;
+
+  /**
+   * @generated from field: aiserver.v1.ConfigureSpendLimitAction configure_spend_limit = 4;
+   */
+  configureSpendLimit?: ConfigureSpendLimitAction;
+
+  /**
+   * @generated from field: aiserver.v1.UrlAction url = 5;
+   */
+  url?: UrlAction;
+
+  /**
+   * @generated from field: aiserver.v1.UpgradeChoice upgrade_choice = 6;
+   */
+  upgradeChoice?: UpgradeChoice;
+
+  /**
+   * @generated from field: aiserver.v1.DashboardAction dashboard_action = 7;
+   */
+  dashboardAction?: DashboardAction;
+
+  /**
+   * @generated from field: aiserver.v1.ReloadWindowAction reload_window = 8;
+   */
+  reloadWindow?: ReloadWindowAction;
+
+  /**
+   * @generated from field: aiserver.v1.ClientAction client_action = 9;
+   */
+  clientAction?: ClientAction;
+};
+
+/**
+ * Describes the message aiserver.v1.ErrorButton.
+ * Use `create(ErrorButtonSchema)` to create a new message.
+ */
+export const ErrorButtonSchema: GenMessage<ErrorButton> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 13);
+
+/**
+ * @generated from message aiserver.v1.ErrorDetails
+ */
+export type ErrorDetails = Message<"aiserver.v1.ErrorDetails"> & {
+  /**
+   * @generated from field: aiserver.v1.ErrorDetails.Error error = 1;
+   */
+  error: ErrorDetails_Error;
+
+  /**
+   * @generated from field: aiserver.v1.CustomErrorDetails details = 2;
+   */
+  details?: CustomErrorDetails;
+
+  /**
+   * @generated from field: optional bool is_expected = 3;
+   */
+  isExpected?: boolean;
+};
+
+/**
+ * Describes the message aiserver.v1.ErrorDetails.
+ * Use `create(ErrorDetailsSchema)` to create a new message.
+ */
+export const ErrorDetailsSchema: GenMessage<ErrorDetails> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 14);
+
+/**
+ * @generated from enum aiserver.v1.ErrorDetails.Error
+ */
+export enum ErrorDetails_Error {
+  /**
+   * @generated from enum value: ERROR_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ERROR_BAD_API_KEY = 1;
+   */
+  BAD_API_KEY = 1,
+
+  /**
+   * @generated from enum value: ERROR_BAD_USER_API_KEY = 42;
+   */
+  BAD_USER_API_KEY = 42,
+
+  /**
+   * @generated from enum value: ERROR_NOT_LOGGED_IN = 2;
+   */
+  NOT_LOGGED_IN = 2,
+
+  /**
+   * @generated from enum value: ERROR_INVALID_AUTH_ID = 3;
+   */
+  INVALID_AUTH_ID = 3,
+
+  /**
+   * @generated from enum value: ERROR_NOT_HIGH_ENOUGH_PERMISSIONS = 4;
+   */
+  NOT_HIGH_ENOUGH_PERMISSIONS = 4,
+
+  /**
+   * @generated from enum value: ERROR_AGENT_REQUIRES_LOGIN = 18;
+   */
+  AGENT_REQUIRES_LOGIN = 18,
+
+  /**
+   * @generated from enum value: ERROR_BAD_MODEL_NAME = 5;
+   */
+  BAD_MODEL_NAME = 5,
+
+  /**
+   * @generated from enum value: ERROR_NOT_FOUND = 39;
+   */
+  NOT_FOUND = 39,
+
+  /**
+   * @generated from enum value: ERROR_DEPRECATED = 40;
+   */
+  DEPRECATED = 40,
+
+  /**
+   * @generated from enum value: ERROR_USER_NOT_FOUND = 6;
+   */
+  USER_NOT_FOUND = 6,
+
+  /**
+   * @generated from enum value: ERROR_FREE_USER_RATE_LIMIT_EXCEEDED = 7;
+   */
+  FREE_USER_RATE_LIMIT_EXCEEDED = 7,
+
+  /**
+   * @generated from enum value: ERROR_PRO_USER_RATE_LIMIT_EXCEEDED = 8;
+   */
+  PRO_USER_RATE_LIMIT_EXCEEDED = 8,
+
+  /**
+   * @generated from enum value: ERROR_FREE_USER_USAGE_LIMIT = 9;
+   */
+  FREE_USER_USAGE_LIMIT = 9,
+
+  /**
+   * @generated from enum value: ERROR_PRO_USER_USAGE_LIMIT = 10;
+   */
+  PRO_USER_USAGE_LIMIT = 10,
+
+  /**
+   * @generated from enum value: ERROR_RESOURCE_EXHAUSTED = 41;
+   */
+  RESOURCE_EXHAUSTED = 41,
+
+  /**
+   * @generated from enum value: ERROR_AUTH_TOKEN_NOT_FOUND = 11;
+   */
+  AUTH_TOKEN_NOT_FOUND = 11,
+
+  /**
+   * @generated from enum value: ERROR_AUTH_TOKEN_EXPIRED = 12;
+   */
+  AUTH_TOKEN_EXPIRED = 12,
+
+  /**
+   * @generated from enum value: ERROR_OPENAI = 13;
+   */
+  OPENAI = 13,
+
+  /**
+   * @generated from enum value: ERROR_OPENAI_RATE_LIMIT_EXCEEDED = 14;
+   */
+  OPENAI_RATE_LIMIT_EXCEEDED = 14,
+
+  /**
+   * @generated from enum value: ERROR_MAX_TOKENS = 20;
+   */
+  MAX_TOKENS = 20,
+
+  /**
+   * @generated from enum value: ERROR_PRO_USER_ONLY = 23;
+   */
+  PRO_USER_ONLY = 23,
+
+  /**
+   * @generated from enum value: ERROR_USER_ABORTED_REQUEST = 21;
+   */
+  USER_ABORTED_REQUEST = 21,
+
+  /**
+   * @generated from enum value: ERROR_TIMEOUT = 25;
+   */
+  TIMEOUT = 25,
+
+  /**
+   * @generated from enum value: ERROR_GENERIC_RATE_LIMIT_EXCEEDED = 22;
+   */
+  GENERIC_RATE_LIMIT_EXCEEDED = 22,
+
+  /**
+   * @generated from enum value: ERROR_GPT_4_VISION_PREVIEW_RATE_LIMIT = 28;
+   */
+  GPT_4_VISION_PREVIEW_RATE_LIMIT = 28,
+
+  /**
+   * @generated from enum value: ERROR_CUSTOM_MESSAGE = 29;
+   */
+  CUSTOM_MESSAGE = 29,
+
+  /**
+   * @generated from enum value: ERROR_OUTDATED_CLIENT = 30;
+   */
+  OUTDATED_CLIENT = 30,
+
+  /**
+   * @generated from enum value: ERROR_CLAUDE_IMAGE_TOO_LARGE = 31;
+   */
+  CLAUDE_IMAGE_TOO_LARGE = 31,
+
+  /**
+   * @generated from enum value: ERROR_FILE_NOT_FOUND = 33;
+   */
+  FILE_NOT_FOUND = 33,
+
+  /**
+   * @generated from enum value: ERROR_API_KEY_RATE_LIMIT = 34;
+   */
+  API_KEY_RATE_LIMIT = 34,
+
+  /**
+   * @generated from enum value: ERROR_DEBOUNCED = 35;
+   */
+  DEBOUNCED = 35,
+
+  /**
+   * @generated from enum value: ERROR_BAD_REQUEST = 36;
+   */
+  BAD_REQUEST = 36,
+
+  /**
+   * @generated from enum value: ERROR_REPOSITORY_SERVICE_REPOSITORY_IS_NOT_INITIALIZED = 37;
+   */
+  REPOSITORY_SERVICE_REPOSITORY_IS_NOT_INITIALIZED = 37,
+
+  /**
+   * @generated from enum value: ERROR_UNAUTHORIZED = 38;
+   */
+  UNAUTHORIZED = 38,
+
+  /**
+   * @generated from enum value: ERROR_CONVERSATION_TOO_LONG = 43;
+   */
+  CONVERSATION_TOO_LONG = 43,
+
+  /**
+   * @generated from enum value: ERROR_USAGE_PRICING_REQUIRED = 44;
+   */
+  USAGE_PRICING_REQUIRED = 44,
+
+  /**
+   * @generated from enum value: ERROR_USAGE_PRICING_REQUIRED_CHANGEABLE = 45;
+   */
+  USAGE_PRICING_REQUIRED_CHANGEABLE = 45,
+
+  /**
+   * @generated from enum value: ERROR_GITHUB_NO_USER_CREDENTIALS = 46;
+   */
+  GITHUB_NO_USER_CREDENTIALS = 46,
+
+  /**
+   * @generated from enum value: ERROR_GITHUB_USER_NO_ACCESS = 47;
+   */
+  GITHUB_USER_NO_ACCESS = 47,
+
+  /**
+   * @generated from enum value: ERROR_GITHUB_APP_NO_ACCESS = 48;
+   */
+  GITHUB_APP_NO_ACCESS = 48,
+
+  /**
+   * @generated from enum value: ERROR_GITHUB_MULTIPLE_OWNERS = 49;
+   */
+  GITHUB_MULTIPLE_OWNERS = 49,
+
+  /**
+   * @generated from enum value: ERROR_RATE_LIMITED = 50;
+   */
+  RATE_LIMITED = 50,
+
+  /**
+   * @generated from enum value: ERROR_RATE_LIMITED_CHANGEABLE = 51;
+   */
+  RATE_LIMITED_CHANGEABLE = 51,
+
+  /**
+   * @generated from enum value: ERROR_CUSTOM = 52;
+   */
+  CUSTOM = 52,
+
+  /**
+   * @generated from enum value: ERROR_HOOKS_BLOCKED = 53;
+   */
+  HOOKS_BLOCKED = 53,
+
+  /**
+   * @generated from enum value: ERROR_SUSPICIOUS_USAGE_BLOCKED = 54;
+   */
+  SUSPICIOUS_USAGE_BLOCKED = 54,
+
+  /**
+   * @generated from enum value: ERROR_EXTENSION_HOST_TIMEOUT = 55;
+   */
+  EXTENSION_HOST_TIMEOUT = 55,
+
+  /**
+   * @generated from enum value: ERROR_NETWORK_ERROR = 56;
+   */
+  NETWORK_ERROR = 56,
+
+  /**
+   * @generated from enum value: ERROR_PROVIDER_ERROR = 57;
+   */
+  PROVIDER_ERROR = 57,
+
+  /**
+   * @generated from enum value: ERROR_MODEL_BLOCKED = 58;
+   */
+  MODEL_BLOCKED = 58,
+
+  /**
+   * @generated from enum value: ERROR_INTERNAL = 59;
+   */
+  INTERNAL = 59,
+
+  /**
+   * @generated from enum value: ERROR_MAX_MODE_REQUIRED = 60;
+   */
+  MAX_MODE_REQUIRED = 60,
+
+  /**
+   * @generated from enum value: ERROR_MODEL_NO_LONGER_SUPPORTED = 61;
+   */
+  MODEL_NO_LONGER_SUPPORTED = 61,
+
+  /**
+   * @generated from enum value: ERROR_PRICING_WARNING = 62;
+   */
+  PRICING_WARNING = 62,
+
+  /**
+   * @generated from enum value: ERROR_SLOW_POOL = 63;
+   */
+  SLOW_POOL = 63,
+
+  /**
+   * @generated from enum value: ERROR_UNSUPPORTED_REGION = 64;
+   */
+  UNSUPPORTED_REGION = 64,
+
+  /**
+   * @generated from enum value: ERROR_ACCOUNT_CLOSED = 65;
+   */
+  ACCOUNT_CLOSED = 65,
+}
+
+/**
+ * Describes the enum aiserver.v1.ErrorDetails.Error.
+ */
+export const ErrorDetails_ErrorSchema: GenEnum<ErrorDetails_Error> = /*@__PURE__*/
+  enumDesc(file_aiserver_v1_shared, 14, 0);
 
 /**
  * @generated from message aiserver.v1.FileDiff
@@ -300,7 +830,7 @@ export type FileDiff = Message<"aiserver.v1.FileDiff"> & {
  * Use `create(FileDiffSchema)` to create a new message.
  */
 export const FileDiffSchema: GenMessage<FileDiff> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 8);
+  messageDesc(file_aiserver_v1_shared, 15);
 
 /**
  * @generated from message aiserver.v1.FileDiff.Chunk
@@ -342,7 +872,7 @@ export type FileDiff_Chunk = Message<"aiserver.v1.FileDiff.Chunk"> & {
  * Use `create(FileDiff_ChunkSchema)` to create a new message.
  */
 export const FileDiff_ChunkSchema: GenMessage<FileDiff_Chunk> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 8, 0);
+  messageDesc(file_aiserver_v1_shared, 15, 0);
 
 /**
  * @generated from message aiserver.v1.FileGit
@@ -359,7 +889,7 @@ export type FileGit = Message<"aiserver.v1.FileGit"> & {
  * Use `create(FileGitSchema)` to create a new message.
  */
 export const FileGitSchema: GenMessage<FileGit> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 9);
+  messageDesc(file_aiserver_v1_shared, 16);
 
 /**
  * @generated from message aiserver.v1.GetDiffRequest
@@ -441,7 +971,7 @@ export type GetDiffRequest = Message<"aiserver.v1.GetDiffRequest"> & {
  * Use `create(GetDiffRequestSchema)` to create a new message.
  */
 export const GetDiffRequestSchema: GenMessage<GetDiffRequest> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 10);
+  messageDesc(file_aiserver_v1_shared, 17);
 
 /**
  * @generated from enum aiserver.v1.GetDiffRequest.OutputFormat
@@ -477,7 +1007,7 @@ export enum GetDiffRequest_OutputFormat {
  * Describes the enum aiserver.v1.GetDiffRequest.OutputFormat.
  */
 export const GetDiffRequest_OutputFormatSchema: GenEnum<GetDiffRequest_OutputFormat> = /*@__PURE__*/
-  enumDesc(file_aiserver_v1_shared, 10, 0);
+  enumDesc(file_aiserver_v1_shared, 17, 0);
 
 /**
  * @generated from message aiserver.v1.GetDiffResponse
@@ -514,7 +1044,7 @@ export type GetDiffResponse = Message<"aiserver.v1.GetDiffResponse"> & {
  * Use `create(GetDiffResponseSchema)` to create a new message.
  */
 export const GetDiffResponseSchema: GenMessage<GetDiffResponse> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 11);
+  messageDesc(file_aiserver_v1_shared, 18);
 
 /**
  * @generated from message aiserver.v1.GetDiffResponse.SubmoduleDiff
@@ -541,7 +1071,7 @@ export type GetDiffResponse_SubmoduleDiff = Message<"aiserver.v1.GetDiffResponse
  * Use `create(GetDiffResponse_SubmoduleDiffSchema)` to create a new message.
  */
 export const GetDiffResponse_SubmoduleDiffSchema: GenMessage<GetDiffResponse_SubmoduleDiff> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 11, 0);
+  messageDesc(file_aiserver_v1_shared, 18, 0);
 
 /**
  * @generated from message aiserver.v1.GitCommit
@@ -573,7 +1103,7 @@ export type GitCommit = Message<"aiserver.v1.GitCommit"> & {
  * Use `create(GitCommitSchema)` to create a new message.
  */
 export const GitCommitSchema: GenMessage<GitCommit> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 12);
+  messageDesc(file_aiserver_v1_shared, 19);
 
 /**
  * @generated from message aiserver.v1.GitDiff
@@ -595,7 +1125,7 @@ export type GitDiff = Message<"aiserver.v1.GitDiff"> & {
  * Use `create(GitDiffSchema)` to create a new message.
  */
 export const GitDiffSchema: GenMessage<GitDiff> = /*@__PURE__*/
-  messageDesc(file_aiserver_v1_shared, 13);
+  messageDesc(file_aiserver_v1_shared, 20);
 
 /**
  * @generated from enum aiserver.v1.GitDiff.DiffType
@@ -621,5 +1151,156 @@ export enum GitDiff_DiffType {
  * Describes the enum aiserver.v1.GitDiff.DiffType.
  */
 export const GitDiff_DiffTypeSchema: GenEnum<GitDiff_DiffType> = /*@__PURE__*/
-  enumDesc(file_aiserver_v1_shared, 13, 0);
+  enumDesc(file_aiserver_v1_shared, 20, 0);
+
+/**
+ * @generated from message aiserver.v1.PlanChoice
+ */
+export type PlanChoice = Message<"aiserver.v1.PlanChoice"> & {
+  /**
+   * @generated from field: string label = 1;
+   */
+  label: string;
+
+  /**
+   * @generated from field: optional string sublabel = 2;
+   */
+  sublabel?: string;
+
+  /**
+   * @generated from field: optional string description = 3;
+   */
+  description?: string;
+
+  /**
+   * @generated from field: string value = 4;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message aiserver.v1.PlanChoice.
+ * Use `create(PlanChoiceSchema)` to create a new message.
+ */
+export const PlanChoiceSchema: GenMessage<PlanChoice> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 21);
+
+/**
+ * @generated from message aiserver.v1.ReloadWindowAction
+ */
+export type ReloadWindowAction = Message<"aiserver.v1.ReloadWindowAction"> & {
+};
+
+/**
+ * Describes the message aiserver.v1.ReloadWindowAction.
+ * Use `create(ReloadWindowActionSchema)` to create a new message.
+ */
+export const ReloadWindowActionSchema: GenMessage<ReloadWindowAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 22);
+
+/**
+ * @generated from message aiserver.v1.SwitchModelAction
+ */
+export type SwitchModelAction = Message<"aiserver.v1.SwitchModelAction"> & {
+  /**
+   * @generated from field: optional string suggested_model = 1;
+   */
+  suggestedModel?: string;
+
+  /**
+   * @generated from field: repeated aiserver.v1.SwitchModelAction.ModelParameterValue parameters = 2;
+   */
+  parameters: SwitchModelAction_ModelParameterValue[];
+
+  /**
+   * @generated from field: optional bool max_mode = 3;
+   */
+  maxMode?: boolean;
+};
+
+/**
+ * Describes the message aiserver.v1.SwitchModelAction.
+ * Use `create(SwitchModelActionSchema)` to create a new message.
+ */
+export const SwitchModelActionSchema: GenMessage<SwitchModelAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 23);
+
+/**
+ * @generated from message aiserver.v1.SwitchModelAction.ModelParameterValue
+ */
+export type SwitchModelAction_ModelParameterValue = Message<"aiserver.v1.SwitchModelAction.ModelParameterValue"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string value = 2;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message aiserver.v1.SwitchModelAction.ModelParameterValue.
+ * Use `create(SwitchModelAction_ModelParameterValueSchema)` to create a new message.
+ */
+export const SwitchModelAction_ModelParameterValueSchema: GenMessage<SwitchModelAction_ModelParameterValue> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 23, 0);
+
+/**
+ * @generated from message aiserver.v1.UpgradeAction
+ */
+export type UpgradeAction = Message<"aiserver.v1.UpgradeAction"> & {
+  /**
+   * @generated from field: string membership_to_upgrade_to = 1;
+   */
+  membershipToUpgradeTo: string;
+
+  /**
+   * @generated from field: optional bool try_immediate_upgrade = 2;
+   */
+  tryImmediateUpgrade?: boolean;
+
+  /**
+   * @generated from field: optional bool allow_trial = 3;
+   */
+  allowTrial?: boolean;
+};
+
+/**
+ * Describes the message aiserver.v1.UpgradeAction.
+ * Use `create(UpgradeActionSchema)` to create a new message.
+ */
+export const UpgradeActionSchema: GenMessage<UpgradeAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 24);
+
+/**
+ * @generated from message aiserver.v1.UpgradeChoice
+ */
+export type UpgradeChoice = Message<"aiserver.v1.UpgradeChoice"> & {
+};
+
+/**
+ * Describes the message aiserver.v1.UpgradeChoice.
+ * Use `create(UpgradeChoiceSchema)` to create a new message.
+ */
+export const UpgradeChoiceSchema: GenMessage<UpgradeChoice> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 25);
+
+/**
+ * @generated from message aiserver.v1.UrlAction
+ */
+export type UrlAction = Message<"aiserver.v1.UrlAction"> & {
+  /**
+   * @generated from field: string url = 1;
+   */
+  url: string;
+};
+
+/**
+ * Describes the message aiserver.v1.UrlAction.
+ * Use `create(UrlActionSchema)` to create a new message.
+ */
+export const UrlActionSchema: GenMessage<UrlAction> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_shared, 26);
 

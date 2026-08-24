@@ -30,7 +30,7 @@ import { cacheBlob } from '../../handlers/agent/blobStore'
 import { registerCloneLineage } from '../../handlers/agent/cloneRegistry'
 import { ModelNotFoundError } from '../../handlers/models/mapper'
 import { makeByokConnectError, makeModelNotFoundError, makeProviderError } from '../../handlers/errors'
-import { ErrorDetails_Error } from '../../gen/aiserver_v1_pb'
+import { ErrorDetails_Error } from '../../gen/aiserver_v1_shared_pb'
 import { closeSession, createEphemeralSession, getOrCreateSession, markSessionClosed, pushSessionMessage, waitForMessage } from '../../handlers/agent/session'
 import { logger } from '../../logger'
 

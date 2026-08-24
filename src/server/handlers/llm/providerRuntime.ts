@@ -6,7 +6,7 @@ import { OpenAIResponsesProvider } from './openai-responses';
 import { GeminiProvider } from './gemini';
 import { resolveModel } from '../models/mapper';
 import { makeByokConnectError } from '../errors';
-import { ErrorDetails_Error } from '../../gen/aiserver_v1_pb';
+import { ErrorDetails_Error } from '../../gen/aiserver_v1_shared_pb';
 import type { ProviderStateStrategy } from './stateStrategy';
 import { anthropicStateStrategy, geminiStateStrategy, openAIStateStrategy } from './stateStrategy';
 import { resolvePromptProfile, type ProviderPromptProfile } from './promptProfile';

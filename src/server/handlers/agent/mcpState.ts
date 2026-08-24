@@ -44,6 +44,14 @@ export interface McpStateServerInfo {
     serverIdentifier: string;
     /** 实测值 "ready";渲染进 GetDynamicTools 结果的 namespaceStatus */
     status: string;
+    /**
+     * McpStateServer.error_message (field 8) — 3.17.8 新增。
+     *
+     * server 起不来时客户端在此说明原因。只进日志,不进给 LLM 的 JSON ——
+     * 官方 3.15.6 的返回结构里没有对应位置,贸然塞进去就不是 1:1 复刻了。
+     * 它的价值在于把"MCP server 自身故障"与"schema 没解析对"区分开。
+     */
+    errorMessage?: string;
     tools: McpStateToolDefinition[];
 }
 
@@ -145,6 +153,9 @@ export async function* fetchMcpState(params: {
             serverIdentifier: (s.serverIdentifier as string) ?? '',
             // 官方实测填 "ready";客户端未填时按 ready 处理,避免误报为不可用
             status: (s.status as string) || 'ready',
+            ...(typeof s.errorMessage === 'string' && s.errorMessage
+                ? { errorMessage: s.errorMessage }
+                : {}),
             tools: rawTools.map(t => ({
                 name: (t.name as string) ?? '',
                 providerIdentifier: (t.providerIdentifier as string) ?? '',
@@ -166,6 +177,8 @@ export async function* fetchMcpState(params: {
             toolNames: s.tools.map(t => t.toolName),
             // schema 缺失是"查得到但调不动"的元凶,单独标出来
             withoutSchema: s.tools.filter(t => Object.keys(t.inputSchema).length === 0).length,
+            // 3.17.8 起客户端会说明 server 起不来的原因
+            ...(s.errorMessage ? { errorMessage: s.errorMessage } : {}),
         })),
     }, '[MCP-STATE] <- mcpStateExecResult');
 
