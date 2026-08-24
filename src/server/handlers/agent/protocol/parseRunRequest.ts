@@ -157,7 +157,21 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   //   其余字段(env、各类开关、fileContents、projectLayouts…) 原样留在 parts.dynamic_context。
   // 因此这里用 dynamic_context 兜底,可救回除那 9 个字段外的全部上下文。
   // 注: MCP 工具表在 mcps blob 里,需另行取回,见 mcpTools 段。
-  const requestContextParts = (userAction?.requestContextParts
+  // 层级要点: request_context_parts 挂在 **ConversationAction** 上 (field 17),
+  // 与 user_message_action 等 oneof 分支平级 —— 而 request_context 才在
+  // UserMessageAction 内部 (field 2)。两者层级不同,极易搞混。
+  //
+  //   message ConversationAction {
+  //     oneof action { user_message_action = 1; resume_action = 2; ... }
+  //     optional RequestContextPartReferences request_context_parts = 17;
+  //   }
+  //
+  // 早前从 userAction/resumeAction 内部取,恒为 undefined,ref_only 补偿
+  // 从未生效: 实测日志里 actionKeys 明确是 ["userMessageAction","requestContextParts"]
+  // 两者并列,而同轮 mcpMode 退化为 legacy_flat、routingTableSize=0。
+  // 保留旧路径作兜底,以防个别 action 变体真把它放在内层。
+  const requestContextParts = (action?.requestContextParts
+    ?? userAction?.requestContextParts
     ?? resumeAction?.requestContextParts
     ?? executePlanAction?.requestContextParts) as Record<string, unknown> | undefined
   const inlineRequestContext = (userAction?.requestContext

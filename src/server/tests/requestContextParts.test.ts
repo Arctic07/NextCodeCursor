@@ -7,6 +7,22 @@ import { applyMcpsPart } from '../handlers/agent/requestContextParts'
  *
  * 实测 (2-Cometixy.log, 2026-08-07): ref_only 下 requestContext 与顶层
  * mcp_tools 同时缺席, MCP 工具表只存在于 mcps blob 中。
+ *
+ * **层级要点** —— 两者不在同一层,proto (agent.v1) 明确:
+ *
+ *   message ConversationAction {
+ *     oneof action { user_message_action = 1; resume_action = 2; ... }
+ *     optional RequestContextPartReferences request_context_parts = 17;  // action 层
+ *   }
+ *   message UserMessageAction {
+ *     RequestContext request_context = 2;                                // userAction 内层
+ *   }
+ *
+ * 本文件早期把 parts 构造在 userMessageAction 内部,与当时同样取错层级的
+ * 实现刚好自洽,于是测试全绿而线上 ref_only 补偿从未生效
+ * (1-ClaudeCodeRev.log 2026-08-24: actionKeys 为
+ *  ["userMessageAction","requestContextParts"] 两者并列,同轮
+ *  mcpMode 退化 legacy_flat、routingTableSize=0)。故此处按 proto 真实层级构造。
  */
 
 function baseRunRequest(action: Record<string, unknown>) {
@@ -21,17 +37,15 @@ function baseRunRequest(action: Record<string, unknown>) {
 
 it('falls back to requestContextParts.dynamicContext when inline requestContext is absent (ref_only)', () => {
   const parsed = parseRunRequest(baseRunRequest({
-    userMessageAction: {
-      userMessage: { text: 'q' },
-      // ref_only: 无 requestContext, 只有 parts
-      requestContextParts: {
-        mcpsBlobId: new Uint8Array([1, 2, 3]),
-        mcpsByteLength: 128,
-        dynamicContext: {
-          webSearchEnabled: true,
-          readLintsEnabled: true,
-          env: { osType: 'darwin' },
-        },
+    // ref_only: userMessageAction 内无 requestContext,parts 挂在 action 层
+    userMessageAction: { userMessage: { text: 'q' } },
+    requestContextParts: {
+      mcpsBlobId: new Uint8Array([1, 2, 3]),
+      mcpsByteLength: 128,
+      dynamicContext: {
+        webSearchEnabled: true,
+        readLintsEnabled: true,
+        env: { osType: 'darwin' },
       },
     },
   }))
@@ -50,10 +64,10 @@ it('prefers inline requestContext over parts when both present (dual)', () => {
     userMessageAction: {
       userMessage: { text: 'q' },
       requestContext: { webSearchEnabled: true },
-      requestContextParts: {
-        mcpsBlobId: new Uint8Array([9]),
-        dynamicContext: { webSearchEnabled: false },
-      },
+    },
+    requestContextParts: {
+      mcpsBlobId: new Uint8Array([9]),
+      dynamicContext: { webSearchEnabled: false },
     },
   }))
 
@@ -73,10 +87,8 @@ it('leaves mcpsBlobId undefined in legacy mode', () => {
 
 it('restores MCP tools from a decoded mcps part, reusing parse normalization', () => {
   const parsed = parseRunRequest(baseRunRequest({
-    userMessageAction: {
-      userMessage: { text: 'q' },
-      requestContextParts: { mcpsBlobId: new Uint8Array([1]), dynamicContext: {} },
-    },
+    userMessageAction: { userMessage: { text: 'q' } },
+    requestContextParts: { mcpsBlobId: new Uint8Array([1]), dynamicContext: {} },
   }))
   expect(parsed.mcpTools).toEqual([])
 
@@ -107,4 +119,27 @@ it('restores MCP tools from a decoded mcps part, reusing parse normalization', (
   expect(parsed.mcpServers[0].serverIdentifier).toBe('user-ida-pro-mcp')
   expect(parsed.mcpBasePath).toBe('/proj/mcps')
   expect(parsed.mcpInstructions[0].instructions).toBe('use ida')
+})
+
+it('reads requestContextParts from the ConversationAction level, not from userMessageAction', () => {
+  // 回归锁: proto 里 request_context_parts 是 ConversationAction 的 field 17,
+  // 与 user_message_action 平级。若实现退回从 userAction 内部取,
+  // 这里的 mcpsBlobId 会是 undefined —— 线上表现为 ref_only 第二轮起
+  // MCP 工具表整体清零 (mcpMode 退化 legacy_flat)。
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'c-level',
+      modelDetails: { modelId: 'm' },
+      action: {
+        userMessageAction: { userMessage: { text: 'q' } },
+        requestContextParts: {
+          mcpsBlobId: new Uint8Array([7, 7]),
+          dynamicContext: { webSearchEnabled: true },
+        },
+      },
+    },
+  })
+
+  expect(parsed.mcpsBlobId).toEqual(new Uint8Array([7, 7]))
+  expect(parsed.webSearchEnabled).toBe(true)
 })
