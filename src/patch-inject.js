@@ -12,9 +12,19 @@ import { BASE_REDIRECT } from './defaults.js';
 import { DEFAULT_REDIRECT } from './defaults.js';
 
 const HOOK_MARKER = '__byokWrapTransport';
+// ConnectRPC 客户端模块的 esbuild 注册键。
+//
+// 3.17.8 起构建把模块路径从完整路径缩短成纯文件名:
+//   ≤3.16.29  "out-build/external/bufbuild/connect/callback-client.js"
+//   ≥3.17.8   "callback-client.js"
+// 同一次变更让 bundle 里的 "bufbuild" 从 106 处降到 3 处、"connectrpc" 归零 ——
+// 是构建配置改了,不是换掉了 ConnectRPC 库(BiDiStreaming/ServerStreaming 数量不变)。
+//
+// 所以锚点只取文件名部分: 对新版精确命中,对旧版作为完整路径的后缀同样命中,
+// 一份锚点覆盖两种形态。
 const ANCHORS = [
-  'bufbuild/connect/callback-client',
-  'bufbuild/connect/promise-client',
+  'callback-client.js',
+  'promise-client.js',
 ];
 const SCAN_WINDOW = 2000;
 
@@ -157,7 +167,7 @@ function buildHookPayload(hasGlass) {
 
 // ---- AST fingerprinting + patch ----
 
-function findTarget(code, log) {
+export function findTarget(code, log) {
   let anchorOffset = -1;
   for (const anchor of ANCHORS) {
     const idx = code.indexOf(anchor);

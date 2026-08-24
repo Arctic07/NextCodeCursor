@@ -31,9 +31,12 @@ export async function check() {
       continue;
     }
     const wb = readFileSync(file, 'utf-8');
+    // 与 patch-inject.js 的 ANCHORS 保持一致 —— 3.17.8 起模块注册键从
+    // "out-build/external/bufbuild/connect/callback-client.js" 缩短为
+    // "callback-client.js",只取文件名可同时命中新旧两种形态。
     const anchors = [
-      'bufbuild/connect/callback-client',
-      'bufbuild/connect/promise-client',
+      'callback-client.js',
+      'promise-client.js',
     ];
     const found = anchors.find(a => wb.includes(a));
     if (found) {
