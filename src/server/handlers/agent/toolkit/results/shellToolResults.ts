@@ -1,5 +1,32 @@
 import { envelope, num, obj, str, truncate, type ToolResultEnvelope } from './shared';
 
+/**
+ * Shell 输出截断阈值 — 对齐 cursor-agent-exec 的 `co` 累加器 (main.unminify.js:192898)。
+ *
+ * 官方策略 (ao = 1e4):
+ *   合并输出 <= 10000 字符 → interleaved_output 给全文,不填截断字段
+ *   合并输出 >  10000 字符 → interleaved_output 置空,改填
+ *       output_head   前 5000 字符
+ *       output_tail   后 5000 字符
+ *       elided_chars  totalChars - 10000
+ *   stdout / stderr 各自始终填充,上限 1 MB (Cn = 1048576)。
+ *
+ * 我们在 shell stream 路径上自行累加 stdout/stderr,因此需要复刻同一套策略,
+ * 否则长输出会把 1 MB 原文喂进上下文,且朴素头部截断会丢掉尾部报错。
+ */
+const SHELL_OUTPUT_FULL_MAX = 10000;
+const SHELL_OUTPUT_SIDE = 5000;
+
+/** 按官方阈值计算截断三元组;未超阈值返回 undefined (此时应给全文)。 */
+function buildOutputTruncation(combined: string): { outputHead: string; outputTail: string; elidedChars: number } | undefined {
+    if (combined.length <= SHELL_OUTPUT_FULL_MAX) return undefined;
+    return {
+        outputHead: combined.slice(0, SHELL_OUTPUT_SIDE),
+        outputTail: combined.slice(-SHELL_OUTPUT_SIDE),
+        elidedChars: combined.length - SHELL_OUTPUT_FULL_MAX,
+    };
+}
+
 export function buildShellToolResult(
     input: Record<string, unknown>,
     state: {
@@ -72,6 +99,9 @@ export function buildShellToolResult(
     const workingDirectory = str(state.cwd ?? input.workingDirectory ?? input.cwd);
     const combined = `${state.stdout}${state.stderr}`;
 
+    // 超阈值时 output(interleaved) 置空、改填 head/tail/elided,与官方 co 累加器一致。
+    const truncation = buildOutputTruncation(combined);
+
     if (state.exitCode === 0) {
         return {
             result: {
@@ -79,11 +109,12 @@ export function buildShellToolResult(
                 value: {
                     command,
                     workingDirectory,
-                    output: combined,
+                    output: truncation ? '' : combined,
                     stdout: state.stdout || undefined,
                     stderr: state.stderr || undefined,
                     exitCode: state.exitCode | 0,
                     localExecutionTimeMs: num(state.localExecutionTimeMs),
+                    ...(truncation ?? {}),
                 },
             },
         };
@@ -97,9 +128,10 @@ export function buildShellToolResult(
                 workingDirectory,
                 stdout: state.stdout,
                 stderr: state.stderr,
-                output: combined,
+                output: truncation ? '' : combined,
                 exitCode: state.exitCode | 0,
                 localExecutionTimeMs: num(state.localExecutionTimeMs),
+                ...(truncation ?? {}),
             },
         },
     };
@@ -120,6 +152,10 @@ export function normalizeShellToolResult(
             exitCode: num(value.exitCode) | 0,
             ...(value.localExecutionTimeMs !== undefined ? { localExecutionTimeMs: num(value.localExecutionTimeMs) } : {}),
             ...(typeof value.interleavedOutput === 'string' ? { interleavedOutput: value.interleavedOutput } : {}),
+            // 输出截断三元组 (客户端 > 10000 字符时下发),文本侧据此复刻 head/tail 渲染。
+            ...(typeof value.outputHead === 'string' ? { outputHead: value.outputHead } : {}),
+            ...(typeof value.outputTail === 'string' ? { outputTail: value.outputTail } : {}),
+            ...(value.elidedChars !== undefined ? { elidedChars: num(value.elidedChars) } : {}),
             // 后台态字段透传(命令转后台时由 buildShellToolResult 填入),供文本侧识别并复刻 kZ 提示。
             ...(value.shellId !== undefined ? { shellId: num(value.shellId) } : {}),
             ...(value.pid !== undefined ? { pid: num(value.pid) } : {}),
@@ -190,6 +226,22 @@ export function buildShellToolResultText(
         return buildBackgroundedText(value);
     }
     if (resultCaseName === 'success' || resultCaseName === 'failure') {
+        const head = str(value.outputHead);
+        const tail = str(value.outputTail);
+        const elided = num(value.elidedChars);
+
+        // 截断态: 优先用官方 head/tail 表示。朴素的头部截断会丢掉尾部,
+        // 而编译/测试类命令的报错通常正在尾部。
+        if (head || tail) {
+            return [
+                `command: ${str(value.command, str(input.command))}`,
+                `exit_code: ${num(value.exitCode)}`,
+                head ? `output (first ${head.length} chars):\n${head}` : '',
+                elided > 0 ? `... [${elided} chars elided] ...` : '',
+                tail ? `output (last ${tail.length} chars):\n${tail}` : '',
+            ].filter(Boolean).join('\n\n');
+        }
+
         const stdout = str(value.stdout);
         const stderr = str(value.stderr);
         const output = str(value.output);
