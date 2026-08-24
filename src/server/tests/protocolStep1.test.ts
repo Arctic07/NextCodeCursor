@@ -172,7 +172,40 @@ describe('parseRunRequest — Step 1 field coverage', () => {
     })
     expect(parsed.mcpBasePath).toBe('/proj/mcps')
     expect(parsed.mcpServers).toEqual([
-      { serverName: 's1', folderPath: '/proj/mcps/s1', serverUseInstructions: 'use me' },
+      { serverName: 's1', serverIdentifier: '', folderPath: '/proj/mcps/s1', serverUseInstructions: 'use me' },
+    ])
+  })
+
+  it('resolves mcp tool serverIdentifier from raw name prefix, falling back to serverName lookup', () => {
+    const parsed = parseRunRequest({
+      runRequest: {
+        conversationId: 'c6b',
+        mcpFileSystemOptions: {
+          workspaceProjectDir: '/proj',
+          mcpDescriptors: [
+            { serverName: 'Files', serverIdentifier: 'mcp_files_abc', folderPath: '/proj/mcps/files' },
+          ],
+        },
+        mcpTools: {
+          mcpTools: [
+            // name = `${serverIdentifier}-${toolName}` — 前缀剥离路径
+            { name: 'mcp_files_abc-read_file', providerIdentifier: 'Files', toolName: 'read_file' },
+            // name 不含 identifier 前缀 — 走 serverName 反查兜底
+            { name: 'legacy_tool', providerIdentifier: 'Files', toolName: 'legacy_tool' },
+            // 两条来源都命不中 — 应为空串,不抛错
+            { name: 'orphan', providerIdentifier: 'Unknown', toolName: 'orphan' },
+          ],
+        },
+        action: {
+          userMessageAction: { userMessage: { text: 'q' }, requestContext: {} },
+        },
+        modelDetails: { modelId: 'm' },
+      },
+    })
+    expect(parsed.mcpTools.map(t => [t.name, t.serverIdentifier])).toEqual([
+      ['mcp_files_abc-read_file', 'mcp_files_abc'],
+      ['legacy_tool', 'mcp_files_abc'],
+      ['orphan', ''],
     ])
   })
 

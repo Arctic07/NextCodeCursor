@@ -28,12 +28,38 @@ export interface CompactionArtifacts {
     nextSummaryArchiveIds: string[];
 }
 
+/**
+ * 被摘要吞掉的 MCP schema 占位符。
+ *
+ * GetDynamicTools 返回的是工具 schema —— 事实性数据,不是对话历史。
+ * 把它原样喂给摘要器有两个害处:
+ *   1. 单次 namespace 查询约 6k tokens,白白撑大 summary prompt
+ *   2. 摘要成自然语言后 schema 精度丢失,而 LLM 会"记得"自己查过这些工具,
+ *      于是拿着编造的参数去调 CallDynamicTool
+ *
+ * 好在 <dynamic_tools> 段在 system prompt 里,compaction 的 leading 会完整保留 ——
+ * namespace 清单不丢,只丢 schema。所以这里显式告诉后续轮次"重查一次"即可。
+ */
+const DYNAMIC_TOOLS_SCHEMA_PLACEHOLDER
+    = '<tool schemas omitted from summary — call GetDynamicTools again before using these tools>';
+
+function formatToolResultForSummary(toolName: string | undefined, content: string): string {
+    if (toolName === 'GetDynamicTools')
+        return `[tool result] GetDynamicTools: ${DYNAMIC_TOOLS_SCHEMA_PLACEHOLDER}`;
+    return `[tool result] ${toolName ?? ''}: ${content.trim()}`;
+}
+
 export function formatMessageForSummary(message: LLMMessage): string {
     const lines: string[] = [];
 
     if (typeof message.content === 'string') {
         const text = message.content.trim();
-        if (text) lines.push(text);
+        // OpenAI/Gemini 形态: 工具结果是 role='tool' 的字符串消息。
+        // 只拦 GetDynamicTools,其余保持原有输出格式不动。
+        if (message.role === 'tool' && message.toolName === 'GetDynamicTools')
+            lines.push(formatToolResultForSummary(message.toolName, text));
+        else if (text)
+            lines.push(text);
     } else {
         for (const block of message.content) {
             switch (block.type) {
@@ -47,7 +73,8 @@ export function formatMessageForSummary(message: LLMMessage): string {
                     lines.push(`[tool call] ${block.name} ${JSON.stringify(block.input)}`);
                     break;
                 case 'tool_result':
-                    lines.push(`[tool result] ${block.toolName ?? block.toolUseId}: ${block.content.trim()}`);
+                    // Anthropic 形态: 工具结果是 user 消息里的 content block
+                    lines.push(formatToolResultForSummary(block.toolName ?? block.toolUseId, block.content));
                     break;
             }
         }

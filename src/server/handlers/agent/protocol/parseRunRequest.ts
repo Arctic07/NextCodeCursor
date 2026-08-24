@@ -145,9 +145,37 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   }
   // requestContext: userMessageAction / resumeAction / executePlanAction 都可能带一份。
   // 多轮对话中每一轮都会重新推送,不能假设首轮装载一次就够。
-  const requestContext = (userAction?.requestContext
+  //
+  // Cursor 3.13+ 引入 requestContextParts 分片投递 (agent-client/request-context-blob.ts)。
+  // 三种模式由 Statsig `nal_request_context_blob_transport_config` 下发:
+  //   legacy   → requestContext 内联,无 parts
+  //   dual     → requestContext 内联 + parts (双写)
+  //   ref_only → requestContext 置为 undefined,只发 parts
+  //
+  // ref_only 下客户端拆分函数 (workbench GM_) 把 requestContext 切成 5 份:
+  //   rules / skills / subagents / mcps 四组走 blob (仅留 blobId),
+  //   其余字段(env、各类开关、fileContents、projectLayouts…) 原样留在 parts.dynamic_context。
+  // 因此这里用 dynamic_context 兜底,可救回除那 9 个字段外的全部上下文。
+  // 注: MCP 工具表在 mcps blob 里,需另行取回,见 mcpTools 段。
+  const requestContextParts = (userAction?.requestContextParts
+    ?? resumeAction?.requestContextParts
+    ?? executePlanAction?.requestContextParts) as Record<string, unknown> | undefined
+  const inlineRequestContext = (userAction?.requestContext
     ?? resumeAction?.requestContext
     ?? executePlanAction?.requestContext) as Record<string, unknown> | undefined
+  const requestContext = inlineRequestContext
+    ?? (requestContextParts?.dynamicContext as Record<string, unknown> | undefined)
+
+  if (requestContextParts) {
+    logger.debug({
+      transportMode: inlineRequestContext ? 'dual' : 'ref_only',
+      hasDynamicContext: !!requestContextParts.dynamicContext,
+      mcpsByteLength: requestContextParts.mcpsByteLength ?? 0,
+      rulesByteLength: requestContextParts.rulesByteLength ?? 0,
+      skillsByteLength: requestContextParts.skillsByteLength ?? 0,
+      subagentsByteLength: requestContextParts.subagentsByteLength ?? 0,
+    }, '[PROTOCOL] requestContext delivered via blob parts')
+  }
   const modelDetails = runRequest.modelDetails as Record<string, unknown> | undefined
   const requestedModel = runRequest.requestedModel as Record<string, unknown> | undefined
 
@@ -393,6 +421,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
 
   const mcpServers = mcpDescriptors.map(d => ({
     serverName: (d.serverName as string) ?? '',
+    serverIdentifier: (d.serverIdentifier as string) ?? '',
     folderPath: (d.folderPath as string) ?? '',
     serverUseInstructions: (d.serverUseInstructions as string) ?? '',
   }))
@@ -407,6 +436,59 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     if (name)
       mergedToolsByName.set(name, t)
   }
+  // MCP meta-tool 模式 (requestContext.mcp_meta_tool_options, proto field 26)
+  //
+  // Cursor 3.9+ 引入,由 feature gate 控制。开启后客户端不再把第三方 MCP 工具
+  // 塞进扁平 tools[],改为只下发一份"目录"(descriptor),让 LLM 用 GetMcpTools
+  // 按需拉取完整定义 —— 上下文经济学: 装几个 server 就上百个工具,全量预载
+  // 会吃掉几万 token,而一次会话通常只用到其中几个。
+  //
+  // 客户端构造逻辑 (workbench ZOg, 行 597380):
+  //   n = mcpMetaToolEnabled && mcpMetaToolSlimDescriptorsEnabled
+  //   if (!n || DRu.has(serverIdentifier))  → 才进扁平 tools[]
+  //   DRu = {"cursor-dev-control", "cursor-ide-browser"}  ← 仅自家两个 server
+  //
+  //   descriptor 里的工具在 slim 模式下被裁剪 (YOg, 行 597370):
+  //     保留 toolName + annotations(title/readOnlyHint/destructiveHint/
+  //          idempotentHint/openWorldHint)
+  //     砍掉 description + inputSchema
+  //   annotations 之所以保留,是因为审批决策(只读可自动放行)必须在调用前做出。
+  //
+  // 关键: slim descriptor 虽缺 schema,但**路由所需字段齐全**
+  //   serverIdentifier + serverName + toolName → 足以构造 McpArgs,
+  // 所以工具表(路由用)可由 descriptor 直接构建,只有给 LLM 看的 schema 需按需拉。
+  const metaToolOpts = requestContext?.mcpMetaToolOptions as Record<string, unknown> | undefined
+  const metaToolEnabled = metaToolOpts?.enabled === true
+  const metaDescriptors = (metaToolOpts?.mcpDescriptors as Array<Record<string, unknown>> | undefined) ?? []
+
+  // meta-tool 开启时,把 descriptor 里的工具补进合并表,保证 CallMcpTool 能路由。
+  // 已在扁平表里的(白名单 server)不覆盖,避免丢掉其完整 description/inputSchema。
+  if (metaToolEnabled) {
+    for (const d of metaDescriptors) {
+      const serverIdentifier = (d.serverIdentifier as string) ?? ''
+      const serverName = (d.serverName as string) ?? ''
+      const descriptorTools = (d.tools as Array<Record<string, unknown>> | undefined) ?? []
+      for (const dt of descriptorTools) {
+        const toolName = (dt.toolName as string) ?? ''
+        if (!toolName)
+          continue
+        // 复刻客户端扁平表的命名: `${serverIdentifier}-${toolName}` (ZOg)
+        const flatName = serverIdentifier ? `${serverIdentifier}-${toolName}` : toolName
+        if (mergedToolsByName.has(flatName))
+          continue
+        mergedToolsByName.set(flatName, {
+          name: flatName,
+          providerIdentifier: serverName,
+          toolName,
+          description: (dt.description as string) ?? '',
+          inputSchema: dt.inputSchema,
+          inputSchemaJson: dt.inputSchemaJson,
+          annotationsJson: dt.annotationsJson,
+        })
+      }
+    }
+  }
+
   for (const t of topLevelMcpTools) {
     const name = (t.name as string) ?? ''
     if (name && !mergedToolsByName.has(name))
@@ -421,6 +503,15 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     instructions: (m.instructions as string) ?? '',
     serverIdentifier: (m.serverIdentifier as string) ?? '',
   }))
+
+  // serverName → serverIdentifier 反查表。
+  // McpToolDefinition 只带 provider_identifier(= serverName),没有 server_identifier;
+  // 后者来自 McpDescriptor / McpInstructions,用作 resolveMcpServerIdentifier 的兜底源。
+  const serverIdentifierByName = new Map<string, string>()
+  for (const src of [...mcpServers, ...mcpInstructions]) {
+    if (src.serverName && src.serverIdentifier && !serverIdentifierByName.has(src.serverName))
+      serverIdentifierByName.set(src.serverName, src.serverIdentifier)
+  }
 
   // IDE 状态 (selectedContext.invocation_context.ide_state)
   const invocationContext = selectedContext?.invocationContext as Record<string, unknown> | undefined
@@ -733,6 +824,27 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     isGitRepo: gitRepos.length > 0,
     mcpServers,
     mcpBasePath: mcpBasePath ? `${mcpBasePath}/mcps` : '',
+    // ref_only 模式下 MCP 工具表不在本次请求里,把 blobId 透出去供运行时取回。
+    mcpsBlobId: (requestContextParts?.mcpsBlobId instanceof Uint8Array
+      && (requestContextParts.mcpsBlobId as Uint8Array).length > 0)
+      ? requestContextParts.mcpsBlobId as Uint8Array
+      : undefined,
+    supportsMcpAuth: requestContext?.supportsMcpAuth === true,
+    mcpMetaTool: metaToolEnabled
+      ? {
+          enabled: true,
+          descriptors: metaDescriptors.map(d => ({
+            serverName: (d.serverName as string) ?? '',
+            serverIdentifier: (d.serverIdentifier as string) ?? '',
+            ...(typeof d.serverUseInstructions === 'string' ? { serverUseInstructions: d.serverUseInstructions } : {}),
+            tools: ((d.tools as Array<Record<string, unknown>> | undefined) ?? []).map(t => ({
+              toolName: (t.toolName as string) ?? '',
+              ...(typeof t.description === 'string' && t.description ? { description: t.description } : {}),
+              ...(typeof t.annotationsJson === 'string' ? { annotationsJson: t.annotationsJson } : {}),
+            })).filter(t => t.toolName.length > 0),
+          })),
+        }
+      : undefined,
     mcpTools: (() => {
       const seenNames = new Set<string>()
       return mergedMcpTools.map((t) => {
@@ -745,12 +857,15 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
             '[PROTOCOL] MCP tool name sanitized to match Anthropic pattern',
           )
         }
+        const providerIdentifier = (t.providerIdentifier as string) ?? ''
+        const toolName = (t.toolName as string) ?? ''
         return {
           name: normalizedName,
           description: (t.description as string) ?? '',
           inputSchema: normalizeMcpInputSchema(t.inputSchema),
-          providerIdentifier: (t.providerIdentifier as string) ?? '',
-          toolName: (t.toolName as string) ?? '',
+          providerIdentifier,
+          toolName,
+          serverIdentifier: resolveMcpServerIdentifier(rawName, toolName, providerIdentifier, serverIdentifierByName),
         }
       })
     })(),
@@ -893,7 +1008,32 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
  * toolName 保持原样,因为那两个字段用来把 tool_call 回路回客户端 mcpService
  * 做真实路由。
  */
-function normalizeMcpToolName(raw: string, seen: Set<string>): string {
+/**
+ * 解析 MCP 工具归属 server 的 identifier,用于回填 McpArgs.server_identifier。
+ *
+ * 客户端构造工具定义时 (workbench q1f):
+ *   name               = `${serverIdentifier}-${toolName}`
+ *   providerIdentifier = serverName        ← 注意是显示名,不是 identifier
+ *
+ * 因此优先从 rawName 剥掉 `-${toolName}` 后缀拿到精确 identifier;这条路径不依赖
+ * mcpFileSystemOptions,在 requestContext 走 blob 分片(ref_only)时依然可用。
+ * 剥离失败再退回 serverName → serverIdentifier 反查表。
+ */
+export function resolveMcpServerIdentifier(
+  rawName: string,
+  toolName: string,
+  providerIdentifier: string,
+  byName: Map<string, string>,
+): string {
+  if (rawName && toolName) {
+    const suffix = `-${toolName}`
+    if (rawName.endsWith(suffix) && rawName.length > suffix.length)
+      return rawName.slice(0, -suffix.length)
+  }
+  return byName.get(providerIdentifier) ?? ''
+}
+
+export function normalizeMcpToolName(raw: string, seen: Set<string>): string {
   let base = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '')
   if (!base)
     base = 'mcp_tool'
@@ -914,7 +1054,7 @@ function normalizeMcpToolName(raw: string, seen: Set<string>): string {
  *
  * 防御性地 unwrap 一层,并确保输出至少是 object 形态以通过 provider 侧校验。
  */
-function normalizeMcpInputSchema(raw: unknown): Record<string, unknown> {
+export function normalizeMcpInputSchema(raw: unknown): Record<string, unknown> {
   if (raw == null || typeof raw !== 'object')
     return { type: 'object' }
   const obj = raw as Record<string, unknown>

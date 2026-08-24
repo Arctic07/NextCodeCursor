@@ -1,6 +1,6 @@
 import type { ProviderPromptProfile } from '../../../llm/promptProfile'
 import type { ParsedRunRequest } from '../types'
-import { escapeXml } from '../shared'
+import { buildDynamicToolsSection } from '../../dynamicTools'
 
 /**
  * Anthropic / Claude / Gemini 家族 system prompt
@@ -312,41 +312,28 @@ You have access to the todo_write tool to help you manage and plan tasks. Use th
 IMPORTANT: Make sure you don't end your turn before you've completed all todos.
 </task_management>`)
 
-  // ── MCP 文件系统 (动态注入 MCP 服务器列表) ──
-  if (parsed.mcpServers.length > 0 && parsed.mcpBasePath) {
-    let mcpSection = `
-<mcp_file_system>
-You have access to MCP (Model Context Protocol) tools through the MCP FileSystem.
-
-## MCP Tool Access
-
-Enabled MCP tools may be exposed directly in your available tool list with provider-specific names, and some environments may also expose generic MCP helper tools such as \`CallMcpTool\`. To use MCP tools effectively:
-
-1. Discover Available Tools: Browse the MCP tool descriptors in the file system to understand what tools are available. Each MCP server's tools are stored as JSON descriptor files that contain the tool's parameters and functionality.
-2. MANDATORY - Always Check Tool Schema First: You MUST ALWAYS list and read the tool's schema/descriptor file BEFORE calling an MCP tool when descriptor files are available. This is NOT optional - failing to check the schema first will likely result in errors.
-
-The MCP tool descriptors live in the ${parsed.mcpBasePath} folder. Each enabled MCP server has its own folder containing JSON descriptor files.
-
-## MCP Resource Access
-
-Some environments also expose MCP resource helpers such as \`ListMcpResources\` and \`FetchMcpResource\`.
-
-Available MCP servers:
-
-<mcp_file_system_servers>`
-
-    for (const mcp of parsed.mcpServers) {
-      if (mcp.serverUseInstructions) {
-        mcpSection += `<mcp_file_system_server name="${escapeXml(mcp.serverName)}" folderPath="${escapeXml(mcp.folderPath)}" serverUseInstructions="${escapeXml(mcp.serverUseInstructions)}">${escapeXml(mcp.serverName)}</mcp_file_system_server>\n`
-      }
-      else {
-        mcpSection += `<mcp_file_system_server name="${escapeXml(mcp.serverName)}" folderPath="${escapeXml(mcp.folderPath)}">${escapeXml(mcp.serverName)}</mcp_file_system_server>\n`
-      }
-    }
-
-    mcpSection += `</mcp_file_system_servers>
-</mcp_file_system>`
-    parts.push(mcpSection)
+  // ── Dynamic Tools (MCP namespace) ──
+  //
+  // 官方 Cursor 3.15.6 用 <dynamic_tools> 段承载 MCP,由
+  // requestContext.mcp_meta_tool_options 单独触发。
+  //
+  // 此处曾是 <mcp_file_system> 段(引导 LLM 去读磁盘 descriptor JSON)。
+  // 五组逐字节对照实测证实那条路已废: 只发 mcpFileSystemOptions 时官方
+  // preamble 与基线**完全一致**(指纹 919662ff…),服务端根本不提磁盘路径;
+  // 且那套 {workspaceProjectDir}/mcps/<server>/tools/<tool>.json 布局
+  // 只是个别 MCP 的巧合,换个 server 就不成立。
+  // 详见 analysis/mcp-dynamic-tools.md。
+  if (parsed.mcpMetaTool?.enabled && parsed.mcpMetaTool.descriptors.length > 0) {
+    parts.push(buildDynamicToolsSection(
+      parsed.mcpMetaTool.descriptors.map(d => ({
+        // namespace 名用 serverIdentifier 而非 serverName —— 实测官方如此,
+        // 且 CallDynamicTool 回传的 McpArgs.server_identifier 必须与之一致。
+        serverIdentifier: d.serverIdentifier,
+        toolNames: d.tools.map(t => t.toolName),
+        ...(d.serverUseInstructions ? { serverUseInstructions: d.serverUseInstructions } : {}),
+      })),
+      parsed.supportsMcpAuth === true,
+    ))
   }
 
   // ── Plan 模式专用 guardrails ──

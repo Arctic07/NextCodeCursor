@@ -622,6 +622,27 @@ export async function* handleConversationRun(
     disabledToolsForRun.add('WebSearch')
   if (!parsed.readLintsEnabled)
     disabledToolsForRun.add('ReadLints')
+  // dynamic namespace 的两个 meta 工具只在 meta-tool 模式下有意义:
+  // legacy 模式下 MCP 工具已逐个进扁平表,此时暴露 GetDynamicTools 只会让
+  // LLM 查到一个空 catalog,白费 token 还可能误导它去"发现"根本不存在的
+  // namespace。官方同样只在 mcpMetaToolOptions.enabled 时下发这两个工具。
+  if (!parsed.mcpMetaTool?.enabled) {
+    disabledToolsForRun.add('GetDynamicTools')
+    disabledToolsForRun.add('CallDynamicTool')
+  }
+
+  // MCP 模式判定 —— 每轮一条,用来回答"这次会话到底走的哪条路"。
+  // 没有它,"客户端没开 meta 模式"和"我们把工具弄丢了"在日志上长得一样。
+  logger.info({
+    conversationId: parsed.conversationId,
+    mcpMode: parsed.mcpMetaTool?.enabled ? 'dynamic_namespace' : 'legacy_flat',
+    namespaces: parsed.mcpMetaTool?.descriptors.map(d => ({
+      name: d.serverIdentifier,
+      tools: d.tools.length,
+    })) ?? [],
+    routingTableSize: parsed.mcpTools.length,
+    supportsMcpAuth: parsed.supportsMcpAuth === true,
+  }, '[DYNAMIC-TOOLS] MCP mode resolved')
 
   let breakdownCategories: BreakdownCategory[] | undefined
 
@@ -749,7 +770,15 @@ export async function* handleConversationRun(
     let currentText = ''
 
     try {
-      const preparedRequest = route.prepareStreamRequest(messages, parsed.mcpTools, undefined, parsed.mode, {
+      // dynamic namespace 模式 (Cursor 3.15.6): MCP 工具**不进** LLM 可见工具表,
+      // 改由 GetDynamicTools 按需发现。parsed.mcpTools 仍保持全量 —— 它是**路由表**,
+      // CallDynamicTool 要靠它把 namespace + toolName 映射成 McpArgs。
+      //
+      // 这两张表此前是同一张,legacy 模式下恰好重合所以没暴露问题;meta 模式下
+      // 客户端只发 slim 名单(仅 toolName,无 inputSchema),摊平下发等于给 LLM
+      // 一堆没有参数说明的工具。见 analysis/mcp-dynamic-tools.md。
+      const llmVisibleMcpTools = parsed.mcpMetaTool?.enabled ? [] : parsed.mcpTools
+      const preparedRequest = route.prepareStreamRequest(messages, llmVisibleMcpTools, undefined, parsed.mode, {
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
@@ -772,8 +801,11 @@ export async function* handleConversationRun(
         toolCatalogVariant: route.toolCatalog.variant,
         builtinsCount: route.toolCatalog.listBuiltins().length,
         runtimeToolsCount: preparedRequest.request.tools?.length ?? 0,
+        // 路由表规模 vs 实际下发给 LLM 的规模 — meta 模式下后者恒为 0
         mcpToolsCount: parsed.mcpTools.length,
         mcpToolNames: parsed.mcpTools.map(t => t.name),
+        mcpMetaToolEnabled: parsed.mcpMetaTool?.enabled === true,
+        llmVisibleMcpToolsCount: llmVisibleMcpTools.length,
       }, '[AGENT] prepared provider conversation')
 
       const llmStream = route.provider.stream(preparedRequest.request)
@@ -987,6 +1019,9 @@ export async function* handleConversationRun(
           allocateExecMessageId: () => ++blobCounter,
           allocateInteractionId: () => interactionIdCounter++,
           imageCollector: roundImageBlocks,
+          // GetDynamicTools 需要据此决定取哪些 server、是否补 mcp_auth
+          mcpMetaTool: parsed.mcpMetaTool,
+          supportsMcpAuth: parsed.supportsMcpAuth,
         })
         for await (const frame of toolFrames) {
           const completedToolCall = extractCompletedToolCall(frame)

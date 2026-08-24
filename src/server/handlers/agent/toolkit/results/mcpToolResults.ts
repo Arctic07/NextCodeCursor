@@ -25,6 +25,29 @@ export function normalizeImageData(raw: unknown): Uint8Array {
     return new Uint8Array(0);
 }
 
+/**
+ * 渲染客户端溢写到文件的 MCP 输出。
+ *
+ * 客户端 (cursor-agent-exec) 在 MCP 工具响应超过 40000 bytes 时,会把内容写到
+ * {projectDir}/agent-tools/{uuid}.txt,然后把该 content item 的 text 置空、
+ * 改带 output_location {file_path, size_bytes, line_count} 回传。
+ *
+ * 若只读 text,这里会得到空串并被 filter 掉,LLM 只看到
+ * "MCP tool completed successfully." —— 以为工具没有输出,实际结果在文件里。
+ *
+ * 文案 1:1 复刻客户端渲染函数 (main.unminify.js:25866 附近):
+ *   `${leadText ?? 'Content'} written to file: ${filePath}`
+ *   `Size: ${1024 以上按 KB 一位小数,否则 bytes}, ${lineCount} lines`
+ */
+function formatOutputLocation(location: Record<string, unknown>): string {
+    const filePath = str(location.filePath);
+    if (!filePath) return '';
+    const sizeBytes = Number(location.sizeBytes ?? 0);
+    const lineCount = Number(location.lineCount ?? 0);
+    const size = sizeBytes >= 1024 ? `${(sizeBytes / 1024).toFixed(1)} KB` : `${sizeBytes} bytes`;
+    return `Content written to file: ${filePath}\nSize: ${size}, ${lineCount} lines`;
+}
+
 function normalizeMcpContentItem(value: unknown): Record<string, unknown> {
     const item = obj(value);
     const content = obj(item.content);
@@ -187,7 +210,14 @@ export function buildMcpToolResultText(
                 const items = arr<Record<string, unknown>>(value.content);
                 const lines = items.map(item => {
                     const content = obj(item.content);
-                    if (content.case === 'text') return str(obj(content.value).text);
+                    if (content.case === 'text') {
+                        const textValue = obj(content.value);
+                        const text = str(textValue.text);
+                        // 溢写的 item: text 为空,真正内容在 outputLocation 指向的文件里
+                        if (!text && textValue.outputLocation)
+                            return formatOutputLocation(obj(textValue.outputLocation));
+                        return text;
+                    }
                     if (content.case === 'image') return `[image ${str(obj(content.value).mimeType, 'unknown')}]`;
                     return JSON.stringify(item);
                 }).filter(Boolean);

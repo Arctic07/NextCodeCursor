@@ -2,8 +2,10 @@ import type { AgentServerMessage } from '../../gen/agent_v1_pb';
 import { logger } from '../../logger';
 import type { ProviderRoundContext } from '../llm/providerRuntime';
 import type { LLMContentBlock, LLMMessage } from '../llm/types';
+import { renderDynamicToolsResult, toDynamicNamespace, type DynamicToolsQuery } from './dynamicTools';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
+import { fetchMcpState } from './mcpState';
 import { finalizeInteractionTool } from './interactionRuntime';
 import { execMessage, toolCallCompleted, toolCallStarted } from './stream';
 import { buildToolArgs } from './toolBuilders';
@@ -65,6 +67,9 @@ export async function* runToolCall(params: {
     allocateExecMessageId: () => number;
     allocateInteractionId: () => number;
     imageCollector?: LLMContentBlock[];
+    /** dynamic namespace 模式下 GetDynamicTools 需要的上下文 */
+    mcpMetaTool?: ParsedRunRequest['mcpMetaTool'];
+    supportsMcpAuth?: boolean;
 }): AsyncGenerator<AgentServerMessage, void, void> {
     yield* runToolCallInner(params);
 }
@@ -319,6 +324,99 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             input: sanitizedInput,
             modelCallId,
         });
+        return;
+    }
+
+    // ── GetDynamicTools: 服务端自执行的 discovery meta 工具 ──
+    //
+    // 不经客户端 exec 通道产出结果 —— 服务端自己经 mcpStateExecArgs 向客户端
+    // 取回完整 schema、渲染成 JSON 后直接喂回 LLM。
+    //
+    // 1:1 复刻官方行为 (analysis/mcp-dynamic-tools.md §4.5):
+    //   - server_identifiers: namespace/single_tool 查询传具体 server;
+    //     search/catalog 传空数组(= 要全部)
+    //   - 不做缓存: 官方实测同轮 4 次查询发了 4 次 mcpStateExecArgs
+    if (cursorToolType === 'getMcpToolsToolCall') {
+        const query: DynamicToolsQuery = {
+            namespace: typeof sanitizedInput.server === 'string' && sanitizedInput.server
+                ? sanitizedInput.server
+                : undefined,
+            toolName: typeof sanitizedInput.toolName === 'string' && sanitizedInput.toolName
+                ? sanitizedInput.toolName
+                : undefined,
+            pattern: typeof sanitizedInput.pattern === 'string' && sanitizedInput.pattern
+                ? sanitizedInput.pattern
+                : undefined,
+        };
+
+        // 精确查询只要目标 server;搜索/全量目录要全部
+        const scoped = query.namespace && !query.pattern ? [query.namespace] : [];
+        // 查询侧 —— 记下 LLM 到底问了什么。参数全空是合法的 catalog 查询,
+        // 不是"参数丢了",所以把判定出的 mode 一并打出来便于对账。
+        const queryMode = query.pattern
+            ? (query.namespace ? 'search_in_namespace' : 'search')
+            : query.namespace
+                ? (query.toolName ? 'single_tool' : 'namespace')
+                : 'catalog';
+        logger.info({
+            callId: tc.callId,
+            queryMode,
+            namespace: query.namespace,
+            toolName: query.toolName,
+            pattern: query.pattern,
+            fetchScope: scoped.length > 0 ? scoped : 'all',
+        }, '[DYNAMIC-TOOLS] GetDynamicTools query');
+
+        const servers = yield* fetchMcpState({
+            session: params.session,
+            serverIdentifiers: scoped,
+            allocateExecId: params.allocateExecMessageId,
+        });
+
+        let rawToolResult: ToolResultEnvelope;
+        if (servers === null) {
+            logger.warn({ callId: tc.callId, queryMode },
+                '[DYNAMIC-TOOLS] discovery failed — client returned no MCP state');
+            rawToolResult = {
+                result: {
+                    case: 'error',
+                    value: { error: 'Failed to retrieve MCP tool definitions from the client.' },
+                },
+            };
+        }
+        else {
+            const namespaces = servers.map(s => toDynamicNamespace(s, params.supportsMcpAuth === true));
+            const rendered = renderDynamicToolsResult(query, namespaces);
+            const content = JSON.stringify(rendered);
+            // 结果侧 —— resultMode 应与上面的 queryMode 对得上;
+            // contentBytes 是这次 discovery 往对话历史里塞了多少,
+            // 单个 40 工具的 namespace 查询约 21KB / 6k tokens。
+            logger.info({
+                callId: tc.callId,
+                queryMode,
+                resultMode: rendered.mode,
+                namespaces: namespaces.map(n => ({ name: n.name, status: n.status, tools: n.tools.length })),
+                matches: Array.isArray(rendered.matches) ? rendered.matches.length : undefined,
+                contentBytes: Buffer.byteLength(content, 'utf8'),
+                ...(rendered.error ? { error: rendered.error } : {}),
+            }, '[DYNAMIC-TOOLS] GetDynamicTools result');
+            rawToolResult = {
+                result: { case: 'success', value: { content } },
+            };
+        }
+
+        const finalized = finalizeToolCall({
+            roundContext: params.roundContext,
+            messages: params.messages,
+            cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            rawToolResult,
+            input: sanitizedInput,
+            modelCallId,
+        });
+        yield finalized.frame;
         return;
     }
 

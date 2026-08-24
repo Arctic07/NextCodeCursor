@@ -50,6 +50,8 @@ export interface AvailableMcpTool {
     name: string;
     providerIdentifier?: string;
     toolName?: string;
+    /** 归属 server identifier — 回传 McpArgs.server_identifier,限定客户端工具查找范围 */
+    serverIdentifier?: string;
 }
 
 /**
@@ -166,6 +168,55 @@ export function resolveToolCall(
     availableMcpTools: AvailableMcpTool[] = [],
 ): { cursorToolType: string; sanitizedInput: Record<string, unknown> } {
     const sanitizedInput = sanitizeToolInput(llmToolName, input);
+
+    // dynamic namespace 模式: LLM 直接调 CallDynamicTool,自带
+    // namespace + toolName + arguments (官方 LLM 侧参数名,实测 3.15.6)。
+    // 这里把它映射成 McpArgs 需要的路由字段。
+    //
+    // namespace 的值官方用的是 serverIdentifier (如 user-ida-pro-mcp) ——
+    // <dynamic_tools> 段里的 name 属性就是它。但也接受 serverName,
+    // 因为 LLM 可能从 mcp_instructions 等处读到展示名。
+    //
+    // CallMcpTool / server 是本项目早期实现与旧版本的参数名,保留兼容,
+    // 避免会话中途升级时正在进行的调用失配。
+    if (llmToolName === 'CallDynamicTool' || llmToolName === 'call_dynamic_tool'
+      || llmToolName === 'CallMcpTool' || llmToolName === 'call_mcp_tool') {
+        const server = String(input.namespace ?? input.server ?? '');
+        const toolName = String(input.toolName ?? input.tool_name ?? '');
+        const args = (input.arguments ?? input.args ?? {}) as Record<string, unknown>;
+
+        const matched = availableMcpTools.find(t =>
+            t.toolName === toolName
+            && (t.serverIdentifier === server || t.providerIdentifier === server));
+        // 路由结果直接决定 McpArgs 发给哪个 server。matched=false 时走的是
+        // "按 LLM 给的字面量硬发"这条兜底路径 —— 客户端很可能报 tool not found,
+        // 所以单独记一条,便于把"名字对不上"和"MCP server 本身故障"区分开。
+        logger[matched ? 'debug' : 'warn']({
+            llmToolName,
+            namespace: server,
+            toolName,
+            argKeys: Object.keys(args),
+            routed: matched
+                ? { name: matched.name, serverIdentifier: matched.serverIdentifier }
+                : null,
+            knownMcpTools: matched ? undefined : availableMcpTools.length,
+        }, matched
+            ? '[DYNAMIC-TOOLS] CallDynamicTool routed'
+            : '[DYNAMIC-TOOLS] CallDynamicTool not in routing table — forwarding as-is');
+        // 未匹配到也照发 —— 客户端 callTool 以 toolName 为准,serverIdentifier 仅作过滤器;
+        // 宁可让客户端报 "tool not found",也好过我们这里静默吞掉调用。
+        return {
+            cursorToolType: 'mcpToolCall',
+            sanitizedInput: {
+                name: matched?.name ?? (server ? `${server}-${toolName}` : toolName),
+                args,
+                providerIdentifier: matched?.providerIdentifier ?? server,
+                toolName,
+                serverIdentifier: matched?.serverIdentifier ?? server,
+            },
+        };
+    }
+
     const descriptor = availableMcpTools.find(tool => tool.name === llmToolName);
 
     if (descriptor && (descriptor.providerIdentifier || descriptor.toolName)) {
@@ -176,6 +227,7 @@ export function resolveToolCall(
                 args: sanitizedInput,
                 providerIdentifier: descriptor.providerIdentifier ?? '',
                 toolName: descriptor.toolName ?? '',
+                serverIdentifier: descriptor.serverIdentifier ?? '',
             },
         };
     }

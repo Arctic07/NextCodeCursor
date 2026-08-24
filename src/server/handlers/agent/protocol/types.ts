@@ -69,17 +69,63 @@ export interface ParsedRunRequest {
   /** MCP 服务器配置 */
   mcpServers: Array<{
     serverName: string
+    /** McpDescriptor.server_identifier — 客户端 mcpService 按此字段唯一定位 server */
+    serverIdentifier: string
     folderPath: string
     serverUseInstructions: string
   }>
   /** MCP 工具目录根路径 */
   mcpBasePath: string
+  /**
+   * requestContextParts.mcps_blob_id — Cursor 3.13+ ref_only 模式下 MCP 工具表所在的 blob。
+   *
+   * 该模式下 requestContext 与顶层 mcp_tools 均不投递(实测 2-Cometixy.log 08-07),
+   * MCP 工具表只能经 KV 通道用此 blobId 取回并解为 RequestContextMcpsPart。
+   * 非 ref_only 模式下为 undefined。
+   */
+  mcpsBlobId?: Uint8Array
+  /**
+   * MCP meta-tool 模式 (requestContext.mcp_meta_tool_options)。
+   *
+   * enabled 时客户端只下发工具"目录"而非完整定义,LLM 需先调 GetMcpTools
+   * 拉取签名再调 CallMcpTool。descriptors 在 slim 模式下只有 toolName +
+   * annotations,description/inputSchema 为空 —— 完整定义须经
+   * mcp_state_exec_args 通道向客户端取。
+   */
+  /**
+   * requestContext.supports_mcp_auth — 客户端是否支持 MCP 认证流程。
+   *
+   * 实测: 为 true 时官方服务端会给每个 MCP namespace 的工具列表末尾自动追加
+   * 一个 mcp_auth 工具(客户端下发的 descriptor 里并没有它),并在
+   * <dynamic_tools> 段尾附上认证说明。见 dynamicTools.ts MCP_AUTH_TOOL。
+   */
+  supportsMcpAuth?: boolean
+  mcpMetaTool?: {
+    enabled: boolean
+    descriptors: Array<{
+      serverName: string
+      serverIdentifier: string
+      serverUseInstructions?: string
+      tools: Array<{
+        toolName: string
+        description?: string
+        annotationsJson?: string
+      }>
+    }>
+  }
   mcpTools: Array<{
     name: string
     description: string
     inputSchema: Record<string, unknown>
     providerIdentifier: string
     toolName: string
+    /**
+     * 归属 server 的 identifier — 回传 McpArgs.server_identifier (field 9)。
+     * 客户端 MCPService.callTool 用它把工具查找限定在该 server:
+     *   for (const g in tools) { if (s && g !== s) continue; ... }
+     * 不传则退化为"遍历所有 server 取首个同名工具",多 server 重名时会路由错。
+     */
+    serverIdentifier: string
   }>
   /** MCP server 使用说明 (来自 requestContext.mcp_instructions, proto field 14) */
   mcpInstructions: Array<{

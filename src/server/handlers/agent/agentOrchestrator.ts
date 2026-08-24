@@ -7,12 +7,16 @@ import { clearPersistedConversationCheckpoint, getPersistedConversationCheckpoin
 import { warmupBlobsAsync } from './blobStore';
 import { logger } from '../../logger';
 import { isAgentRunAbortedError } from './wait';
+import { applyMcpsPart, fetchMcpsPart } from './requestContextParts';
 
 export async function* handleRunRequest(
     msg: Record<string, unknown>,
     session: AgentSession | null = null,
 ): AsyncIterable<AgentServerMessage> {
     const parsed = parseRunRequest(msg);
+    // kvGetBlob 请求 id — 与 conversationRuntime 的 blobCounter 相互独立。
+    // 用高位起始值避开后者(从 0 递增)的取值区间,防止 id 撞号。
+    let nextBlobRequestId = 900_000;
 
     try {
         const persistedCheckpoint = await getPersistedConversationCheckpoint(parsed.conversationId);
@@ -57,6 +61,20 @@ export async function* handleRunRequest(
         // 未命中的条目会保留 blobId, 后续 preamble 用 <extra_context_pending> 占位透出。
         if (extraContextBlobIds.length > 0) {
             resolveExtraContextBlobs(parsed);
+        }
+
+        // Cursor 3.13+ ref_only 传输模式: requestContext 与顶层 mcp_tools 都不投递,
+        // MCP 工具表只存在于 mcps blob 里。这里补取一次,把工具表还原到 parsed。
+        // 只在"确实拿到了 blobId 且当前工具表为空"时触发,legacy/dual 模式不受影响。
+        if (parsed.mcpsBlobId && parsed.mcpTools.length === 0) {
+            const mcpsPart = yield* fetchMcpsPart({
+                session,
+                blobId: parsed.mcpsBlobId,
+                allocateBlobId: () => nextBlobRequestId++,
+            });
+            if (mcpsPart) {
+                applyMcpsPart(parsed, mcpsPart);
+            }
         }
 
         if (parsed.isSummarize) {
