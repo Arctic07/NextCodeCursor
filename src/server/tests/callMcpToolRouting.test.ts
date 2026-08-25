@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest'
-import { resolveToolCall } from '../handlers/agent/tools'
+import { describe, expect, it } from 'vitest'
+import { mapToolName, resolveToolCall } from '../handlers/agent/tools'
 import { getProviderToolCatalog } from '../handlers/llm/toolCatalog'
 
 /**
@@ -99,4 +99,53 @@ it('exposes both dynamic-tool metas in every provider prompt vocabulary', () => 
     expect(vocab, `${provider} vocabulary`).toContain('CallDynamicTool')
     expect(vocab, `${provider} vocabulary`).toContain('GetDynamicTools')
   }
+})
+
+describe('模型幻觉出的扁平 MCP 工具名', () => {
+  it('mcp__<server>__<tool> 路由到 mcpToolCall 而非原样透传', () => {
+    // 原样透传会让客户端收到非法的 toolCall case:
+    // "[STREAM] unknown tool type — no proto Schema, falling back to bare object"
+    const { cursorToolType, sanitizedInput } = resolveToolCall(
+      'mcp__user-ida-pro-mcp__decompile',
+      { address: '0x401000' },
+      AVAILABLE,
+    )
+    expect(cursorToolType).toBe('mcpToolCall')
+    expect(sanitizedInput.toolName).toBe('decompile')
+    expect(sanitizedInput.serverIdentifier).toBe('user-ida-pro-mcp')
+    expect(sanitizedInput.args).toEqual({ address: '0x401000' })
+  })
+
+  it('未注册的 server/tool 仍路由到 mcpToolCall,由客户端报 tool-not-found', () => {
+    const { cursorToolType, sanitizedInput } = resolveToolCall(
+      'mcp__ghost-server__nope',
+      {},
+      AVAILABLE,
+    )
+    expect(cursorToolType).toBe('mcpToolCall')
+    expect(sanitizedInput.serverIdentifier).toBe('ghost-server')
+    expect(sanitizedInput.toolName).toBe('nope')
+  })
+
+  it('mapToolName 对该形态返回 mcpToolCall', () => {
+    expect(mapToolName('mcp__srv__tool')).toBe('mcpToolCall')
+  })
+
+  it('不误伤: 非 mcp__ 前缀与畸形名保持原样', () => {
+    expect(mapToolName('Shell')).toBe('shellToolCall')
+    expect(mapToolName('mcp__onlyserver')).toBe('mcp__onlyserver')
+    expect(mapToolName('mcp____x')).toBe('mcp____x')
+  })
+
+  it('真实注册的同名工具优先走精确匹配', () => {
+    const withFlatName = [{
+      name: 'mcp__user-x__tool',
+      providerIdentifier: 'x',
+      toolName: 'real_tool',
+      serverIdentifier: 'user-x',
+    }]
+    const { sanitizedInput } = resolveToolCall('mcp__user-x__tool', { a: 1 }, withFlatName)
+    // 走 descriptor 分支 → toolName 取注册表里的值,而非从名字里切出来的 "tool"
+    expect(sanitizedInput.toolName).toBe('real_tool')
+  })
 })

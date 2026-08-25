@@ -116,8 +116,36 @@ export interface ToolCallInfo {
  *   deleteToolCall, readLintsToolCall, webSearchToolCall, webFetchToolCall,
  *   askQuestionToolCall, taskToolCall, mcpToolCall, updateTodosToolCall
  */
+/**
+ * 解析 MCP 生态通用的扁平工具名 `mcp__<server>__<tool>`。
+ *
+ * 这不是 Cursor 的命名约定,而是 Claude Code / MCP 社区的惯例。LLM 在拿不到
+ * namespace 清单时会回退到训练里见过的这套写法 —— 实测
+ * (1-ClaudeCodeRev.log 2026-08-25) 模型连续发出
+ * mcp__user-ida-pro-mcp__instance_list 这样的调用。
+ *
+ * 这类名字在工具表里找不到,若原样当作 cursorToolType 发给客户端,会触发
+ * "[STREAM] unknown tool type — no proto Schema" 并以裸对象下发,客户端无从处理。
+ * 识别出来路由成 mcpToolCall 至少能让客户端给出结构化的 tool-not-found,
+ * 而不是收到一个非法的 toolCall case。
+ *
+ * server 名不含 `__`,故按首个 `__` 切分。
+ */
+export function parseFlatMcpToolName(name: string): { server: string; toolName: string } | null {
+    if (!name.startsWith('mcp__')) return null;
+    const rest = name.slice(5);
+    const sep = rest.indexOf('__');
+    if (sep <= 0) return null;
+    const server = rest.slice(0, sep);
+    const toolName = rest.slice(sep + 2);
+    return server && toolName ? { server, toolName } : null;
+}
+
 export function mapToolName(llmToolName: string): string {
-    return findToolByAlias(llmToolName)?.cursorToolType ?? llmToolName;
+    const registered = findToolByAlias(llmToolName)?.cursorToolType;
+    if (registered) return registered;
+    if (parseFlatMcpToolName(llmToolName)) return 'mcpToolCall';
+    return llmToolName;
 }
 
 export function mapPartialToolName(llmToolName: string): string {
@@ -213,6 +241,33 @@ export function resolveToolCall(
                 providerIdentifier: matched?.providerIdentifier ?? server,
                 toolName,
                 serverIdentifier: matched?.serverIdentifier ?? server,
+            },
+        };
+    }
+
+    // LLM 幻觉出的扁平 MCP 名 `mcp__<server>__<tool>` —— 见 parseFlatMcpToolName。
+    // 放在按名精确匹配之后、通用回退之前: 真有同名工具注册时仍走正常路径。
+    const flat = availableMcpTools.some(t => t.name === llmToolName)
+        ? null
+        : parseFlatMcpToolName(llmToolName);
+    if (flat) {
+        const matched = availableMcpTools.find(t =>
+            t.toolName === flat.toolName
+            && (t.serverIdentifier === flat.server || t.providerIdentifier === flat.server));
+        logger.warn({
+            llmToolName,
+            parsedServer: flat.server,
+            parsedTool: flat.toolName,
+            routed: matched ? matched.name : null,
+        }, '[DYNAMIC-TOOLS] flat mcp__ tool name from model — routing to mcpToolCall');
+        return {
+            cursorToolType: 'mcpToolCall',
+            sanitizedInput: {
+                name: matched?.name ?? llmToolName,
+                args: sanitizedInput,
+                providerIdentifier: matched?.providerIdentifier ?? flat.server,
+                toolName: flat.toolName,
+                serverIdentifier: matched?.serverIdentifier ?? flat.server,
             },
         };
     }

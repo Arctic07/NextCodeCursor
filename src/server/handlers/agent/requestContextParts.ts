@@ -37,6 +37,7 @@ import {
   normalizeMcpToolName,
   resolveMcpServerIdentifier,
 } from './protocol/parseRunRequest'
+import { toBytes } from './protocol/shared'
 import type { AgentSession } from './session'
 import { kvGetBlob } from './stream'
 import { waitForMessageMatchingWithHeartbeat } from './wait'
@@ -69,8 +70,9 @@ function extractBlobData(msg: Record<string, unknown>): Uint8Array | null {
     logger.warn({ error: result.error }, '[PROTOCOL] getBlobResult returned error')
     return null
   }
-  const data = result.blobData
-  return data instanceof Uint8Array && data.length > 0 ? data : null
+  // blob_data 同样是 proto bytes,JSON 路径下会是 base64 字符串 ——
+  // 只认 Uint8Array 会把正常返回误判成 "no data"
+  return toBytes(result.blobData) ?? null
 }
 
 export interface FetchedMcpsPart {
