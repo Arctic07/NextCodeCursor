@@ -24,12 +24,18 @@
  *   LLM 只剩内置的 ListMcpResources / FetchMcpResource / CallMcpTool,
  *   动态 MCP 工具(decompile / list_funcs …)全部消失。
  *
- * 本模块负责: 用 mcps_blob_id 经 KV 通道向客户端取回该 blob,
- * 解码为 RequestContextMcpsPart,把 MCP 工具表补回 ParsedRunRequest。
+ * 本模块负责: 严格串行取回四个引用并分别解码为 Rules / Skills /
+ * Subagents / Mcps Part，再合回同一个 ParsedRunRequest。dual/legacy 模式
+ * 不暴露引用，因此不会重复拉取或影响旧客户端。
  */
 import { fromBinary } from '@bufbuild/protobuf'
 import type { AgentServerMessage } from '../../gen/agent_v1_pb'
-import { RequestContextMcpsPartSchema } from '../../gen/agent_v1_pb'
+import {
+  RequestContextMcpsPartSchema,
+  RequestContextRulesPartSchema,
+  RequestContextSkillsPartSchema,
+  RequestContextSubagentsPartSchema,
+} from '../../gen/agent_v1_pb'
 import { logger } from '../../logger'
 import type { ParsedRunRequest } from './protocol/types'
 import {
@@ -40,6 +46,12 @@ import {
 } from './protocol/parseRunRequest'
 import { toBytes } from './protocol/shared'
 import type { AgentSession } from './session'
+import {
+  applyRuleContext,
+  mergeAgentSkills,
+  normalizeAgentSkill,
+  normalizeCustomSubagent,
+} from './contextCatalog'
 import { kvGetBlob } from './stream'
 import { waitForMessageMatchingWithHeartbeat } from './wait'
 
@@ -75,6 +87,21 @@ function extractBlobData(msg: Record<string, unknown>): Uint8Array | null {
   return toBytes(result.blobData) ?? null
 }
 
+export interface FetchedRulesPart {
+  rules: Array<Record<string, unknown>>
+  nonFileRules: Array<Record<string, unknown>>
+  cloudRule?: string
+}
+
+export interface FetchedSkillsPart {
+  agentSkills: Array<Record<string, unknown>>
+  skillOptions?: Record<string, unknown>
+}
+
+export interface FetchedSubagentsPart {
+  customSubagents: Array<Record<string, unknown>>
+}
+
 export interface FetchedMcpsPart {
   tools: Array<Record<string, unknown>>
   mcpInstructions: Array<Record<string, unknown>>
@@ -82,73 +109,156 @@ export interface FetchedMcpsPart {
   mcpMetaToolOptions?: Record<string, unknown>
 }
 
-/**
- * 向客户端请求 mcps blob 并解码。
- *
- * 作为 async generator: yield 出去的是要发给客户端的 kvGetBlob 帧与心跳,
- * return 的才是解码结果。取不到时返回 null,调用方应保持原有(空)工具表,
- * 不中断本轮对话。
- */
-export async function* fetchMcpsPart(params: {
+type FetchPartParams = {
   session: AgentSession | null
   blobId: Uint8Array
   allocateBlobId: () => number
-}): AsyncGenerator<AgentServerMessage, FetchedMcpsPart | null, void> {
+}
+
+/** 四类 Part 共用同一个严格串行 KV fetch，避免无 response id 的旧客户端串包。 */
+async function* fetchPartBytes(
+  params: FetchPartParams,
+  partName: 'rules' | 'skills' | 'subagents' | 'mcps',
+): AsyncGenerator<AgentServerMessage, Uint8Array | null, void> {
   if (!params.session) {
-    logger.warn('[PROTOCOL] cannot fetch mcps blob without a session')
+    logger.warn({ partName }, '[PROTOCOL] cannot fetch request-context blob without a session')
     return null
   }
 
   const requestId = params.allocateBlobId()
   yield kvGetBlob(requestId, params.blobId)
-
   const msg = yield* waitForMessageMatchingWithHeartbeat(
     params.session,
-    (m) => {
-      const kv = m.kvClientMessage as Record<string, unknown> | undefined
+    (message) => {
+      const kv = message.kvClientMessage as Record<string, unknown> | undefined
       if (!kv?.getBlobResult)
         return false
-      // 优先按 id 匹配;客户端未回 id 时退化为"接受首个 getBlobResult"。
-      // 本轮只会有这一个在途 getBlob 请求,不会串号。
       const id = kv.id
       return id === undefined || id === requestId
     },
     BLOB_FETCH_TIMEOUT_MS,
   )
-
   if (!msg) {
-    logger.warn({ requestId }, '[PROTOCOL] mcps blob fetch timed out')
+    logger.warn({ requestId, partName }, '[PROTOCOL] request-context blob fetch timed out')
     return null
   }
-
   const blobData = extractBlobData(msg)
   if (!blobData) {
-    logger.warn({ requestId }, '[PROTOCOL] mcps blob fetch returned no data')
+    logger.warn({ requestId, partName }, '[PROTOCOL] request-context blob fetch returned no data')
     return null
   }
+  return blobData
+}
 
+export async function* fetchRulesPart(params: FetchPartParams): AsyncGenerator<AgentServerMessage, FetchedRulesPart | null, void> {
+  const blobData = yield* fetchPartBytes(params, 'rules')
+  if (!blobData) return null
+  try {
+    const part = fromBinary(RequestContextRulesPartSchema, blobData)
+    const result = {
+      rules: part.rules as unknown as Array<Record<string, unknown>>,
+      nonFileRules: part.nonFileRules as unknown as Array<Record<string, unknown>>,
+      ...(part.cloudRule !== undefined ? { cloudRule: part.cloudRule } : {}),
+    }
+    logger.info({ bytes: blobData.length, rules: result.rules.length, nonFileRules: result.nonFileRules.length, hasCloudRule: result.cloudRule !== undefined },
+      '[PROTOCOL] rules blob decoded')
+    return result
+  }
+  catch (error) {
+    logger.warn({ error: (error as Error).message, bytes: blobData.length }, '[PROTOCOL] failed to decode RequestContextRulesPart')
+    return null
+  }
+}
+
+export async function* fetchSkillsPart(params: FetchPartParams): AsyncGenerator<AgentServerMessage, FetchedSkillsPart | null, void> {
+  const blobData = yield* fetchPartBytes(params, 'skills')
+  if (!blobData) return null
+  try {
+    const part = fromBinary(RequestContextSkillsPartSchema, blobData)
+    const result = {
+      agentSkills: part.agentSkills as unknown as Array<Record<string, unknown>>,
+      ...(part.skillOptions ? { skillOptions: part.skillOptions as unknown as Record<string, unknown> } : {}),
+    }
+    logger.info({ bytes: blobData.length, skills: result.agentSkills.length, hasSkillOptions: !!result.skillOptions },
+      '[PROTOCOL] skills blob decoded')
+    return result
+  }
+  catch (error) {
+    logger.warn({ error: (error as Error).message, bytes: blobData.length }, '[PROTOCOL] failed to decode RequestContextSkillsPart')
+    return null
+  }
+}
+
+export async function* fetchSubagentsPart(params: FetchPartParams): AsyncGenerator<AgentServerMessage, FetchedSubagentsPart | null, void> {
+  const blobData = yield* fetchPartBytes(params, 'subagents')
+  if (!blobData) return null
+  try {
+    const part = fromBinary(RequestContextSubagentsPartSchema, blobData)
+    const result = { customSubagents: part.customSubagents as unknown as Array<Record<string, unknown>> }
+    logger.info({ bytes: blobData.length, subagents: result.customSubagents.length }, '[PROTOCOL] subagents blob decoded')
+    return result
+  }
+  catch (error) {
+    logger.warn({ error: (error as Error).message, bytes: blobData.length }, '[PROTOCOL] failed to decode RequestContextSubagentsPart')
+    return null
+  }
+}
+
+export async function* fetchMcpsPart(params: FetchPartParams): AsyncGenerator<AgentServerMessage, FetchedMcpsPart | null, void> {
+  const blobData = yield* fetchPartBytes(params, 'mcps')
+  if (!blobData) return null
   try {
     const part = fromBinary(RequestContextMcpsPartSchema, blobData)
-    const tools = (part.tools ?? []) as unknown as Array<Record<string, unknown>>
+    const tools = part.tools as unknown as Array<Record<string, unknown>>
     logger.info({
       bytes: blobData.length,
       toolCount: tools.length,
-      instructionCount: part.mcpInstructions?.length ?? 0,
+      instructionCount: part.mcpInstructions.length,
       hasFsOptions: !!part.mcpFileSystemOptions,
       hasMetaToolOptions: !!part.mcpMetaToolOptions,
-    }, '[PROTOCOL] mcps blob decoded — MCP tools recovered from ref_only transport')
+    }, '[PROTOCOL] mcps blob decoded')
     return {
       tools,
-      mcpInstructions: (part.mcpInstructions ?? []) as unknown as Array<Record<string, unknown>>,
+      mcpInstructions: part.mcpInstructions as unknown as Array<Record<string, unknown>>,
       mcpFileSystemOptions: part.mcpFileSystemOptions as unknown as Record<string, unknown> | undefined,
       mcpMetaToolOptions: part.mcpMetaToolOptions as unknown as Record<string, unknown> | undefined,
     }
   }
-  catch (e) {
-    logger.warn({ error: (e as Error).message, bytes: blobData.length },
-      '[PROTOCOL] failed to decode RequestContextMcpsPart')
+  catch (error) {
+    logger.warn({ error: (error as Error).message, bytes: blobData.length }, '[PROTOCOL] failed to decode RequestContextMcpsPart')
     return null
   }
+}
+
+export function applyRulesPart(parsed: ParsedRunRequest, part: FetchedRulesPart): void {
+  applyRuleContext({
+    parsed,
+    rules: part.rules,
+    nonFileRules: part.nonFileRules,
+    cloudRule: part.cloudRule,
+    preserveExistingUserRules: true,
+  })
+  logger.info({ alwaysRules: parsed.alwaysRules.length, requestableRules: parsed.projectRules.length, userRules: parsed.userRules.length },
+    '[PROTOCOL] Rule context restored from rules blob')
+}
+
+export function applySkillsPart(parsed: ParsedRunRequest, part: FetchedSkillsPart): void {
+  parsed.agentSkills = mergeAgentSkills(parsed.agentSkills, part.agentSkills.map(normalizeAgentSkill))
+  if (part.skillOptions)
+    parsed.skillOptions = part.skillOptions
+  logger.info({ agentSkills: parsed.agentSkills.length, hasSkillOptions: !!parsed.skillOptions },
+    '[PROTOCOL] Skill context restored from skills blob')
+}
+
+export function applySubagentsPart(parsed: ParsedRunRequest, part: FetchedSubagentsPart): void {
+  const byName = new Map(parsed.customSubagents.map(subagent => [subagent.name, subagent]))
+  for (const raw of part.customSubagents) {
+    const subagent = normalizeCustomSubagent(raw)
+    if (subagent.name)
+      byName.set(subagent.name, subagent)
+  }
+  parsed.customSubagents = [...byName.values()]
+  logger.info({ customSubagents: parsed.customSubagents.length }, '[PROTOCOL] Subagent context restored from subagents blob')
 }
 
 /**

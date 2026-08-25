@@ -10,6 +10,7 @@ import {
 import { finalizeToolCall } from './toolLifecycle';
 import { shellToolCallStderrDelta, shellToolCallStdoutDelta } from './stream';
 import { registerBackgroundJob, type AgentSession } from './session';
+import type { ReadContextState } from './contextCatalog';
 import {
     waitForExecClientMessageWithHeartbeat,
     waitForExecStreamCloseWithHeartbeat,
@@ -52,6 +53,7 @@ export async function* finalizeExecTool(params: {
     roundContext: Pick<ProviderRoundContext, 'createToolResult' | 'recordToolResult'>;
     messages: LLMMessage[];
     imageCollector?: LLMContentBlock[];
+    readContext?: ReadContextState;
 }): AsyncGenerator<AgentServerMessage, AgentServerMessage, void> {
     let toolResult: ToolResultEnvelope = { result: { case: 'error', value: { message: 'no result' } } };
     let completedFrame: AgentServerMessage | null = null;
@@ -203,6 +205,7 @@ export async function* finalizeExecTool(params: {
                 rawToolResult: buildExecToolResult(params.cursorToolType, ecm, params.input),
                 input: params.input,
                 modelCallId: params.modelCallId,
+                readContext: params.readContext,
             });
             toolResult = finalized.toolResult;
             completedFrame = finalized.frame;

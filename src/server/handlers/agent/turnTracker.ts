@@ -35,6 +35,7 @@ export interface TurnBaseline {
   userMessageBlobId: string
   stepBlobIds: string[]
   requestId?: string
+  dynamicToolCount?: number
 }
 
 export class ActiveTurnTracker {
@@ -44,6 +45,7 @@ export class ActiveTurnTracker {
     readonly userMessageBlobId: string,
     stepBlobIds: string[] = [],
     readonly requestId?: string,
+    private dynamicToolCount?: number,
   ) {
     this.stepBlobIds = [...stepBlobIds]
   }
@@ -52,7 +54,16 @@ export class ActiveTurnTracker {
     const baseline = readTurnBaseline(turnBlobId)
     if (!baseline)
       return null
-    return new ActiveTurnTracker(baseline.userMessageBlobId, baseline.stepBlobIds, baseline.requestId)
+    return new ActiveTurnTracker(
+      baseline.userMessageBlobId,
+      baseline.stepBlobIds,
+      baseline.requestId,
+      baseline.dynamicToolCount,
+    )
+  }
+
+  setDynamicToolCount(count: number): void {
+    this.dynamicToolCount = count
   }
 
   addThinking(text: string, durationMs = 0): EncodedBlob | null {
@@ -111,6 +122,7 @@ export class ActiveTurnTracker {
           userMessage: encoder.encode(this.userMessageBlobId),
           steps: this.stepBlobIds.map(id => encoder.encode(id)),
           ...(this.requestId ? { requestId: this.requestId } : {}),
+          ...(this.dynamicToolCount !== undefined ? { dynamicToolCount: this.dynamicToolCount } : {}),
         },
       },
     })))
@@ -158,6 +170,7 @@ export function readTurnBaseline(turnBlobId: string): TurnBaseline | null {
       userMessageBlobId: Buffer.from(value.userMessage).toString('utf-8'),
       stepBlobIds: value.steps.map(step => Buffer.from(step).toString('utf-8')),
       requestId: value.requestId,
+      dynamicToolCount: value.dynamicToolCount,
     }
   }
   catch (error) {

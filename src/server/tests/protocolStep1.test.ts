@@ -87,7 +87,44 @@ describe('parseRunRequest — Step 1 field coverage', () => {
     })
     expect(parsed.documentations).toEqual([{ docId: 'doc1', name: 'React Docs' }])
     expect(parsed.cursorCommands).toEqual([{ name: 'lint', content: 'eslint .' }])
-    expect(parsed.selectedSkills).toEqual([{ fullPath: '/skill/a.md', description: 'formatting helper' }])
+    expect(parsed.selectedSkills).toMatchObject([{
+      fullPath: '/skill/a.md',
+      content: '',
+      description: 'formatting helper',
+      disableModelInvocation: false,
+    }])
+  })
+
+  it('falls back to selected cursorRules for manually attached Skills on older clients', () => {
+    const parsed = parseRunRequest({
+      runRequest: {
+        conversationId: 'c3-legacy-skill',
+        action: {
+          userMessageAction: {
+            userMessage: {
+              text: 'x',
+              selectedContext: {
+                cursorRules: [{
+                  rule: {
+                    fullPath: '/workspace/.cursor/skills/review/SKILL.md',
+                    content: '---\ndescription: Review changes\n---\nFollow this workflow.',
+                    type: { manuallyAttached: {} },
+                  },
+                }],
+              },
+            },
+            requestContext: {},
+          },
+        },
+        modelDetails: { modelId: 'm' },
+      },
+    })
+    expect(parsed.selectedSkills).toMatchObject([{
+      fullPath: '/workspace/.cursor/skills/review/SKILL.md',
+      content: expect.stringContaining('Follow this workflow.'),
+      description: 'Review changes',
+    }])
+    expect(parsed.selectedCursorRules).toEqual([])
   })
 
   it('decodes extra_context_entries with data scalar and oneof forms', () => {
@@ -235,23 +272,39 @@ describe('parseRunRequest — Step 1 field coverage', () => {
         modelDetails: { modelId: 'm' },
       },
     })
-    // 注: parseRunRequest 会真实读 ~/.ccursor/knowledge-base.json 合入 userRules
-    // (复刻官方服务端 knowledgeBaseService 行为), 所以 userRules 可能还有本地 KB
-    // 条目。断言 fixture 提供的 3 条"必须在"即可,不做精确匹配。
-    // 顺序保证: parseRunRequest 先处理 requestContext.rules (L139-203), 再合入 KB
-    // (L212-227) 且以 content 去重 — fixture 的 3 条永远先入 userRules。
-    expect(parsed.userRules).toEqual(expect.arrayContaining([
+    // source 缺省的 global rule 属于 workspace always-applied，而不是 User Rule；
+    // content-only legacy rule 无路径可 Read，保留 eager user fallback。
+    expect(parsed.userRules).toContain('bare rule')
+    expect(parsed.alwaysRules.map(rule => rule.content)).toEqual([
       'Always reply in Chinese',
       'CLAUDE',
-      'bare rule',
-    ]))
-    expect(parsed.projectRules).toHaveLength(1)
+    ])
+    expect(parsed.projectRules).toHaveLength(2)
     expect(parsed.projectRules[0]).toMatchObject({
       fullPath: '/proj/.cursor/rules/a.mdc',
       content: 'TS rule',
+      globs: ['**/*.ts'],
       glob: '**/*.ts',
+      kind: 'fileGlobbed',
     })
-    expect(parsed.agentSkills.some(s => s.fullPath === '/skill.mdc' && s.description === 'helper')).toBe(true)
+    expect(parsed.projectRules[1]).toMatchObject({
+      fullPath: '/skill.mdc',
+      description: 'helper',
+      kind: 'agentFetched',
+    })
+    expect(parsed.agentSkills).toEqual([])
+  })
+
+  it('restores conversationState.readPaths for cross-turn Rule/Skill deduplication', () => {
+    const parsed = parseRunRequest({
+      runRequest: {
+        conversationId: 'c-read-paths',
+        conversationState: { readPaths: ['/workspace/src/a.ts', '/workspace/.cursor/rules/ts.mdc'] },
+        action: { userMessageAction: { userMessage: { text: 'q' }, requestContext: {} } },
+        modelDetails: { modelId: 'm' },
+      },
+    })
+    expect(parsed.readPaths).toEqual(['/workspace/src/a.ts', '/workspace/.cursor/rules/ts.mdc'])
   })
 
   it('honors requestContext on resume_action (multi-round rules/mcp re-push)', () => {

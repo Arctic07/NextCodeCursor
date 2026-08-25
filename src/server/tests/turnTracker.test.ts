@@ -11,14 +11,23 @@ describe('turnTracker', () => {
         userText: 'hello world',
         modelId: 'gpt-5.4-medium',
         conversationId: 'conv-turn',
+        requestContextTransport: 'legacy',
+        clientSupportsDynamicTools: false,
+        cursorDynamicTools: [],
+        dynamicToolCount: 0,
+        dynamicToolTransitionReminder: false,
         mode: 'AGENT_MODE_AGENT',
         isSummarize: false,
         isSubagent: false,
         isBackgroundTaskCompletion: false,
         backgroundTaskCompletions: [],
         userRules: [],
+        alwaysRules: [],
         projectRules: [],
+        cursorRules: [],
         agentSkills: [],
+        customSubagents: [],
+        disabledTeamRules: [],
         env: {},
         isGitRepo: false,
         mcpServers: [],
@@ -29,6 +38,7 @@ describe('turnTracker', () => {
         documentations: [],
         cursorCommands: [],
         selectedSkills: [],
+        selectedCursorRules: [],
         extraContextEntries: [],
         codeSelections: [],
         terminalSelections: [],
@@ -42,6 +52,7 @@ describe('turnTracker', () => {
         webSearchEnabled: false,
         webFetchEnabled: false,
         readLintsEnabled: false,
+        readPaths: [],
         historyBlobIds: [],
         historyTurnBlobIds: [],
         historyTurns: [],
@@ -59,7 +70,7 @@ describe('turnTracker', () => {
 
     cacheBlob(userBlob.blobId, userBlob.blobData)
 
-    const turn = new ActiveTurnTracker(userBlob.blobId, [], messageId)
+    const turn = new ActiveTurnTracker(userBlob.blobId, [], messageId, 7)
     const thinking = turn.addThinking('reason')
     const assistant = turn.addAssistantText('answer')
     expect(thinking).toBeTruthy()
@@ -76,6 +87,7 @@ describe('turnTracker', () => {
       userMessageBlobId: userBlob.blobId,
       stepBlobIds: [thinking?.blobId, assistant?.blobId].filter(Boolean),
       requestId: messageId,
+      dynamicToolCount: 7,
     })
 
     const resumed = ActiveTurnTracker.fromTurnBlobId(turnBlob.blobId)

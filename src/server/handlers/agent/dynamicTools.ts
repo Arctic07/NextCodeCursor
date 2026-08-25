@@ -20,6 +20,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { McpStateServerInfo, McpStateToolDefinition } from './mcpState';
+import type { LLMTool } from '../llm/types';
+import { findToolByAlias } from './toolRegistry';
 
 /** 截断后缀 — 实测原文,长度 15 */
 const TRUNCATION_SUFFIX = '... [truncated]';
@@ -28,6 +30,146 @@ const DESCRIPTION_LIMIT = 200;
 const TRUNCATION_BODY_LIMIT = DESCRIPTION_LIMIT - TRUNCATION_SUFFIX.length;
 /** 3.17.8 agent-exec 的 GetDynamicTools 大结果溢写阈值。 */
 export const DYNAMIC_TOOLS_SPILL_THRESHOLD_BYTES = 12_000;
+export const CURSOR_DYNAMIC_NAMESPACE = 'cursor';
+export const CURSOR_DYNAMIC_NAMESPACE_DESCRIPTION = "Native Cursor tools for this session. These are highly recommended and useful tools that you should use when the right situation arises. Don't be afraid to look at one if it seems relevant, even if you don't end up using it. You MUST read the tool schemas before calling them.";
+
+/** 对齐 dynamicToolProfile=final 的核心静态保护集合（按本项目 canonicalName 映射）。 */
+const FINAL_PROFILE_STATIC_TOOLS = new Set([
+    'AskQuestion',
+    'ApplyPatch',
+    'CreatePlan',
+    'Edit',
+    'Glob',
+    'Grep',
+    'Read',
+    'Shell',
+    'Write',
+    'updateCurrentStep',
+    // discovery/invocation meta tools 永远静态，防止形成递归发现。
+    'GetDynamicTools',
+    'CallDynamicTool',
+    // MCP resource discovery itself must remain directly callable. Official
+    // final-profile captures keep ListMcpResources static while exposing
+    // FetchMcpResource through the reserved cursor namespace.
+    'ListMcpResources',
+]);
+
+export interface CursorDynamicToolDefinition {
+    tool: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    conciseStaticContext?: string;
+}
+
+const DYNAMIC_TOOL_CONCISE_CONTEXT: Record<string, string> = {
+    TodoWrite: 'Use this tool to manage complex multi-step tasks.',
+    ReadLints: 'Check for linter errors after substantive edits.',
+    SwitchMode: 'Switch between available modes. Proactively consider switching modes for relevant requests.',
+};
+
+export function buildCursorNamespaceDescription(tools: CursorDynamicToolDefinition[]): string {
+    const instructions = tools.flatMap(tool => tool.conciseStaticContext
+        ? [`- ${tool.tool}: ${tool.conciseStaticContext}`]
+        : []);
+    return instructions.length === 0
+        ? CURSOR_DYNAMIC_NAMESPACE_DESCRIPTION
+        : [CURSOR_DYNAMIC_NAMESPACE_DESCRIPTION, '', 'Here are some crucial instructions:', ...instructions].join('\n');
+}
+
+export function shouldEnableBuiltinDynamicProfile(params: {
+    clientSupportsDynamicTools: boolean;
+    mcpMetaToolEnabled: boolean;
+    previousDynamicToolCount?: number;
+    isSubagent: boolean;
+}): boolean {
+    if (params.isSubagent)
+        return false;
+    return params.clientSupportsDynamicTools
+        || params.mcpMetaToolEnabled
+        || (params.previousDynamicToolCount ?? 0) > 0;
+}
+
+function normalizeDynamicBuiltinSchema(value: unknown): unknown {
+    if (Array.isArray(value))
+        return value.map(normalizeDynamicBuiltinSchema);
+    if (!value || typeof value !== 'object')
+        return value;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
+            if (key === 'type' && typeof nested === 'string'
+                && ['OBJECT', 'STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'NULL'].includes(nested)) {
+                return [key, nested.toLowerCase()];
+            }
+            return [key, normalizeDynamicBuiltinSchema(nested)];
+        }),
+    );
+}
+
+export function partitionCursorBuiltinTools(
+    tools: LLMTool[],
+    enabled: boolean,
+): { staticTools: LLMTool[]; dynamicTools: CursorDynamicToolDefinition[] } {
+    if (!enabled)
+        return { staticTools: tools, dynamicTools: [] };
+    const staticTools: LLMTool[] = [];
+    const dynamicTools: CursorDynamicToolDefinition[] = [];
+    for (const tool of tools) {
+        const canonicalName = findToolByAlias(tool.name)?.canonicalName ?? tool.name;
+        if (FINAL_PROFILE_STATIC_TOOLS.has(canonicalName)) {
+            staticTools.push(tool);
+            continue;
+        }
+        dynamicTools.push({
+            tool: tool.name,
+            description: tool.description,
+            inputSchema: normalizeDynamicBuiltinSchema(tool.inputSchema) as Record<string, unknown>,
+            ...(DYNAMIC_TOOL_CONCISE_CONTEXT[canonicalName]
+                ? { conciseStaticContext: DYNAMIC_TOOL_CONCISE_CONTEXT[canonicalName] }
+                : {}),
+        });
+    }
+    dynamicTools.sort((left, right) => left.tool.localeCompare(right.tool));
+    return { staticTools, dynamicTools };
+}
+
+export function contextualizeDynamicMetaTools(
+    tools: LLMTool[],
+    dynamicTools: CursorDynamicToolDefinition[],
+): LLMTool[] {
+    if (dynamicTools.length === 0)
+        return tools;
+    const names = dynamicTools.map(tool => tool.tool).join(', ');
+    return tools.map((tool) => {
+        if (tool.name === 'GetDynamicTools') {
+            return {
+                ...tool,
+                description: `${tool.description}\n\nFirst-party Cursor tools: the reserved namespace "cursor" lists built-in Cursor tools available on demand (${names}). Discover their schemas here, then invoke them via CallDynamicTool; they run natively with their own approvals and rendering.`,
+            };
+        }
+        if (tool.name === 'CallDynamicTool') {
+            return {
+                ...tool,
+                description: `${tool.description}\n\nTools in the reserved "cursor" namespace run as native Cursor tools with their original approvals and result rendering.`,
+            };
+        }
+        return tool;
+    });
+}
+
+export function toCursorDynamicNamespace(tools: CursorDynamicToolDefinition[]): DynamicNamespace | null {
+    if (tools.length === 0)
+        return null;
+    return {
+        name: CURSOR_DYNAMIC_NAMESPACE,
+        source: 'cursor',
+        description: buildCursorNamespaceDescription(tools),
+        tools: tools.map(tool => ({
+            tool: tool.tool,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+        })),
+    };
+}
 
 /**
  * search / catalog 模式的 description 裁剪。
@@ -323,15 +465,61 @@ export async function serializeDynamicToolsResult(
  * 正文逐字来自官方实测 (analysis/mcp-dynamic-tools.md §3)。namespace 列表
  * 由 mcpDescriptors 生成 —— name 必须用 serverIdentifier 而非 serverName。
  *
- * 我们只产出 source="mcp" 的 namespace: 官方把自家内置工具收进 cursor
- * namespace 是为省 token,而我们的内置工具保持扁平下发,少一层展开。
+ * MCP 与保留的 cursor namespace 共用同一目录；cursor 项由 final profile
+ * 中隐藏的原生工具生成，调用时仍回到原审批与执行链路。
  */
+export interface DynamicToolCatalogEntry {
+    serverIdentifier: string;
+    toolNames: string[];
+    serverUseInstructions?: string;
+    source?: 'mcp' | 'cursor';
+}
+
+export function buildDynamicToolCatalogEntries(parsed: {
+    mcpMetaTool?: {
+        enabled: boolean;
+        descriptors: Array<{
+            serverIdentifier: string;
+            serverUseInstructions?: string;
+            tools: Array<{ toolName: string }>;
+        }>;
+    };
+    cursorDynamicTools: CursorDynamicToolDefinition[];
+}): DynamicToolCatalogEntry[] {
+    const entries: DynamicToolCatalogEntry[] = [];
+    const hasCursorNamespace = parsed.cursorDynamicTools.length > 0;
+    if (parsed.mcpMetaTool?.enabled) {
+        for (const descriptor of parsed.mcpMetaTool.descriptors) {
+            if (hasCursorNamespace && descriptor.serverIdentifier === CURSOR_DYNAMIC_NAMESPACE)
+                continue;
+            entries.push({
+                serverIdentifier: descriptor.serverIdentifier,
+                toolNames: descriptor.tools.map(tool => tool.toolName),
+                ...(descriptor.serverUseInstructions
+                    ? { serverUseInstructions: descriptor.serverUseInstructions }
+                    : {}),
+                source: 'mcp',
+            });
+        }
+    }
+    if (parsed.cursorDynamicTools.length > 0) {
+        entries.push({
+            serverIdentifier: CURSOR_DYNAMIC_NAMESPACE,
+            toolNames: parsed.cursorDynamicTools.map(tool => tool.tool),
+            serverUseInstructions: buildCursorNamespaceDescription(parsed.cursorDynamicTools),
+            source: 'cursor',
+        });
+    }
+    return entries;
+}
+
 export function buildDynamicToolsSection(
-    servers: Array<{ serverIdentifier: string; toolNames: string[]; serverUseInstructions?: string }>,
+    servers: DynamicToolCatalogEntry[],
     supportsMcpAuth: boolean,
 ): string {
     const entries = servers.map((s) => {
-        const tools = supportsMcpAuth && !s.toolNames.includes(MCP_AUTH_TOOL.tool)
+        const source = s.source ?? 'mcp';
+        const tools = source === 'mcp' && supportsMcpAuth && !s.toolNames.includes(MCP_AUTH_TOOL.tool)
             ? [...s.toolNames, MCP_AUTH_TOOL.tool]
             : s.toolNames;
         const attrs = [
@@ -340,11 +528,12 @@ export function buildDynamicToolsSection(
         ];
         if (s.serverUseInstructions)
             attrs.push(`namespaceUseInstructions="${escapeXmlAttr(s.serverUseInstructions)}"`);
-        attrs.push('source="mcp"');
+        attrs.push(`source="${source}"`);
         return `<namespace ${attrs.join(' ')} />`;
     });
 
-    const authNote = supportsMcpAuth
+    const hasMcpNamespaces = servers.some(server => (server.source ?? 'mcp') === 'mcp');
+    const authNote = supportsMcpAuth && hasMcpNamespaces
         ? `\n\nIf an MCP-backed namespace requires authentication, call \`mcp_auth\` through \`CallDynamicTool\` for that namespace, then inspect it again and retry if appropriate. Do not authenticate namespaces preemptively or repeatedly.`
         : '';
 

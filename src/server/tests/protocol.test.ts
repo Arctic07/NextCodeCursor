@@ -231,10 +231,13 @@ it('buildMessages produces official-style system and structured user content', (
   expect(preambleUserContent).toMatch(/<rules>/)
   expect(preambleUserContent).toMatch(/<user_rules/)
   expect(preambleUserContent).toMatch(/Always reply in Chinese/)
-  expect(preambleUserContent).toMatch(/<project_rules/)
-  expect(preambleUserContent).toMatch(/Use pnpm/)
-  expect(preambleUserContent).toMatch(/<available_skills>/)
+  expect(preambleUserContent).toMatch(/<always_applied_workspace_rules/)
+  // fileGlobbed 正文不预载，读取匹配文件后才通过 related_cursor_rules 注入。
+  expect(preambleUserContent).not.toMatch(/Use pnpm/)
+  expect(preambleUserContent).toMatch(/<agent_requestable_workspace_rules/)
+  expect(preambleUserContent).toMatch(/fullPath="\/skills\/review\.md"/)
   expect(preambleUserContent).toMatch(/Review code carefully/)
+  expect(preambleUserContent).not.toMatch(/<agent_skills>/)
   expect(preambleUserContent).not.toMatch(/<user_query>/)
 
   expect(currentUserContent).toMatch(/<user_query>\s*帮我检查这个项目\s*<\/user_query>/)

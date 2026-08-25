@@ -1,6 +1,8 @@
 import type { AgentServerMessage } from '../gen/agent_v1_pb'
 import type { LLMMessage, LLMToolResultBlock } from '../handlers/llm/types'
+import { toJsonString } from '@bufbuild/protobuf'
 import { expect, it } from 'vitest'
+import { AgentServerMessageSchema } from '../gen/agent_v1_pb'
 import { finalizeExecTool } from '../handlers/agent/execRuntime'
 import { finalizeInteractionTool } from '../handlers/agent/interactionRuntime'
 import { createEphemeralSession, pushSessionMessage } from '../handlers/agent/session'
@@ -674,6 +676,14 @@ it('runToolCall scopes GetDynamicTools by namespace and returns typed discovery 
     messages,
     allocateExecMessageId: () => ++execId,
     allocateInteractionId: () => 1,
+    mcpMetaTool: {
+      enabled: true,
+      descriptors: [{
+        serverName: 'ida-pro-mcp',
+        serverIdentifier: 'user-ida-pro-mcp',
+        tools: [{ toolName: 'decompile' }],
+      }],
+    },
   })
 
   const frames: AgentServerMessage[] = []
@@ -708,6 +718,87 @@ it('runToolCall scopes GetDynamicTools by namespace and returns typed discovery 
   if (completed.message.value.message.case !== 'toolCallCompleted')
     throw new Error('expected toolCallCompleted')
   expect(completed.message.value.message.value.toolCall?.tool.case).toBe('getMcpToolsToolCall')
+})
+
+it('runToolCall discovers the local cursor namespace without an MCP client round-trip', async () => {
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-cursor-discovery',
+      name: 'GetDynamicTools',
+      input: { namespace: 'cursor', toolName: 'TodoWrite' },
+    },
+    availableMcpTools: [],
+    cursorDynamicTools: [{
+      tool: 'TodoWrite',
+      description: 'Manage todos.',
+      inputSchema: { type: 'object', properties: { todos: { type: 'array' } } },
+    }],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    round: 0,
+    session: null,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => 1,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator)
+    frames.push(frame)
+  expect(frames.some(frame => frame.message.case === 'execServerMessage')).toBe(false)
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  const result = JSON.parse(roundContext.pendingToolResults[0].content)
+  expect(result).toMatchObject({
+    mode: 'single_tool',
+    namespace: 'cursor',
+    tool: {
+      tool: 'TodoWrite',
+      inputSchema: { type: 'object' },
+    },
+  })
+})
+
+it('runToolCall invokes cursor namespace tools through their native lifecycle', async () => {
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-cursor-todo',
+      name: 'CallDynamicTool',
+      input: { namespace: 'cursor', toolName: 'TodoWrite', arguments: { todos: [] } },
+    },
+    availableMcpTools: [],
+    cursorDynamicTools: [{
+      tool: 'TodoWrite',
+      description: 'Manage todos.',
+      inputSchema: { type: 'object' },
+    }],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    round: 0,
+    session: null,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => 1,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator)
+    frames.push(frame)
+  const started = frames[0]
+  expect(started.message.case).toBe('interactionUpdate')
+  if (started.message.case !== 'interactionUpdate')
+    throw new Error('expected interaction update')
+  expect(started.message.value.message.case).toBe('toolCallStarted')
+  if (started.message.value.message.case !== 'toolCallStarted')
+    throw new Error('expected tool start')
+  expect(started.message.value.message.value.toolCall?.tool.case).toBe('updateTodosToolCall')
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  expect(roundContext.pendingToolResults[0].toolName).toBe('CallDynamicTool')
 })
 
 it('runToolCall does not inject workspace workingDirectory into shell tool args when model omits it', async () => {
@@ -780,4 +871,96 @@ it('finalizeToolCall normalizes result, appends pending tool result, and returns
   if (finalized.frame.message.case !== 'interactionUpdate')
     throw new Error('unexpected case')
   expect(finalized.frame.message.value.message.case).toBe('toolCallCompleted')
+})
+
+it('read injects matching Cursor Rules and suggests matching Skills only once', () => {
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  const readContext = {
+    workspacePaths: ['/workspace'],
+    readPaths: new Set<string>(),
+    cursorRules: [
+      {
+        fullPath: '/workspace/.cursor/rules/typescript.mdc',
+        content: 'Use strict TypeScript.',
+        kind: 'fileGlobbed' as const,
+        source: 0,
+        globs: ['**/*.ts'],
+        environments: [],
+        disabledEnvironments: [],
+        scopedTo: [],
+        frontmatter: '',
+        raw: {},
+      },
+      {
+        fullPath: '/workspace/src/.cursor/rules/nested.mdc',
+        content: 'Nested workspace rule.',
+        kind: 'global' as const,
+        source: 0,
+        globs: [],
+        environments: [],
+        disabledEnvironments: [],
+        scopedTo: [],
+        frontmatter: '',
+        raw: {},
+      },
+    ],
+    agentSkills: [{
+      fullPath: '/workspace/.cursor/skills/review/SKILL.md',
+      content: 'Review instructions.',
+      description: 'Review TypeScript changes.',
+      disableModelInvocation: false,
+      environments: [],
+      disabledEnvironments: [],
+      globs: ['src/**/*.ts'],
+      scopedTo: [],
+      raw: {},
+    }],
+  }
+
+  const first = finalizeToolCall({
+    roundContext,
+    messages,
+    cursorToolType: 'readToolCall',
+    toolName: 'Read',
+    callId: 'read-1',
+    startedArgs: { path: '/workspace/src/a.ts', toolCallId: 'read-1' },
+    rawToolResult: { result: { case: 'success', value: { path: '/workspace/src/a.ts', output: { content: 'const a = 1' } } } },
+    input: { path: '/workspace/src/a.ts' },
+    modelCallId: 'model-read-1',
+    readContext,
+  })
+
+  expect(first.resultText).toContain('Use strict TypeScript.')
+  expect(first.resultText).toContain('Nested workspace rule.')
+  expect(first.resultText).toContain('The following skills may be relevant')
+  expect(first.resultText).toContain('/workspace/.cursor/skills/review/SKILL.md')
+  expect(first.toolResult.result.value.relatedCursorRules).toMatchObject([
+    {
+      fullPath: '/workspace/.cursor/rules/typescript.mdc',
+      content: 'Use strict TypeScript.',
+    },
+    {
+      fullPath: '/workspace/src/.cursor/rules/nested.mdc',
+      content: 'Nested workspace rule.',
+    },
+  ])
+  const frameJson = toJsonString(AgentServerMessageSchema, first.frame)
+  expect(frameJson).toContain('"relatedCursorRules"')
+  expect(frameJson).toContain('"fileGlobbed":{"globs":["**/*.ts"]}')
+
+  const second = finalizeToolCall({
+    roundContext,
+    messages,
+    cursorToolType: 'readToolCall',
+    toolName: 'Read',
+    callId: 'read-2',
+    startedArgs: { path: '/workspace/src/b.ts', toolCallId: 'read-2' },
+    rawToolResult: { result: { case: 'success', value: { path: '/workspace/src/b.ts', output: { content: 'const b = 2' } } } },
+    input: { path: '/workspace/src/b.ts' },
+    modelCallId: 'model-read-2',
+    readContext,
+  })
+  expect(second.resultText).not.toContain('Use strict TypeScript.')
+  expect(second.resultText).not.toContain('The following skills may be relevant')
 })

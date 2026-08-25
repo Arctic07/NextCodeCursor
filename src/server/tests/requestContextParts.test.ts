@@ -1,7 +1,23 @@
+import type { AgentServerMessage } from '../gen/agent_v1_pb'
+import { create, toBinary } from '@bufbuild/protobuf'
 import { expect, it } from 'vitest'
+import {
+  RequestContextRulesPartSchema,
+  RequestContextSkillsPartSchema,
+  RequestContextSubagentsPartSchema,
+} from '../gen/agent_v1_pb'
 import { buildMessages, parseRunRequest } from '../handlers/agent/protocol'
 import { toBytes } from '../handlers/agent/protocol/shared'
-import { applyMcpsPart } from '../handlers/agent/requestContextParts'
+import {
+  applyMcpsPart,
+  applyRulesPart,
+  applySkillsPart,
+  applySubagentsPart,
+  fetchRulesPart,
+  fetchSkillsPart,
+  fetchSubagentsPart,
+} from '../handlers/agent/requestContextParts'
+import { createEphemeralSession, pushSessionMessage } from '../handlers/agent/session'
 
 /**
  * Cursor 3.13+ requestContextParts 分片投递 (ref_only 模式) 兼容。
@@ -36,12 +52,22 @@ function baseRunRequest(action: Record<string, unknown>) {
   }
 }
 
+async function consumePart<T>(generator: AsyncGenerator<AgentServerMessage, T, void>): Promise<T> {
+  let next = await generator.next()
+  while (!next.done)
+    next = await generator.next()
+  return next.value
+}
+
 it('falls back to requestContextParts.dynamicContext when inline requestContext is absent (ref_only)', () => {
   const parsed = parseRunRequest(baseRunRequest({
     // ref_only: userMessageAction 内无 requestContext,parts 挂在 action 层
     userMessageAction: { userMessage: { text: 'q' } },
     requestContextParts: {
-      mcpsBlobId: new Uint8Array([1, 2, 3]),
+      rulesBlobId: new Uint8Array([1]),
+      skillsBlobId: new Uint8Array([2]),
+      subagentsBlobId: new Uint8Array([3]),
+      mcpsBlobId: new Uint8Array([4]),
       mcpsByteLength: 128,
       dynamicContext: {
         webSearchEnabled: true,
@@ -54,8 +80,12 @@ it('falls back to requestContextParts.dynamicContext when inline requestContext 
   // dynamic_context 里的开关应当被救回
   expect(parsed.webSearchEnabled).toBe(true)
   expect(parsed.readLintsEnabled).toBe(true)
-  // mcps blobId 透出供运行时取回
-  expect(parsed.mcpsBlobId).toEqual(new Uint8Array([1, 2, 3]))
+  expect(parsed.requestContextTransport).toBe('ref_only')
+  // 四类 blobId 都透出供运行时依序取回
+  expect(parsed.rulesBlobId).toEqual(new Uint8Array([1]))
+  expect(parsed.skillsBlobId).toEqual(new Uint8Array([2]))
+  expect(parsed.subagentsBlobId).toEqual(new Uint8Array([3]))
+  expect(parsed.mcpsBlobId).toEqual(new Uint8Array([4]))
   // 工具表此刻仍为空 —— 需靠 blob 取回补齐
   expect(parsed.mcpTools).toEqual([])
 })
@@ -73,6 +103,10 @@ it('prefers inline requestContext over parts when both present (dual)', () => {
   }))
 
   expect(parsed.webSearchEnabled).toBe(true)
+  expect(parsed.requestContextTransport).toBe('dual')
+  expect(parsed.rulesBlobId).toBeUndefined()
+  expect(parsed.skillsBlobId).toBeUndefined()
+  expect(parsed.subagentsBlobId).toBeUndefined()
   expect(parsed.mcpsBlobId).toBeUndefined()
 })
 
@@ -84,7 +118,164 @@ it('leaves mcpsBlobId undefined in legacy mode', () => {
     },
   }))
 
+  expect(parsed.rulesBlobId).toBeUndefined()
+  expect(parsed.skillsBlobId).toBeUndefined()
+  expect(parsed.subagentsBlobId).toBeUndefined()
+  expect(parsed.requestContextTransport).toBe('legacy')
+  expect(parsed.clientSupportsDynamicTools).toBe(false)
   expect(parsed.mcpsBlobId).toBeUndefined()
+})
+
+it('derives the 3.17 Dynamic Tools capability from explicit RunRequest capability fields', () => {
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'c-capability',
+      clientSupportsPromptContextUsageRpc: true,
+      action: {
+        userMessageAction: { userMessage: { text: 'q' }, requestContext: {} },
+      },
+      modelDetails: { modelId: 'm' },
+    },
+  })
+  expect(parsed.requestContextTransport).toBe('legacy')
+  expect(parsed.clientSupportsDynamicTools).toBe(true)
+})
+
+it('fetches and decodes all non-MCP Part protobufs over the KV channel', async () => {
+  const fetch = async <T>(
+    label: string,
+    bytes: Uint8Array,
+    factory: (session: ReturnType<typeof createEphemeralSession>) => AsyncGenerator<AgentServerMessage, T, void>,
+    asBase64 = false,
+  ) => {
+    const session = createEphemeralSession(`part-${label}`)
+    pushSessionMessage(session, {
+      kvClientMessage: {
+        getBlobResult: {
+          blobData: asBase64 ? Buffer.from(bytes).toString('base64') : bytes,
+        },
+      },
+    })
+    return consumePart(factory(session))
+  }
+
+  const rulesBytes = toBinary(RequestContextRulesPartSchema, create(RequestContextRulesPartSchema, {
+    rules: [{
+      fullPath: '/workspace/.cursor/rules/a.mdc',
+      content: 'rule body',
+      type: { type: { case: 'agentFetched', value: { description: 'On demand' } } },
+    }],
+    cloudRule: 'cloud body',
+  }))
+  const rules = await fetch('rules', rulesBytes, session => fetchRulesPart({
+    session,
+    blobId: new Uint8Array([1]),
+    allocateBlobId: () => 1,
+  }))
+  expect(rules).toMatchObject({
+    cloudRule: 'cloud body',
+    rules: [{ fullPath: '/workspace/.cursor/rules/a.mdc', content: 'rule body' }],
+  })
+
+  const skillsBytes = toBinary(RequestContextSkillsPartSchema, create(RequestContextSkillsPartSchema, {
+    agentSkills: [{
+      fullPath: '/workspace/.cursor/skills/a/SKILL.md',
+      content: 'skill body',
+      description: 'Skill A',
+    }],
+  }))
+  const skills = await fetch('skills', skillsBytes, session => fetchSkillsPart({
+    session,
+    blobId: new Uint8Array([2]),
+    allocateBlobId: () => 2,
+  }), true)
+  expect(skills).toMatchObject({
+    agentSkills: [{ fullPath: '/workspace/.cursor/skills/a/SKILL.md', content: 'skill body' }],
+  })
+
+  const subagentsBytes = toBinary(RequestContextSubagentsPartSchema, create(RequestContextSubagentsPartSchema, {
+    customSubagents: [{ name: 'reviewer', description: 'Review code', prompt: 'Review carefully.' }],
+  }))
+  const subagents = await fetch('subagents', subagentsBytes, session => fetchSubagentsPart({
+    session,
+    blobId: new Uint8Array([3]),
+    allocateBlobId: () => 3,
+  }))
+  expect(subagents).toMatchObject({
+    customSubagents: [{ name: 'reviewer', prompt: 'Review carefully.' }],
+  })
+})
+
+it('restores Rules, Skills, and Subagents from their decoded ref_only parts', () => {
+  const parsed = parseRunRequest(baseRunRequest({
+    userMessageAction: { userMessage: { text: 'q' } },
+    requestContextParts: {
+      rulesBlobId: new Uint8Array([1]),
+      skillsBlobId: new Uint8Array([2]),
+      subagentsBlobId: new Uint8Array([3]),
+      dynamicContext: {
+        env: { workspacePaths: ['/workspace'] },
+        disabledTeamRules: ['disabled.mdc'],
+      },
+    },
+  }))
+
+  applyRulesPart(parsed, {
+    rules: [
+      {
+        fullPath: '/workspace/.cursor/rules/ts.mdc',
+        content: 'Use strict TypeScript.',
+        type: { type: { case: 'fileGlobbed', value: { globs: ['**/*.ts'] } } },
+      },
+      {
+        fullPath: '/workspace/.cursor/rules/on-demand.mdc',
+        content: 'Read this only when relevant.',
+        type: { type: { case: 'agentFetched', value: { description: 'Database changes' } } },
+      },
+    ],
+    nonFileRules: [
+      { fullPath: 'team', content: 'Team rule', type: { type: { case: 'global', value: {} } }, source: 1, isRequired: true },
+      { fullPath: 'disabled.mdc', content: 'Disabled team rule', type: { type: { case: 'global', value: {} } }, source: 1 },
+    ],
+    cloudRule: 'AGENTS.md body',
+  })
+  applySkillsPart(parsed, {
+    agentSkills: [{
+      fullPath: '/workspace/.cursor/skills/review/SKILL.md',
+      content: '---\ndescription: Review changes\n---\nDo the review.',
+      description: 'Review changes',
+      globs: ['**/*.ts'],
+    }],
+    skillOptions: { skillDescriptors: [{ name: 'review', enabled: true }] },
+  })
+  applySubagentsPart(parsed, {
+    customSubagents: [{
+      fullPath: '/workspace/.cursor/agents/reviewer.md',
+      name: 'reviewer',
+      description: 'Reviews code.',
+      tools: ['Read', 'Grep'],
+      model: 'inherit',
+      prompt: 'Review carefully.',
+      permissionMode: 2,
+    }],
+  })
+
+  expect(parsed.alwaysRules.map(rule => rule.content)).toContain('Team rule')
+  expect(parsed.alwaysRules.map(rule => rule.content)).not.toContain('Disabled team rule')
+  expect(parsed.projectRules.map(rule => rule.kind)).toEqual(['fileGlobbed', 'agentFetched'])
+  expect(parsed.cloudRule).toBe('AGENTS.md body')
+  expect(parsed.agentSkills).toMatchObject([{
+    fullPath: '/workspace/.cursor/skills/review/SKILL.md',
+    content: expect.stringContaining('Do the review.'),
+    globs: ['**/*.ts'],
+  }])
+  expect(parsed.skillOptions).toMatchObject({ skillDescriptors: [{ name: 'review', enabled: true }] })
+  expect(parsed.customSubagents).toMatchObject([{
+    name: 'reviewer',
+    tools: ['Read', 'Grep'],
+    prompt: 'Review carefully.',
+    permissionMode: 'readonly',
+  }])
 })
 
 it('restores MCP tools from a decoded mcps part, reusing parse normalization', () => {

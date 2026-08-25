@@ -54,6 +54,10 @@ export interface AvailableMcpTool {
     serverIdentifier?: string;
 }
 
+export interface AvailableDynamicBuiltinTool {
+    tool: string;
+}
+
 /**
  * 将 LLM 返回的字符串枚举值转换为 proto int32 枚举值
  *
@@ -186,7 +190,13 @@ export function resolveToolCall(
     llmToolName: string,
     input: Record<string, unknown>,
     availableMcpTools: AvailableMcpTool[] = [],
-): { cursorToolType: string; sanitizedInput: Record<string, unknown> } {
+    availableDynamicBuiltinTools: AvailableDynamicBuiltinTool[] = [],
+): {
+    cursorToolType: string
+    sanitizedInput: Record<string, unknown>
+    effectiveToolName?: string
+    resolutionError?: string
+} {
     const sanitizedInput = sanitizeToolInput(llmToolName, input);
 
     // dynamic namespace 模式: LLM 直接调 CallDynamicTool,自带
@@ -203,7 +213,56 @@ export function resolveToolCall(
       || llmToolName === 'CallMcpTool' || llmToolName === 'call_mcp_tool') {
         const server = String(input.namespace ?? input.server ?? '');
         const toolName = String(input.toolName ?? input.tool_name ?? '');
-        const args = (input.arguments ?? input.args ?? {}) as Record<string, unknown>;
+        const rawArgs = input.arguments ?? input.args;
+        const hasInvalidArgs = rawArgs !== undefined
+            && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs));
+        const args = !hasInvalidArgs && rawArgs && typeof rawArgs === 'object'
+            ? rawArgs as Record<string, unknown>
+            : {};
+
+        if (server === 'cursor') {
+            if (hasInvalidArgs) {
+                return {
+                    cursorToolType: 'mcpToolCall',
+                    sanitizedInput: {
+                        name: `cursor-${toolName}`,
+                        args: {},
+                        providerIdentifier: 'cursor',
+                        toolName,
+                        serverIdentifier: 'cursor',
+                    },
+                    resolutionError: 'CallDynamicTool.arguments must be a JSON object.',
+                };
+            }
+            const matchedBuiltin = availableDynamicBuiltinTools.find(tool => tool.tool === toolName);
+            if (!matchedBuiltin) {
+                logger.warn({
+                    llmToolName,
+                    namespace: server,
+                    toolName,
+                    knownDynamicBuiltins: availableDynamicBuiltinTools.map(tool => tool.tool),
+                }, '[DYNAMIC-TOOLS] cursor tool not in dynamic registry');
+                return {
+                    cursorToolType: 'mcpToolCall',
+                    sanitizedInput: {
+                        name: `cursor-${toolName}`,
+                        args,
+                        providerIdentifier: 'cursor',
+                        toolName,
+                        serverIdentifier: 'cursor',
+                    },
+                    resolutionError: `Tool "${toolName}" was not found in namespace "cursor". Discover it with GetDynamicTools before invoking it.`,
+                };
+            }
+            const cursorToolType = mapToolName(toolName);
+            logger.debug({ llmToolName, namespace: server, toolName, cursorToolType },
+                '[DYNAMIC-TOOLS] cursor native tool routed');
+            return {
+                cursorToolType,
+                sanitizedInput: sanitizeToolInput(toolName, args),
+                effectiveToolName: toolName,
+            };
+        }
 
         const matched = availableMcpTools.find(t =>
             t.toolName === toolName

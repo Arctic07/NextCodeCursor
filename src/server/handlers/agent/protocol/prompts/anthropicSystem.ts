@@ -1,6 +1,6 @@
 import type { ProviderPromptProfile } from '../../../llm/promptProfile'
 import type { ParsedRunRequest } from '../types'
-import { buildDynamicToolsSection } from '../../dynamicTools'
+import { buildDynamicToolCatalogEntries, buildDynamicToolsSection } from '../../dynamicTools'
 
 /**
  * Anthropic / Claude / Gemini 家族 system prompt
@@ -323,15 +323,10 @@ IMPORTANT: Make sure you don't end your turn before you've completed all todos.
   // 且那套 {workspaceProjectDir}/mcps/<server>/tools/<tool>.json 布局
   // 只是个别 MCP 的巧合,换个 server 就不成立。
   // 详见 analysis/mcp-dynamic-tools.md。
-  if (parsed.mcpMetaTool?.enabled && parsed.mcpMetaTool.descriptors.length > 0) {
+  const dynamicToolCatalog = buildDynamicToolCatalogEntries(parsed)
+  if (dynamicToolCatalog.length > 0) {
     parts.push(buildDynamicToolsSection(
-      parsed.mcpMetaTool.descriptors.map(d => ({
-        // namespace 名用 serverIdentifier 而非 serverName —— 实测官方如此,
-        // 且 CallDynamicTool 回传的 McpArgs.server_identifier 必须与之一致。
-        serverIdentifier: d.serverIdentifier,
-        toolNames: d.tools.map(t => t.toolName),
-        ...(d.serverUseInstructions ? { serverUseInstructions: d.serverUseInstructions } : {}),
-      })),
+      dynamicToolCatalog,
       parsed.supportsMcpAuth === true,
     ))
   }

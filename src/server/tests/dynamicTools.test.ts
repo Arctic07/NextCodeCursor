@@ -3,14 +3,17 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { getCursorAgentTools } from '../handlers/agent/cursorTools'
 import {
   buildDynamicToolsSection,
   MCP_AUTH_TOOL,
   normalizeDynamicNamespaceStatus,
   parseDynamicToolsQuery,
+  partitionCursorBuiltinTools,
   renderDynamicToolsResult,
   serializeDynamicToolsResult,
   shortenDescription,
+  shouldEnableBuiltinDynamicProfile,
   toDynamicNamespace,
   validateDynamicToolsQuery,
 } from '../handlers/agent/dynamicTools'
@@ -356,5 +359,120 @@ describe('<dynamic_tools> prompt 段', () => {
     expect(s).toContain('&quot;hi&quot;')
     expect(s).toContain('&amp;')
     expect(s).toContain('&lt;bye&gt;')
+  })
+
+  it('合并保留的 cursor namespace，且不会给它追加 mcp_auth', () => {
+    const s = buildDynamicToolsSection([{
+      serverIdentifier: 'cursor',
+      toolNames: ['TodoWrite', 'Task'],
+      serverUseInstructions: 'Native Cursor tools.',
+      source: 'cursor',
+    }], true)
+    expect(s).toContain('name="cursor"')
+    expect(s).toContain('tools="TodoWrite, Task"')
+    expect(s).toContain('source="cursor"')
+    expect(s).not.toContain('mcp_auth')
+  })
+})
+
+describe('内置工具 final profile 分区', () => {
+  const tool = (name: string) => ({
+    name,
+    description: `${name} description`,
+    inputSchema: { type: 'object', properties: {} },
+  })
+
+  it('真实 registry 的核心/meta 工具常驻，Task/TodoWrite 按需发现', () => {
+    const result = partitionCursorBuiltinTools(getCursorAgentTools('anthropic'), true)
+    const staticNames = result.staticTools.map(item => item.name)
+    const dynamicNames = result.dynamicTools.map(item => item.tool)
+    expect(staticNames).toEqual(expect.arrayContaining([
+      'Read',
+      'Shell',
+      'Grep',
+      'Glob',
+      'Edit',
+      'Write',
+      'AskQuestion',
+      'GetDynamicTools',
+      'CallDynamicTool',
+      'ListMcpResources',
+    ]))
+    expect(dynamicNames).toEqual(expect.arrayContaining([
+      'Task',
+      'TodoWrite',
+      'ReadLints',
+      'FetchMcpResource',
+    ]))
+    expect(dynamicNames).not.toContain('GetDynamicTools')
+    expect(dynamicNames).not.toContain('CallDynamicTool')
+    expect(dynamicNames).not.toContain('ListMcpResources')
+  })
+
+  it('核心工具和 meta tools 常驻，其余进入 cursor namespace', () => {
+    const result = partitionCursorBuiltinTools([
+      tool('Read'),
+      tool('Shell'),
+      tool('AskQuestion'),
+      tool('GetDynamicTools'),
+      tool('CallDynamicTool'),
+      tool('ListMcpResources'),
+      tool('FetchMcpResource'),
+      tool('TodoWrite'),
+      tool('Task'),
+      tool('WebSearch'),
+    ], true)
+    expect(result.staticTools.map(item => item.name)).toEqual([
+      'Read',
+      'Shell',
+      'AskQuestion',
+      'GetDynamicTools',
+      'CallDynamicTool',
+      'ListMcpResources',
+    ])
+    expect(result.dynamicTools.map(item => item.tool)).toEqual([
+      'FetchMcpResource',
+      'Task',
+      'TodoWrite',
+      'WebSearch',
+    ])
+    expect(result.dynamicTools[0].inputSchema).toEqual({ type: 'object', properties: {} })
+    expect(result.dynamicTools.find(item => item.tool === 'TodoWrite')?.conciseStaticContext)
+      .toBe('Use this tool to manage complex multi-step tasks.')
+  })
+
+  it('把 Gemini provider 的大写 schema 类型还原为标准 JSON Schema', () => {
+    const result = partitionCursorBuiltinTools([{
+      name: 'TodoWrite',
+      description: 'Manage todos.',
+      inputSchema: {
+        type: 'OBJECT',
+        properties: { todos: { type: 'ARRAY', items: { type: 'STRING' } } },
+      },
+    }], true)
+    expect(result.dynamicTools[0].inputSchema).toEqual({
+      type: 'object',
+      properties: { todos: { type: 'array', items: { type: 'string' } } },
+    })
+  })
+
+  it('能力关闭时保持 all-static，不丢任何工具', () => {
+    const tools = [tool('Read'), tool('TodoWrite')]
+    const result = partitionCursorBuiltinTools(tools, false)
+    expect(result.staticTools).toEqual(tools)
+    expect(result.dynamicTools).toEqual([])
+  })
+
+  it('仅在显式 3.17 能力、meta-MCP 或已启用会话中切到 final', () => {
+    const base = {
+      clientSupportsDynamicTools: false,
+      mcpMetaToolEnabled: false,
+      isSubagent: false,
+    }
+    expect(shouldEnableBuiltinDynamicProfile(base)).toBe(false)
+    expect(shouldEnableBuiltinDynamicProfile({ ...base, clientSupportsDynamicTools: true })).toBe(true)
+    expect(shouldEnableBuiltinDynamicProfile({ ...base, mcpMetaToolEnabled: true })).toBe(true)
+    expect(shouldEnableBuiltinDynamicProfile({ ...base, previousDynamicToolCount: 4 })).toBe(true)
+    expect(shouldEnableBuiltinDynamicProfile({ ...base, clientSupportsDynamicTools: true, isSubagent: true })).toBe(false)
   })
 })

@@ -6,12 +6,14 @@ import {
     parseDynamicToolsQuery,
     renderDynamicToolsResult,
     serializeDynamicToolsResult,
+    toCursorDynamicNamespace,
     toDynamicNamespace,
     validateDynamicToolsQuery,
+    type CursorDynamicToolDefinition,
 } from './dynamicTools';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
-import { fetchMcpState, mergeMcpStateIntoRoutingTable, type McpRoutingEntry } from './mcpState';
+import { fetchMcpState, mergeMcpStateIntoRoutingTable, type McpRoutingEntry, type McpStateServerInfo } from './mcpState';
 import { finalizeInteractionTool } from './interactionRuntime';
 import { execMessage, toolCallCompleted, toolCallStarted } from './stream';
 import { buildToolArgs } from './toolBuilders';
@@ -31,6 +33,7 @@ import { performWebFetch, performWebSearch } from './web';
 import { interactionQuery } from './stream';
 import type { ToolResultEnvelope } from './toolResults';
 import type { ParsedRunRequest } from './protocol/types';
+import type { ReadContextState } from './contextCatalog';
 
 type SubagentModelOverride = ParsedRunRequest['subagentModelOverrides'][number];
 
@@ -73,9 +76,11 @@ export async function* runToolCall(params: {
     allocateExecMessageId: () => number;
     allocateInteractionId: () => number;
     imageCollector?: LLMContentBlock[];
+    readContext?: ReadContextState;
     /** dynamic namespace 模式下 GetDynamicTools 需要的上下文 */
     mcpMetaTool?: ParsedRunRequest['mcpMetaTool'];
     supportsMcpAuth?: boolean;
+    cursorDynamicTools?: CursorDynamicToolDefinition[];
     /** Cursor agent projectDir;大 discovery 结果写入其 agent-tools 子目录。 */
     projectDir?: string;
 }): AsyncGenerator<AgentServerMessage, void, void> {
@@ -84,10 +89,47 @@ export async function* runToolCall(params: {
 
 async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): AsyncGenerator<AgentServerMessage, void, void> {
     const tc = params.toolCall;
-    const resolvedTool = resolveToolCall(tc.name, tc.input, params.availableMcpTools);
+    const resolvedTool = resolveToolCall(
+        tc.name,
+        tc.input,
+        params.availableMcpTools,
+        params.cursorDynamicTools,
+    );
     const cursorToolType = resolvedTool.cursorToolType;
+    const executionToolName = resolvedTool.effectiveToolName ?? tc.name;
     const execArgsType = mapToolToExecArgs(cursorToolType);
     const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`;
+
+    if (resolvedTool.resolutionError) {
+        // 调用在进入生命周期前就被拒绝 —— 错误只会喂回 LLM,不落日志的话
+        // 服务端侧完全无痕。这里是所有拒绝路径的统一出口 (参数类型不合法、
+        // cursor namespace 未注册工具等),放这一条即可覆盖,不必逐分支补。
+        logger.warn({
+            round: params.round,
+            callId: tc.callId,
+            llmToolName: tc.name,
+            cursorToolType,
+            error: resolvedTool.resolutionError,
+        }, '[DYNAMIC-TOOLS] tool call rejected before execution');
+        const startedArgs = buildToolArgs(tc.name, resolvedTool.sanitizedInput, tc.callId, {
+            conversationId: params.conversationId,
+            currentModelId: params.currentModelId,
+        });
+        yield toolCallStarted(tc.callId, cursorToolType, startedArgs, modelCallId);
+        const finalized = finalizeToolCall({
+            roundContext: params.roundContext,
+            messages: params.messages,
+            cursorToolType,
+            toolName: tc.name,
+            callId: tc.callId,
+            startedArgs,
+            rawToolResult: { result: { case: 'error', value: { error: resolvedTool.resolutionError } } },
+            input: resolvedTool.sanitizedInput,
+            modelCallId,
+        });
+        yield finalized.frame;
+        return;
+    }
 
     // sanitizedInput 兜底补全:
     //
@@ -105,7 +147,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     }
     let startedArgs: Record<string, unknown>;
     try {
-        startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId, {
+        startedArgs = buildToolArgs(executionToolName, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
             currentModelId: params.currentModelId,
         });
@@ -132,7 +174,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     if (cursorToolType === 'editToolCall' && params.session) {
         let plan;
         try {
-            plan = buildEditPlan(tc.name, sanitizedInput, tc.callId, {
+            plan = buildEditPlan(executionToolName, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: params.currentModelId,
             });
@@ -275,7 +317,7 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             const execModelId = cursorToolType === 'taskToolCall' && typeof sanitizedInput.modelId === 'string'
                 ? sanitizedInput.modelId
                 : params.currentModelId;
-            args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
+            args = buildExecArgs(executionToolName, sanitizedInput, tc.callId, {
                 conversationId: params.conversationId,
                 currentModelId: execModelId,
             });
@@ -308,7 +350,8 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             roundContext: params.roundContext,
             messages: params.messages,
             imageCollector: params.imageCollector,
-                    });
+            readContext: params.readContext,
+        });
         return;
     }
 
@@ -364,33 +407,56 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             return;
         }
 
-        // 3.17.8: 只要指定 namespace 就做 scoped fetch,包括 namespace+pattern;
-        // 只有跨 namespace search / catalog 才传空数组索取全部。
-        const scoped = query.namespace ? [query.namespace] : [];
-        // 查询侧 —— 记下 LLM 到底问了什么。参数全空是合法的 catalog 查询,
-        // 不是"参数丢了",所以把判定出的 mode 一并打出来便于对账。
         const queryMode = query.pattern
             ? (query.namespace ? 'search_in_namespace' : 'search')
             : query.namespace
                 ? (query.toolName ? 'single_tool' : 'namespace')
                 : 'catalog';
+        const cursorNamespace = toCursorDynamicNamespace(params.cursorDynamicTools ?? []);
+        const cursorOnlyQuery = query.namespace === 'cursor';
+        const shouldFetchMcp = !cursorOnlyQuery && params.mcpMetaTool?.enabled === true;
+        const scoped = query.namespace && !cursorOnlyQuery ? [query.namespace] : [];
         logger.info({
             callId: tc.callId,
             queryMode,
             namespace: query.namespace,
             toolName: query.toolName,
             pattern: query.pattern,
-            fetchScope: scoped.length > 0 ? scoped : 'all',
+            fetchScope: cursorOnlyQuery ? 'cursor-local' : shouldFetchMcp ? (scoped.length > 0 ? scoped : 'all') : 'none',
         }, '[DYNAMIC-TOOLS] GetDynamicTools query');
 
-        const servers = yield* fetchMcpState({
-            session: params.session,
-            serverIdentifiers: scoped,
-            allocateExecId: params.allocateExecMessageId,
-        });
+        let servers: McpStateServerInfo[] | null = [];
+        if (shouldFetchMcp) {
+            servers = yield* fetchMcpState({
+                session: params.session,
+                serverIdentifiers: scoped,
+                allocateExecId: params.allocateExecMessageId,
+            });
+        }
+
+        const namespaces = [] as ReturnType<typeof toDynamicNamespace>[];
+        if (cursorNamespace && (!query.namespace || cursorOnlyQuery))
+            namespaces.push(cursorNamespace);
+        if (servers !== null) {
+            const mcpServers = cursorNamespace
+                ? servers.filter(server => server.serverIdentifier !== 'cursor')
+                : servers;
+            const routingMerge = mergeMcpStateIntoRoutingTable(
+                params.availableMcpTools as McpRoutingEntry[],
+                mcpServers,
+            );
+            if (routingMerge.added > 0 || routingMerge.updated > 0) {
+                logger.info({
+                    callId: tc.callId,
+                    ...routingMerge,
+                    routingTableSize: params.availableMcpTools.length,
+                }, '[DYNAMIC-TOOLS] routing table synchronized from discovery');
+            }
+            namespaces.push(...mcpServers.map(server => toDynamicNamespace(server, params.supportsMcpAuth === true)));
+        }
 
         let rawToolResult: ToolResultEnvelope;
-        if (servers === null) {
+        if (servers === null && namespaces.length === 0) {
             logger.warn({ callId: tc.callId, queryMode },
                 '[DYNAMIC-TOOLS] discovery failed — client returned no MCP state');
             rawToolResult = {
@@ -401,19 +467,10 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             };
         }
         else {
-            const routingMerge = mergeMcpStateIntoRoutingTable(
-                params.availableMcpTools as McpRoutingEntry[],
-                servers,
-            );
-            if (routingMerge.added > 0 || routingMerge.updated > 0) {
-                logger.info({
-                    callId: tc.callId,
-                    ...routingMerge,
-                    routingTableSize: params.availableMcpTools.length,
-                }, '[DYNAMIC-TOOLS] routing table synchronized from discovery');
+            if (servers === null) {
+                logger.warn({ callId: tc.callId, queryMode },
+                    '[DYNAMIC-TOOLS] MCP discovery failed — returning available cursor namespace');
             }
-
-            const namespaces = servers.map(s => toDynamicNamespace(s, params.supportsMcpAuth === true));
             const rendered = renderDynamicToolsResult(query, namespaces);
             let serialized;
             try {
@@ -427,17 +484,16 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
                 }, '[DYNAMIC-TOOLS] result spill failed — falling back to inline content');
                 serialized = await serializeDynamicToolsResult(rendered);
             }
-            // 结果侧 —— payloadBytes 是完整 discovery 数据量;contentBytes 是本轮实际
-            // 进入对话历史的大小。大 namespace 会溢写到 agent-tools 文件以节省 token。
             logger.info({
                 callId: tc.callId,
                 queryMode,
                 resultMode: rendered.mode,
-                namespaces: namespaces.map(n => ({
-                    name: n.name,
-                    status: n.status,
-                    error: n.error,
-                    tools: n.tools.length,
+                namespaces: namespaces.map(namespace => ({
+                    name: namespace.name,
+                    source: namespace.source,
+                    status: namespace.status,
+                    error: namespace.error,
+                    tools: namespace.tools.length,
                 })),
                 matches: Array.isArray(rendered.matches) ? rendered.matches.length : undefined,
                 payloadBytes: serialized.payloadBytes,

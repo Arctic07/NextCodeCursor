@@ -36,6 +36,40 @@ it('routes CallDynamicTool to mcpToolCall, mapping official arg names', () => {
   expect(sanitizedInput.name).toBe('user-ida-pro-mcp-decompile')
 })
 
+it('routes reserved cursor namespace back to the native tool identity', () => {
+  const resolved = resolveToolCall(
+    'CallDynamicTool',
+    { namespace: 'cursor', toolName: 'TodoWrite', arguments: { todos: [] } },
+    AVAILABLE,
+    [{ tool: 'TodoWrite' }],
+  )
+  expect(resolved.cursorToolType).toBe('updateTodosToolCall')
+  expect(resolved.effectiveToolName).toBe('TodoWrite')
+  expect(resolved.sanitizedInput).toEqual({ todos: [] })
+  expect(resolved.resolutionError).toBeUndefined()
+})
+
+it('rejects non-object arguments before entering a native cursor lifecycle', () => {
+  const resolved = resolveToolCall(
+    'CallDynamicTool',
+    { namespace: 'cursor', toolName: 'TodoWrite', arguments: [] },
+    AVAILABLE,
+    [{ tool: 'TodoWrite' }],
+  )
+  expect(resolved.resolutionError).toContain('JSON object')
+})
+
+it('rejects cursor tools that were not advertised by the dynamic registry', () => {
+  const resolved = resolveToolCall(
+    'CallDynamicTool',
+    { namespace: 'cursor', toolName: 'UnknownNative', arguments: {} },
+    AVAILABLE,
+    [{ tool: 'TodoWrite' }],
+  )
+  expect(resolved.resolutionError).toContain('UnknownNative')
+  expect(resolved.cursorToolType).toBe('mcpToolCall')
+})
+
 it('accepts the server display name as well as the identifier', () => {
   const { sanitizedInput } = resolveToolCall(
     'CallDynamicTool',

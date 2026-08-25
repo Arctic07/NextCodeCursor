@@ -68,9 +68,9 @@ describe('parseRunRequest — knowledge-base injection into userRules', () => {
     const parsed = parseRunRequest(makeRun([
       { fullPath: '/CLAUDE.md', content: 'Always reply in Chinese', type: { global: {} } },
     ]))
+    expect(parsed.alwaysRules.map(rule => rule.content)).toEqual(['Always reply in Chinese'])
     expect(parsed.userRules).toEqual([
-      'Always reply in Chinese', // from file rule
-      'Unique rule from settings', // kb item (dup kb skipped)
+      'Unique rule from settings', // duplicate KB item is skipped against the eager workspace rule
     ])
   })
 
@@ -81,13 +81,14 @@ describe('parseRunRequest — knowledge-base injection into userRules', () => {
     expect(parsed.userRules).toEqual(['real rule'])
   })
 
-  it('keeps file-based rules in front of knowledge-base rules', async () => {
+  it('keeps workspace rules separate from account knowledge-base rules', async () => {
     currentItems = [kbItem('kb-one'), kbItem('kb-two')]
     const parseRunRequest = await loadParse()
     const parsed = parseRunRequest(makeRun([
       { fullPath: '/x.md', content: 'file-one', type: { global: {} } },
       { fullPath: '/y.md', content: 'file-two', type: { global: {} } },
     ]))
-    expect(parsed.userRules).toEqual(['file-one', 'file-two', 'kb-one', 'kb-two'])
+    expect(parsed.alwaysRules.map(rule => rule.content)).toEqual(['file-one', 'file-two'])
+    expect(parsed.userRules).toEqual(['kb-one', 'kb-two'])
   })
 })

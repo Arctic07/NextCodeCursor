@@ -15,11 +15,87 @@ export interface IdeFile {
   cursorText?: string
 }
 
+export type ParsedCursorRuleKind = 'global' | 'fileGlobbed' | 'agentFetched' | 'manuallyAttached' | 'unknown'
+
+/** CursorRule 的无 protobuf 包装归一形态。raw 保留给 typed ReadToolSuccess 回传。 */
+export interface ParsedCursorRule {
+  fullPath: string
+  content: string
+  kind: ParsedCursorRuleKind
+  /** CursorRuleSource enum: 0 unspecified / 1 team / 2 user */
+  source: number
+  globs: string[]
+  /** 旧调用点兼容字段；等价于 globs.join(', ')。 */
+  glob?: string
+  description?: string
+  gitRemoteOrigin?: string
+  parseError?: string
+  environments: string[]
+  disabledEnvironments: string[]
+  plugin?: string
+  marketplace?: string
+  pluginId?: string
+  marketplaceId?: string
+  scopedTo: string[]
+  frontmatter: string
+  isRequired?: boolean
+  raw: Record<string, unknown>
+}
+
+export interface ParsedAgentSkill {
+  fullPath: string
+  content: string
+  description: string
+  parseError?: string
+  environments: string[]
+  disabledEnvironments: string[]
+  gitRemoteOrigin?: string
+  disableModelInvocation: boolean
+  plugin?: string
+  marketplace?: string
+  pluginId?: string
+  marketplaceId?: string
+  globs: string[]
+  scopedTo: string[]
+  raw: Record<string, unknown>
+}
+
+export interface ParsedCustomSubagent {
+  fullPath: string
+  name: string
+  description: string
+  tools: string[]
+  model: string
+  prompt: string
+  permissionMode: 'default' | 'readonly' | 'agentOnly'
+  isBackground: boolean
+  forceDefaultModel: boolean
+  plugin?: string
+  marketplace?: string
+  pluginId?: string
+  marketplaceId?: string
+  source?: string
+  raw: Record<string, unknown>
+}
+
 /** 从 runRequest 中提取的关键信息 */
 export interface ParsedRunRequest {
   userText: string
   modelId: string
   conversationId: string
+  /** 客户端本轮 RequestContext 传输形态，用于能力驱动的兼容切换。 */
+  requestContextTransport: 'legacy' | 'dual' | 'ref_only'
+  /** 由 3.17+ RunRequest capability fields 推导；旧客户端缺省为 false。 */
+  clientSupportsDynamicTools: boolean
+  /** 当前轮隐藏但可经保留 cursor namespace 发现/执行的原生工具。 */
+  cursorDynamicTools: Array<{
+    tool: string
+    description: string
+    inputSchema: Record<string, unknown>
+    conciseStaticContext?: string
+  }>
+  dynamicToolCount: number
+  dynamicToolTransitionReminder: boolean
   /** 当前模型的上下文窗口大小 (tokens),用于 skill catalog 预算计算 */
   contextTokenLimit?: number
   mode: string
@@ -35,12 +111,24 @@ export interface ParsedRunRequest {
     outputPath?: string
     threadId?: string
   }>
-  /** 用户设置的规则 (type: global,对应 .cursorrules / user settings rules) */
+  /** 用户设置的规则 (CursorRuleSource.USER + 本地 knowledge base) */
   userRules: string[]
-  /** 项目/文件级别规则 (type: fileGlobbed / manuallyAttached) */
-  projectRules: Array<{ fullPath: string, content: string, glob?: string }>
-  /** Agent Skills (type: agentFetched 或 agentSkills 字段) */
-  agentSkills: Array<{ fullPath: string, description: string }>
+  /** 始终注入完整正文的 workspace/team/global rules。 */
+  alwaysRules: ParsedCursorRule[]
+  /** 可请求或随 Read 自动附加的 workspace rules。 */
+  projectRules: ParsedCursorRule[]
+  /** 去重、禁用策略处理后的完整规则表，供 Read 关联匹配。 */
+  cursorRules: ParsedCursorRule[]
+  /** Agent Skills；完整正文只在手动附加或 Read SKILL.md 后进入模型上下文。 */
+  agentSkills: ParsedAgentSkill[]
+  /** RequestContextSkillsPart.skill_options，保留供旧 Skill UI/descriptor 兼容。 */
+  skillOptions?: Record<string, unknown>
+  /** 客户端自定义 Subagent 定义。 */
+  customSubagents: ParsedCustomSubagent[]
+  /** RequestContext.cloud_rule / RequestContextRulesPart.cloud_rule。 */
+  cloudRule?: string
+  /** dynamic_context 中保留，用于恢复 rules blob 后过滤可禁用 Team Rules。 */
+  disabledTeamRules: string[]
   env: {
     osVersion?: string
     workspacePaths?: string[]
@@ -76,13 +164,10 @@ export interface ParsedRunRequest {
   }>
   /** MCP 工具目录根路径 */
   mcpBasePath: string
-  /**
-   * requestContextParts.mcps_blob_id — Cursor 3.13+ ref_only 模式下 MCP 工具表所在的 blob。
-   *
-   * 该模式下 requestContext 与顶层 mcp_tools 均不投递(实测 2-Cometixy.log 08-07),
-   * MCP 工具表只能经 KV 通道用此 blobId 取回并解为 RequestContextMcpsPart。
-   * 非 ref_only 模式下为 undefined。
-   */
+  /** Cursor 3.13+ ref_only 四类 RequestContext blob 引用；dual/legacy 下均为空。 */
+  rulesBlobId?: Uint8Array
+  skillsBlobId?: Uint8Array
+  subagentsBlobId?: Uint8Array
   mcpsBlobId?: Uint8Array
   /**
    * MCP meta-tool 模式 (requestContext.mcp_meta_tool_options)。
@@ -144,8 +229,10 @@ export interface ParsedRunRequest {
   documentations: Array<{ docId: string, name: string }>
   /** 用户触发的 cursor command (来自 selectedContext.cursor_commands) */
   cursorCommands: Array<{ name: string, content: string }>
-  /** 用户手动 @ 的 skill (来自 selectedContext.selected_skills),区别于 agentSkills 的"全部可用" */
-  selectedSkills: Array<{ fullPath: string, description: string }>
+  /** 用户手动 @ 的 skill，官方会把完整 content 内联到 manually_attached_skills。 */
+  selectedSkills: ParsedAgentSkill[]
+  /** 用户手动 @ 的普通 Cursor Rules，完整正文只作用于当前请求。 */
+  selectedCursorRules: ParsedCursorRule[]
   /**
    * 额外上下文条目 (来自 selectedContext.extra_context_entries)。
    * 每条是 { data } 或 { blobId } 之一,blobId 形态需经 blob store 解包 (Step 4)。
@@ -258,6 +345,8 @@ export interface ParsedRunRequest {
   webSearchEnabled: boolean
   webFetchEnabled: boolean
   readLintsEnabled: boolean
+  /** ConversationStateStructure.read_paths，跨轮去重 Rule/Skill 关联注入。 */
+  readPaths: string[]
   /** rootPromptMessagesJson — 对话历史 blob IDs (system + messages 链) */
   historyBlobIds: string[]
   /** turns — ConversationTurnStructure blob IDs */

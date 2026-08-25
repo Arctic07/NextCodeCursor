@@ -1,5 +1,7 @@
 import type { AgentServerMessage } from '../../gen/agent_v1_pb';
 import type { ProviderRoundContext } from '../llm/providerRuntime';
+import type { ReadContextState } from './contextCatalog';
+import { collectReadContextAttachments, cursorRuleToProtoInit } from './contextCatalog';
 import type { LLMContentBlock, LLMMessage } from '../llm/types';
 import { toolCallCompleted } from './stream';
 import {
@@ -42,9 +44,54 @@ export function finalizeToolCall(params: {
     rawToolResult: ToolResultEnvelope;
     input: Record<string, unknown>;
     modelCallId: string;
+    readContext?: ReadContextState;
 }): { toolResult: ToolResultEnvelope; resultText: string; frame: AgentServerMessage; imageBlock: Extract<LLMContentBlock, { type: 'image' }> | null } {
     const toolResult = normalizeToolResult(params.cursorToolType, params.rawToolResult, params.input);
+    let relatedSkills: ReturnType<typeof collectReadContextAttachments>['skills'] = [];
+    if (params.cursorToolType === 'readToolCall'
+        && params.readContext
+        && toolResult.result?.case === 'success') {
+        const success = toolResult.result.value as Record<string, unknown>;
+        const readPath = String(success.path ?? params.input.path ?? '');
+        if (readPath) {
+            const attachments = collectReadContextAttachments(params.readContext, readPath);
+            relatedSkills = attachments.skills;
+            const existingRules = Array.isArray(success.relatedCursorRules)
+                ? success.relatedCursorRules as Array<Record<string, unknown>>
+                : [];
+            const existingPaths = new Set(existingRules.map(rule => String(rule.fullPath ?? '')));
+            const newRules = attachments.rules
+                .filter(rule => !existingPaths.has(rule.fullPath))
+                .map(cursorRuleToProtoInit);
+            if (existingRules.length > 0 || newRules.length > 0) {
+                success.relatedCursorRules = [...existingRules, ...newRules];
+                success.relatedCursorRulePaths = [...new Set(
+                    [...existingRules, ...newRules].map(rule => String(rule.fullPath ?? '')).filter(Boolean),
+                )];
+            }
+        }
+    }
+
     let resultText = buildToolResultText(params.cursorToolType, toolResult, params.input);
+    if (params.cursorToolType === 'readToolCall' && toolResult.result?.case === 'success') {
+        const success = toolResult.result.value as Record<string, unknown>;
+        const relatedRules = Array.isArray(success.relatedCursorRules)
+            ? success.relatedCursorRules as Array<Record<string, unknown>>
+            : [];
+        if (relatedRules.length > 0) {
+            const renderedRules = relatedRules.map((rule) => {
+                const content = typeof rule.content === 'string' && rule.content.trimEnd()
+                    ? rule.content.trimEnd()
+                    : '(Rule file is empty.)';
+                return `- ${String(rule.fullPath || '(unknown rule path)')}\n${content}`;
+            });
+            resultText += `\n\nThe following cursor rule files are relevant to the files you just read:\n\n${renderedRules.join('\n\n')}\n\nConsider these rules if they affect your changes.`;
+        }
+        if (relatedSkills.length > 0) {
+            const renderedSkills = relatedSkills.map(skill => `- ${skill.fullPath}\n${skill.description || '(No description)'}`);
+            resultText += `\n\nThe following skills may be relevant to the files you just read:\n\n${renderedSkills.join('\n\n')}`;
+        }
+    }
     const isError = isToolResultError(toolResult);
 
     if (isError) {

@@ -1,6 +1,6 @@
 import type { ProviderPromptProfile } from '../../../llm/promptProfile'
 import type { ParsedRunRequest } from '../types'
-import { buildDynamicToolsSection } from '../../dynamicTools'
+import { buildDynamicToolCatalogEntries, buildDynamicToolsSection } from '../../dynamicTools'
 
 const XHIGH_FAST_SUFFIX_RE = /-xhigh-fast$/
 
@@ -107,13 +107,10 @@ If you need to read the full terminal output, you can read the terminal file dir
   // 与 anthropicSystem 同源,见 dynamicTools.ts / analysis/mcp-dynamic-tools.md。
   // 此前 OpenAI 侧完全没有 MCP 引导段,meta-tool 模式下 LLM 拿不到任何
   // namespace 线索。
-  if (parsed.mcpMetaTool?.enabled && parsed.mcpMetaTool.descriptors.length > 0) {
+  const dynamicToolCatalog = buildDynamicToolCatalogEntries(parsed)
+  if (dynamicToolCatalog.length > 0) {
     parts.push(buildDynamicToolsSection(
-      parsed.mcpMetaTool.descriptors.map(d => ({
-        serverIdentifier: d.serverIdentifier,
-        toolNames: d.tools.map(t => t.toolName),
-        ...(d.serverUseInstructions ? { serverUseInstructions: d.serverUseInstructions } : {}),
-      })),
+      dynamicToolCatalog,
       parsed.supportsMcpAuth === true,
     ))
   }

@@ -61,6 +61,8 @@ export function buildFileExecToolResult(
                             rangeApplied: bool(success.rangeApplied),
                             ...(success.outputBlobId ? { outputBlobId: success.outputBlobId } : {}),
                             ...(success.readRange ? { readRange: obj(success.readRange) } : {}),
+                            ...(Array.isArray(success.relatedCursorRulePaths) ? { relatedCursorRulePaths: success.relatedCursorRulePaths } : {}),
+                            ...(Array.isArray(success.relatedCursorRules) ? { relatedCursorRules: success.relatedCursorRules } : {}),
                             output,
                         },
                     },
@@ -151,6 +153,8 @@ export function normalizeFileToolResult(
                     ...(value.outputBlobId ? { outputBlobId: value.outputBlobId } : {}),
                     output: normalizedOutput,
                     ...(value.readRange ? { readRange: obj(value.readRange) } : {}),
+                    ...(Array.isArray(value.relatedCursorRulePaths) ? { relatedCursorRulePaths: value.relatedCursorRulePaths } : {}),
+                    ...(Array.isArray(value.relatedCursorRules) ? { relatedCursorRules: value.relatedCursorRules } : {}),
                 });
             }
             return envelope(resultCaseName || 'error', value);

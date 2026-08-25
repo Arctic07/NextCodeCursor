@@ -26,7 +26,7 @@ const CATEGORY_LABELS: Record<ContextCategory, string> = {
   tools: 'Tool definitions',
   rules: 'Rules',
   skills: 'Skills',
-  mcp: 'MCP',
+  mcp: 'MCP & dynamic tools',
   subagents: 'Subagent definitions',
   conversation: 'Conversation',
   summarized_conversation: 'Summarized conversation',

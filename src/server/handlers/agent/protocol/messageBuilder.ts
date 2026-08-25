@@ -1,16 +1,143 @@
 import type { LLMContentBlock, LLMMessage } from '../../llm/types'
 import type { ProviderPromptProfile } from '../../llm/promptProfile'
-import type { ParsedRunRequest } from './types'
+import type { ParsedAgentSkill, ParsedRunRequest } from './types'
 import { resolvePromptProfile } from '../../llm/promptProfile'
 import { buildAnthropicSystemPrompt } from './prompts/anthropicSystem'
 import { buildComposerFallbackSystemPrompt } from './prompts/composerFallback'
 import { buildModeReminder } from './prompts/modeReminders'
 import { buildOpenAISystemPrompt } from './prompts/openaiSystem'
 import { escapeXml } from './shared'
+import { isAutoAttachedRule, ruleWorkspaceRoot } from '../contextCatalog'
+import { buildDynamicToolCatalogEntries, buildDynamicToolsSection } from '../dynamicTools'
 
-function truncateDescription(desc: string, maxLen: number): string {
-  const oneLine = desc.replace(/\s+/g, ' ').trim()
-  return oneLine.length <= maxLen ? oneLine : `${oneLine.slice(0, maxLen - 1)}…`
+const SKILL_CATALOG_BUDGET_PERCENT = 0.02
+const DEFAULT_AGENT_TOKEN_LIMIT = 200_000
+const MAX_SKILL_DESCRIPTION_CHARS = 480
+const MIN_SKILL_DESCRIPTION_CHARS = 24
+const MAX_MANUALLY_ATTACHED_SKILL_CHARS = 100_000
+const PROTECTED_SKILL_NAMES = new Set(['canvas', 'env-setup'])
+
+function estimateTokens(text: string): number {
+  return Math.round(text.length / 4)
+}
+
+function skillName(fullPath: string): string {
+  const segments = fullPath.replace(/\\/g, '/').split('/').filter(Boolean)
+  const skillIndex = segments.lastIndexOf('SKILL.md')
+  return skillIndex > 0 ? segments[skillIndex - 1] : segments.at(-1) ?? 'Skill'
+}
+
+function skillDirectory(fullPath: string): string {
+  const normalized = fullPath.replace(/\\/g, '/')
+  const markers = [
+    '/.cursor/skills/', '/.cursor/skills-cursor/', '/.agents/skills/',
+    '/.claude/skills/', '/.codex/skills/', '/.claude/plugins/',
+  ]
+  for (const marker of markers) {
+    const index = normalized.indexOf(marker)
+    if (index >= 0)
+      return normalized.slice(0, index + marker.length - 1)
+  }
+  const pluginCache = normalized.indexOf('/.cursor/plugins/cache/')
+  if (pluginCache >= 0) {
+    const skills = normalized.indexOf('/skills/', pluginCache)
+    if (skills >= 0)
+      return normalized.slice(0, skills + '/skills'.length)
+  }
+  const slash = normalized.lastIndexOf('/')
+  return slash >= 0 ? normalized.slice(0, slash) : normalized
+}
+
+function shortenSkillDescription(description: string, maxLength: number): string {
+  const normalized = description.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength)
+    return normalized
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`
+}
+
+function renderAgentSkillsSection(
+  skills: Array<{ fullPath: string, description?: string }>,
+  omitted?: { count: number, directories: string[] },
+): string {
+  const entries = skills.map(skill => {
+    const description = skill.description ? escapeXml(skill.description) : ''
+    return `<agent_skill fullPath="${escapeXml(skill.fullPath)}">${description}</agent_skill>`
+  })
+  const hasOmittedSkills = !!omitted && omitted.count > 0
+  const omittedNotice = hasOmittedSkills
+    ? `\nAdditional skills omitted from this initial list (${omitted.count}). Directories containing omitted skills: ${omitted.directories.join(', ')}.`
+    : ''
+  const scopeGuidance = hasOmittedSkills
+    ? 'Use the skills listed below. If a later task specifically requires discovering more skills, additional skills may exist in the directories shown in this section.'
+    : 'Only use skills listed below.'
+  return `<agent_skills>
+Skills the agent can use. Use the Read tool with the provided absolute path to fetch full contents.
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. To use a skill, read the skill file at the provided absolute path using the Read tool, then follow the instructions within. When a skill is relevant, read and follow it IMMEDIATELY as your first action. ${scopeGuidance}
+
+${entries.join('\n')}${omittedNotice}
+</agent_skills>`
+}
+
+/** 对齐 3.17 rX(): 2% token 预算，依次缩描述、去描述、最后省略目录项。 */
+export function buildAgentSkillsSection(
+  allSkills: ParsedAgentSkill[],
+  agentTokenLimit?: number,
+): string | null {
+  const skills = allSkills
+    .filter(skill => !skill.disableModelInvocation && !skill.parseError && !!skill.fullPath)
+  if (skills.length === 0)
+    return null
+  const budget = Math.floor((agentTokenLimit && agentTokenLimit > 0 ? agentTokenLimit : DEFAULT_AGENT_TOKEN_LIMIT)
+    * SKILL_CATALOG_BUDGET_PERCENT)
+  const render = (items: Array<{ fullPath: string, description?: string }>, omitted?: { count: number, directories: string[] }) =>
+    renderAgentSkillsSection(items, omitted)
+  const original = skills.map(skill => ({ fullPath: skill.fullPath, description: skill.description || undefined }))
+  const originalSection = render(original)
+  if (estimateTokens(originalSection) <= budget)
+    return originalSection
+
+  const isProtected = (skill: { fullPath: string }) => PROTECTED_SKILL_NAMES.has(skillName(skill.fullPath))
+  const longestDescription = original.reduce((maximum, skill) => isProtected(skill)
+    ? maximum
+    : Math.max(maximum, skill.description?.length ?? 0), 0)
+  if (longestDescription > 80) {
+    let best: string | undefined
+    let low = MIN_SKILL_DESCRIPTION_CHARS
+    let high = Math.min(longestDescription - 1, MAX_SKILL_DESCRIPTION_CHARS)
+    while (low <= high) {
+      const candidateLength = Math.floor((low + high) / 2)
+      const candidate = original.map(skill => isProtected(skill)
+        ? skill
+        : { ...skill, description: shortenSkillDescription(skill.description ?? '', candidateLength) || undefined })
+      const section = render(candidate)
+      if (estimateTokens(section) <= budget) {
+        best = section
+        low = candidateLength + 1
+      }
+      else {
+        high = candidateLength - 1
+      }
+    }
+    if (best)
+      return best
+  }
+
+  const pathOnly = original.map(skill => isProtected(skill) ? skill : { fullPath: skill.fullPath })
+  const pathOnlySection = render(pathOnly)
+  if (estimateTokens(pathOnlySection) <= budget)
+    return pathOnlySection
+
+  const optionalIndices = original.flatMap((skill, index) => isProtected(skill) ? [] : [index])
+  for (let retainedOptional = optionalIndices.length; retainedOptional >= 0; retainedOptional--) {
+    const retained = new Set(optionalIndices.slice(0, retainedOptional))
+    const listed = pathOnly.filter((skill, index) => isProtected(skill) || retained.has(index))
+    const omittedSkills = original.filter((skill, index) => !isProtected(skill) && !retained.has(index))
+    const directories = [...new Set(omittedSkills.map(skill => skillDirectory(skill.fullPath)))].slice(0, 5)
+    const section = render(listed, { count: omittedSkills.length, directories })
+    if (estimateTokens(section) <= budget || retainedOptional === 0)
+      return section
+  }
+  return pathOnlySection
 }
 
 /**
@@ -60,6 +187,10 @@ function buildSystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderProm
   let base: string
   if (promptProfile.systemPromptStyle === 'composer-fallback') {
     base = buildComposerFallbackSystemPrompt()
+    const dynamicCatalog = buildDynamicToolCatalogEntries(parsed)
+    if (dynamicCatalog.length > 0) {
+      base += `\n\n${buildDynamicToolsSection(dynamicCatalog, parsed.supportsMcpAuth === true)}`
+    }
   }
   else if (promptProfile.provider === 'openai-chat' || promptProfile.provider === 'openai-responses') {
     base = buildOpenAISystemPrompt(parsed, promptProfile)
@@ -84,8 +215,8 @@ function buildSystemPrompt(parsed: ParsedRunRequest, promptProfile: ProviderProm
  *   <agent_transcripts>
  *   <ide_state>              ← Step 2
  *   <rules>
- *   <agent_skills>           全量可用 skill
- *   <attached_skills>        ← Step 2 用户手动 @ 的 skill 子集
+ *   <agent_skills>           精简 Skill catalog（2% token budget）
+ *   <manually_attached_skills> 用户手动 @ 的 Skill 完整正文
  *   <attached_docs>          ← Step 2
  *   <cursor_commands>        ← Step 2 用户触发的 /command
  *   <mcp_instructions>       ← Step 2
@@ -137,87 +268,86 @@ Agent transcripts (past chats) live in ${parsed.env.agentTranscriptsFolder}. The
   if (ideSection)
     parts.push(ideSection)
 
-  // ── <rules> ──
-  if (parsed.userRules.length > 0 || parsed.projectRules.length > 0) {
+  // ── <rules> — always eager / agentFetched lazy / fileGlobbed 随 Read 注入 ──
+  const requestableRules = parsed.projectRules.filter(rule => !isAutoAttachedRule(rule, parsed.env.workspacePaths ?? []))
+  if (parsed.userRules.length > 0 || parsed.alwaysRules.length > 0 || requestableRules.length > 0) {
     let rulesSection = `<rules>
 The rules section has a number of possible rules/memories/context that you should consider. In each subsection, we provide instructions about what information the subsection contains and how you should consider/follow the contents of the subsection.\n\n`
 
-    if (parsed.userRules.length > 0) {
-      rulesSection += `<user_rules description="These are rules set by the user that you should follow if appropriate.">\n`
-      for (const rule of parsed.userRules) {
-        rulesSection += `<user_rule>${rule}</user_rule>\n`
+    if (parsed.alwaysRules.length > 0) {
+      rulesSection += `<always_applied_workspace_rules description="These are workspace-level rules that the agent must always follow.">\n`
+      for (const rule of parsed.alwaysRules) {
+        const globNote = rule.globs.length > 0
+          ? `, glob pattern(s) for applicable files: ${rule.globs.join(', ')}`
+          : ''
+        rulesSection += `<always_applied_workspace_rule name="${escapeXml(rule.fullPath)}">${rule.content}${globNote}</always_applied_workspace_rule>\n`
       }
-      rulesSection += `</user_rules>\n`
+      rulesSection += `</always_applied_workspace_rules>\n`
     }
 
-    if (parsed.projectRules.length > 0) {
-      rulesSection += `<project_rules description="These are rules specific to the project.">\n`
-      for (const rule of parsed.projectRules) {
-        rulesSection += `<project_rule path="${escapeXml(rule.fullPath)}">${rule.content}</project_rule>\n`
+    if (requestableRules.length > 0) {
+      rulesSection += `<agent_requestable_workspace_rules description="These are workspace-level rules that the agent should follow. Use the Read tool to fetch full contents from the provided absolute path. Read each rule file using the Read tool when it is relevant to your work.">\n`
+      for (const rule of requestableRules) {
+        const description = rule.description
+          || (rule.kind === 'global'
+            ? `Applicable for all files within ${ruleWorkspaceRoot(rule.fullPath)}`
+            : rule.globs.length > 0 ? `Glob pattern(s): ${rule.globs.join(', ')}` : '')
+        rulesSection += `<agent_requestable_workspace_rule fullPath="${escapeXml(rule.fullPath)}">${escapeXml(description)}</agent_requestable_workspace_rule>\n`
       }
-      rulesSection += `</project_rules>\n`
+      rulesSection += `</agent_requestable_workspace_rules>\n`
+    }
+
+    if (parsed.userRules.length > 0) {
+      rulesSection += `<user_rules description="These are rules set by the user that you should follow if appropriate.">\n`
+      for (const rule of parsed.userRules)
+        rulesSection += `<user_rule>${rule}</user_rule>\n`
+      rulesSection += `</user_rules>\n`
     }
 
     rulesSection += `</rules>`
     parts.push(rulesSection)
   }
 
-  // ── <available_skills> — 渐进式加载 (参照 Claude Code SkillTool/prompt.ts) ──
-  //
-  // 三层架构:
-  //   Tier 1: catalog — name + 截断 description, 受 1% context 预算约束
-  //   Tier 2: 用户 @ 或 LLM Read 触发时才加载完整 SKILL.md body
-  //   Tier 3: skill 内引用的关联资源 (按需)
-  //
-  // 预算机制 (对齐 Claude Code):
-  //   - SKILL_BUDGET_CONTEXT_PERCENT = 0.01 (1% of context window)
-  //   - MAX_LISTING_DESC_CHARS = 250 (per skill)
-  //   - 超预算: 先截短 description → 极端情况只显示 name
-  if (parsed.agentSkills.length > 0) {
-    const charBudget = Math.floor((parsed.contextTokenLimit ?? 200_000) * 4 * 0.01)
-    const maxDescChars = 250
+  if (parsed.cloudRule?.trim()) {
+    parts.push(`<cloud_instructions description="Instructions pulled from AGENTS.md">
+AGENTS.md contents:
 
-    const entries = parsed.agentSkills.map(s => {
-      const name = s.fullPath.split('/').slice(-2, -1)[0] || s.fullPath
-      const desc = truncateDescription(s.description, maxDescChars)
-      return { name, desc, fullPath: s.fullPath, full: `- ${name}: ${desc}` }
-    })
-
-    const fullTotal = entries.reduce((sum, e) => sum + e.full.length + 1, 0)
-    let listing: string
-
-    if (fullTotal <= charBudget) {
-      listing = entries.map(e => e.full).join('\n')
-    } else {
-      // 超预算: 按比例截短 description
-      const nameOverhead = entries.reduce((sum, e) => sum + e.name.length + 4, 0) + entries.length
-      const availableForDescs = charBudget - nameOverhead
-      const maxDescLen = Math.max(20, Math.floor(availableForDescs / entries.length))
-
-      if (maxDescLen < 20) {
-        listing = entries.map(e => `- ${e.name}`).join('\n')
-      } else {
-        listing = entries.map(e => `- ${e.name}: ${truncateDescription(e.desc, maxDescLen)}`).join('\n')
-      }
-    }
-
-    const skillsSection = `<available_skills>
-The following skills are available. To use a skill, read its file with the Read tool, then follow the instructions within.
-Only use skills listed here. When a skill matches the user's request, read and follow it IMMEDIATELY as your first action.
-
-${listing}
-</available_skills>`
-    parts.push(skillsSection)
+${parsed.cloudRule.trim()}
+</cloud_instructions>`)
   }
 
-  // ── <attached_skills> — Tier 2: 用户手动 @ 的 skill (立刻执行, 无需 Read) ──
+  // ── <agent_skills> — 官方 2% catalog budget，正文由 Read 按需获取 ──
+  const skillsSection = buildAgentSkillsSection(parsed.agentSkills, parsed.contextTokenLimit)
+  if (skillsSection)
+    parts.push(skillsSection)
+
+  // ── 手动 @ Skill：完整 SKILL.md 正文直接内联，不要求再次 Read ──
   if (parsed.selectedSkills.length > 0) {
-    let attachedSkills = `<attached_skills description="Skills the user explicitly attached. Follow them immediately before other work.">\n`
-    for (const skill of parsed.selectedSkills) {
-      attachedSkills += `<attached_skill fullPath="${escapeXml(skill.fullPath)}">${escapeXml(skill.description)}</attached_skill>\n`
+    const selected = parsed.selectedSkills.filter(skill => skill.content.trim().length > 0)
+    if (selected.length > 0) {
+      const body = selected.map(skill => `Skill Name: ${skillName(skill.fullPath)}
+Path: ${skill.fullPath}
+SKILL.md content:
+${skill.content.trim().slice(0, MAX_MANUALLY_ATTACHED_SKILL_CHARS)}`).join('\n\n---\n\n')
+      parts.push(`<manually_attached_skills>
+The user has manually attached the following skills to their message.
+These skills contain specific instructions or workflows that the user wants you to follow for this request.
+Only read the files if needed, the full skill content is inlined here.
+
+${body}
+</manually_attached_skills>`)
     }
-    attachedSkills += `</attached_skills>`
-    parts.push(attachedSkills)
+  }
+
+  if (parsed.selectedCursorRules.length > 0) {
+    const body = parsed.selectedCursorRules.map(rule => `Rule Name: ${rule.fullPath.split(/[\\/]/).pop()?.replace(/\.mdc$/i, '') || 'Cursor Rule'}
+Description: ${rule.content.slice(0, MAX_MANUALLY_ATTACHED_SKILL_CHARS)}`).join('\n\n')
+    parts.push(`<cursor_rules_context>
+Cursor Rules are extra documentation provided by the user to help the AI understand the codebase.
+Use them if they seem useful to the users most recent query, but do not use them if they seem unrelated.
+
+${body}
+</cursor_rules_context>`)
   }
 
   // ── <attached_docs> ── (用户 @ 的 @Docs 引用,只含 docId + name)
@@ -464,7 +594,13 @@ function buildIdeStateSection(parsed: ParsedRunRequest): string | null {
 }
 
 function buildCurrentUserTurn(parsed: ParsedRunRequest): string {
-  const reminder = buildModeReminder(parsed)
+  const reminders = [buildModeReminder(parsed)]
+  if (parsed.dynamicToolTransitionReminder) {
+    reminders.push(`<system_reminder>
+Dynamic tools have been enabled for this conversation. Some tools that appeared as direct tool calls in earlier turns must now be called through CallDynamicTool. Discover tool schemas with GetDynamicTools.
+</system_reminder>`)
+  }
   const query = `<user_query>\n${parsed.userText}\n</user_query>`
-  return reminder ? `${reminder}\n${query}` : query
+  const prefix = reminders.filter(Boolean).join('\n')
+  return prefix ? `${prefix}\n${query}` : query
 }

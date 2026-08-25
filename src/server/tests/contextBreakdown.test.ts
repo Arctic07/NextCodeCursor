@@ -1,6 +1,7 @@
 import type { LLMMessage, LLMTool } from '../handlers/llm/types'
 import { describe, expect, it } from 'vitest'
 import { buildContextBreakdown } from '../handlers/agent/conversationRuntime'
+import { ContextTokenTracker } from '../handlers/agent/tokenCounter'
 
 /**
  * Context breakdown 的 tools / mcp 分类边界。
@@ -27,6 +28,21 @@ const MCP_TOOL: LLMTool = {
   description: 'Decompile a function. '.repeat(20),
   inputSchema: { type: 'object', properties: { address: { type: 'string' } } },
 }
+const LIST_MCP_RESOURCES: LLMTool = {
+  name: 'ListMcpResources',
+  description: 'List resources exposed by configured MCP servers.',
+  inputSchema: { type: 'object', properties: { server: { type: 'string' } } },
+}
+
+it('uses the official label for the mcp breakdown category', () => {
+  const tracker = new ContextTokenTracker()
+  tracker.add('mcp', 1)
+
+  expect(tracker.toBreakdownCategories()).toMatchObject([{
+    id: 'mcp',
+    label: 'MCP & dynamic tools',
+  }])
+})
 
 describe('legacy 模式 (MCP 工具进扁平 requestTools)', () => {
   it('扁平表里的 MCP 工具 schema 计入 mcp 而非 tools', () => {
@@ -49,6 +65,18 @@ describe('legacy 模式 (MCP 工具进扁平 requestTools)', () => {
     expect(tokensOf(withMcp, 'tools')).toBe(tokensOf(withoutMcp, 'tools'))
     expect(tokensOf(withMcp, 'mcp')).toBeGreaterThan(0)
     expect(tokensOf(withoutMcp, 'mcp')).toBe(0)
+  })
+
+  it('将 ListMcpResources 作为内置资源发现工具计入 Tool definitions', () => {
+    const categories = buildContextBreakdown({
+      systemContent: 'x',
+      preambleUserContent: '',
+      requestMessages: [],
+      requestTools: [LIST_MCP_RESOURCES],
+      mcpToolNames: new Set<string>(),
+    })
+    expect(tokensOf(categories, 'tools')).toBeGreaterThan(0)
+    expect(tokensOf(categories, 'mcp')).toBe(0)
   })
 
   it('空 MCP 集合不会凭空产生 "[]" 的 token', () => {

@@ -1,7 +1,15 @@
-import type { IdeFile, ParsedRunRequest } from './types'
+import type { IdeFile, ParsedCursorRule, ParsedRunRequest } from './types'
 import { listKnowledgeItems } from '../../../config/knowledgeBaseStore'
 import { logger } from '../../../logger'
 import { emptyParsed, toBytes } from './shared'
+import {
+  categorizeCursorRules,
+  isSkillPath,
+  mergeAgentSkills,
+  normalizeAgentSkill,
+  normalizeCursorRule,
+  normalizeCustomSubagent,
+} from '../contextCatalog'
 
 type ParsedBackgroundTaskCompletion = {
   taskId: string
@@ -286,96 +294,35 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
 
   const env = requestContext?.env as Record<string, unknown> | undefined
   const rules = (requestContext?.rules as Array<Record<string, unknown>> | undefined) ?? []
+  const nonFileRules = (requestContext?.nonFileRules as Array<Record<string, unknown>> | undefined) ?? []
+  const disabledTeamRules = (requestContext?.disabledTeamRules as string[] | undefined) ?? []
   const tools = (requestContext?.tools as Array<Record<string, unknown>> | undefined) ?? []
+  const categorizedRules = categorizeCursorRules({
+    rules,
+    nonFileRules,
+    disabledTeamRules,
+    workspacePaths: (env?.workspacePaths as string[] | undefined) ?? [],
+  })
+  const userRules = [...categorizedRules.userRules]
+  const alwaysRules = categorizedRules.alwaysRules
+  const projectRules = categorizedRules.requestableRules
+  const cursorRules = categorizedRules.cursorRules
 
-  // 诊断打点:每条 rule 的 keys + type 子对象 keys + source, 看清客户端下发形态。
-  // User Rules (设置里填的) vs Project Rules (.cursor/rules/*.mdc) 在 type.oneof
-  // 上应当分别是 { global: {} } / { fileGlobbed: { globs: [...] } } 等。
-  if (rules.length > 0) {
+  if (cursorRules.length > 0) {
     logger.debug({
-      count: rules.length,
-      samples: rules.slice(0, 5).map(r => ({
-        keys: Object.keys(r),
-        typeKeys: r.type && typeof r.type === 'object' ? Object.keys(r.type as Record<string, unknown>) : typeof r.type,
-        source: r.source,
-        fullPath: r.fullPath,
-        contentPreview: typeof r.content === 'string' ? r.content.slice(0, 60) : typeof r.content,
+      count: cursorRules.length,
+      always: alwaysRules.length,
+      requestable: projectRules.length,
+      user: categorizedRules.userRules.length,
+      skillsFromRules: categorizedRules.skills.length,
+      samples: cursorRules.slice(0, 5).map(rule => ({
+        kind: rule.kind,
+        source: rule.source,
+        fullPath: rule.fullPath,
+        globs: rule.globs,
+        contentPreview: rule.content.slice(0, 60),
       })),
-    }, '[AGENT] rules diagnosis')
-  }
-
-  // 分类 rules
-  const userRules: string[] = []
-  const projectRules: Array<{ fullPath: string, content: string, glob?: string }> = []
-  const agentSkillsFromRules: Array<{ fullPath: string, description: string }> = []
-
-  // 判断 oneof 分支是否"命中":
-  // - toJson 展平形态: 字段存在即选中 (value 可能是 {}、对象、或非 null)
-  // - protobuf-es 原生 oneof 形态: ruleType.type === { case: 'global', value: ... }
-  const isOneofCase = (ruleType: Record<string, unknown> | undefined, name: string): boolean => {
-    if (!ruleType)
-      return false
-    // 展平形态: 字段存在 且 非 null/undefined
-    if (name in ruleType && ruleType[name] != null)
-      return true
-    // 原生 oneof: ruleType.type = { case, value }
-    const inner = ruleType.type as { case?: string } | undefined
-    if (inner?.case === name)
-      return true
-    return false
-  }
-
-  const getOneofValue = (ruleType: Record<string, unknown> | undefined, name: string): Record<string, unknown> | undefined => {
-    if (!ruleType)
-      return undefined
-    if (name in ruleType && ruleType[name] && typeof ruleType[name] === 'object')
-      return ruleType[name] as Record<string, unknown>
-    const inner = ruleType.type as { case?: string, value?: unknown } | undefined
-    if (inner?.case === name && inner.value && typeof inner.value === 'object')
-      return inner.value as Record<string, unknown>
-    return undefined
-  }
-
-  for (const r of rules) {
-    const ruleType = r.type as Record<string, unknown> | undefined
-    const content = (r.content as string) ?? ''
-    const fullPath = (r.fullPath as string) ?? ''
-
-    if (isOneofCase(ruleType, 'global')) {
-      // 用户全局规则 (包括设置页填写的 User Rules)
-      if (content)
-        userRules.push(content)
-    }
-    else if (isOneofCase(ruleType, 'agentFetched')) {
-      // Agent Skills (通过 rules 通道传递)
-      const af = getOneofValue(ruleType, 'agentFetched')
-      agentSkillsFromRules.push({
-        fullPath,
-        description: (af?.description as string) ?? '',
-      })
-    }
-    else if (isOneofCase(ruleType, 'fileGlobbed') || isOneofCase(ruleType, 'manuallyAttached')) {
-      // 文件/项目级别规则 (proto field 为 repeated string, 兼容单值 glob)
-      const fg = getOneofValue(ruleType, 'fileGlobbed')
-      const globs = fg?.globs as string[] | string | undefined
-      projectRules.push({
-        fullPath,
-        content,
-        glob: Array.isArray(globs) ? globs.join(', ') : globs,
-      })
-    }
-    else {
-      // 未知类型: 通过文件路径判断是否为 skill
-      // Cursor 3.1.17 中 skill 的 type 可能为空对象 {},
-      // 不匹配 agentFetched, 但路径为 SKILL.md → 应作为 skill 处理
-      if (fullPath.endsWith('/SKILL.md') || fullPath.endsWith('\\SKILL.md')) {
-        const desc = extractSkillDescription(content)
-        agentSkillsFromRules.push({ fullPath, description: desc })
-      }
-      else if (content) {
-        userRules.push(content)
-      }
-    }
+    }, '[AGENT] rules classified')
   }
 
   // 合入本地 KnowledgeBase items (Cursor 设置页 "User Rules")。
@@ -387,7 +334,10 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   try {
     const kbItems = listKnowledgeItems()
     if (kbItems.length > 0) {
-      const existing = new Set(userRules.map(s => s.trim()))
+      const existing = new Set([
+        ...userRules.map(rule => rule.trim()),
+        ...alwaysRules.map(rule => rule.content.trim()),
+      ])
       let injected = 0
       for (const it of kbItems) {
         const body = (it.knowledge ?? '').trim()
@@ -406,24 +356,22 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     logger.warn({ error: (err as Error).message }, '[AGENT] knowledge-base injection failed (continuing)')
   }
 
+  const agentSkillsField = (requestContext?.agentSkills as Array<Record<string, unknown>> | undefined) ?? []
+  const agentSkills = mergeAgentSkills(
+    categorizedRules.skills,
+    agentSkillsField.map(normalizeAgentSkill),
+  )
+  const customSubagents = ((requestContext?.customSubagents as Array<Record<string, unknown>> | undefined) ?? [])
+    .map(normalizeCustomSubagent)
+    .filter(subagent => subagent.name.length > 0)
+
   logger.debug({
     userRulesCount: userRules.length,
-    projectRulesCount: projectRules.length,
-    agentSkillsCount: agentSkillsFromRules.length,
-  }, '[AGENT] rules classified')
-
-  // agentSkills 字段 (可能和 rules 中的 agentFetched 重复,取并集)
-  const agentSkillsField = (requestContext?.agentSkills as Array<Record<string, unknown>> | undefined) ?? []
-  const skillPathSet = new Set(agentSkillsFromRules.map(s => s.fullPath))
-  for (const s of agentSkillsField) {
-    const fp = (s.fullPath as string) ?? ''
-    if (fp && !skillPathSet.has(fp)) {
-      agentSkillsFromRules.push({
-        fullPath: fp,
-        description: (s.description as string) ?? (s.name as string) ?? '',
-      })
-    }
-  }
+    alwaysRulesCount: alwaysRules.length,
+    requestableRulesCount: projectRules.length,
+    agentSkillsCount: agentSkills.length,
+    customSubagentsCount: customSubagents.length,
+  }, '[AGENT] request context catalogs parsed')
 
   // MCP 服务器配置
   // 官方客户端双写:AgentRunRequest.mcp_file_system_options (proto field 6) 和
@@ -558,13 +506,31 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     content: (c.content as string) ?? '',
   }))
 
-  // Selected Skills (selectedContext.selected_skills) — 手动 @ 的 skill,区别于 requestContext.agent_skills 的全量
-  // description 不 fallback 到 content (全文) — 避免把完整 SKILL.md body 当 description 注入
+  // 用户手动 @ 的 Skill/Rule。Skill 必须保留完整 content，官方会直接内联；
+  // SelectedCursorRule 外层是 { rule: CursorRule }。
   const selectedSkillsRaw = (selectedContext?.selectedSkills as Array<Record<string, unknown>> | undefined) ?? []
-  const selectedSkills = selectedSkillsRaw.map(s => ({
-    fullPath: (s.fullPath as string) ?? '',
-    description: (s.description as string) ?? (s.name as string) ?? '',
-  }))
+  const selectedRuleRecords = ((selectedContext?.cursorRules as Array<Record<string, unknown>> | undefined) ?? [])
+    .map(item => item.rule && typeof item.rule === 'object'
+      ? normalizeCursorRule(item.rule as Record<string, unknown>)
+      : null)
+    .filter((rule): rule is ParsedCursorRule => rule !== null && rule.content.length > 0)
+  const selectedSkills = selectedSkillsRaw
+    .map(normalizeAgentSkill)
+    .filter(skill => skill.fullPath.length > 0 || skill.content.length > 0)
+  // 旧客户端把手动 Skill 放在 selectedContext.cursor_rules；新字段有值时以
+  // selected_skills 为权威，避免同一 Skill 被同时当作 Rule 和 Skill 注入。
+  if (selectedSkillsRaw.length === 0) {
+    selectedSkills.push(...selectedRuleRecords
+      .filter(rule => isSkillPath(rule.fullPath))
+      .map(rule => normalizeAgentSkill({
+        ...rule.raw,
+        fullPath: rule.fullPath,
+        content: rule.content,
+      })))
+  }
+  const selectedCursorRules = selectedSkillsRaw.length > 0
+    ? selectedRuleRecords
+    : selectedRuleRecords.filter(rule => !isSkillPath(rule.fullPath))
 
   // ── SelectedContext 扩展字段 (客户端已 gather,server 注入 LLM) ──
   //
@@ -789,6 +755,17 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
         : baseUserText,
     modelId: (requestedModel?.modelId as string) || (modelDetails?.modelId as string) || '',
     conversationId: (runRequest.conversationId as string) ?? '',
+    requestContextTransport: requestContextParts
+      ? (inlineRequestContext ? 'dual' : 'ref_only')
+      : 'legacy',
+    // 这些显式 capability fields 与 Dynamic Tools 同批出现在 3.17 AgentRunRequest；
+    // 老客户端完全没有字段，不能只凭 requestContextParts(3.13+)误判。
+    clientSupportsDynamicTools: runRequest.clientSupportsPromptContextUsageRpc === true
+      || runRequest.clientSupportsRoutedModelUpdate === true
+      || runRequest.clientSupportsPreviewCard === true,
+    cursorDynamicTools: [],
+    dynamicToolCount: 0,
+    dynamicToolTransitionReminder: false,
     contextTokenLimit: clientContextTokenLimit && Number.isFinite(clientContextTokenLimit) && clientContextTokenLimit > 0
       ? Math.floor(clientContextTokenLimit)
       : undefined,
@@ -802,8 +779,14 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     clientThinkingBudget: clientThinkingBudget && Number.isFinite(clientThinkingBudget) ? clientThinkingBudget : undefined,
     clientFast,
     userRules,
+    alwaysRules,
     projectRules,
-    agentSkills: agentSkillsFromRules,
+    cursorRules,
+    agentSkills,
+    skillOptions: (requestContext?.skillOptions ?? runRequest.skillOptions) as Record<string, unknown> | undefined,
+    customSubagents,
+    cloudRule: typeof requestContext?.cloudRule === 'string' ? requestContext.cloudRule : undefined,
+    disabledTeamRules,
     env: {
       osVersion: env?.osVersion as string | undefined,
       workspacePaths: env?.workspacePaths as string[] | undefined,
@@ -830,8 +813,11 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     isGitRepo: gitRepos.length > 0,
     mcpServers,
     mcpBasePath: mcpBasePath ? `${mcpBasePath}/mcps` : '',
-    // 只有 ref_only 需要回取 blob。dual 已有完整 inline requestContext,
-    // 暴露 blobId 反而会导致 legacy dual 路径重复 fetch。
+    // 只有 ref_only 需要回取 blob。dual 已有完整 inline requestContext，
+    // 不暴露引用可避免双写模式重复 fetch。
+    rulesBlobId: inlineRequestContext ? undefined : toBytes(requestContextParts?.rulesBlobId),
+    skillsBlobId: inlineRequestContext ? undefined : toBytes(requestContextParts?.skillsBlobId),
+    subagentsBlobId: inlineRequestContext ? undefined : toBytes(requestContextParts?.subagentsBlobId),
     mcpsBlobId: inlineRequestContext ? undefined : toBytes(requestContextParts?.mcpsBlobId),
     supportsMcpAuth: requestContext?.supportsMcpAuth === true,
     mcpMetaTool,
@@ -864,6 +850,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     documentations,
     cursorCommands,
     selectedSkills,
+    selectedCursorRules,
     extraContextEntries,
     codeSelections,
     terminalSelections,
@@ -877,6 +864,9 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     webSearchEnabled: (requestContext?.webSearchEnabled as boolean) ?? false,
     webFetchEnabled: (requestContext?.webFetchEnabled as boolean) ?? false,
     readLintsEnabled: (requestContext?.readLintsEnabled as boolean) ?? false,
+    readPaths: Array.isArray(conversationState?.readPaths)
+      ? conversationState.readPaths.filter((path): path is string => typeof path === 'string')
+      : [],
     // rootPromptMessagesJson 包含对话历史的所有 blob IDs。
     // ConversationStateStructure (checkpoint) 中是 bytes[] (T:12),
     // ConversationState (runRequest) 中是 string[] (T:9)。
@@ -1137,14 +1127,4 @@ function unwrapProtoValue(v: unknown): unknown {
     return fields ? unwrapProtoValueFields(fields) : {}
   }
   return v
-}
-
-function extractSkillDescription(content: string): string {
-  // SKILL.md 格式: YAML frontmatter (--- ... ---) + markdown body
-  // 从 frontmatter 中提取 description 字段
-  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
-  if (!fmMatch) return content.slice(0, 120)
-  const fm = fmMatch[1]
-  const descMatch = fm.match(/^description:\s*(.+)$/m)
-  return descMatch ? descMatch[1].trim() : content.slice(0, 120)
 }

@@ -18,7 +18,9 @@ import { buildSummaryUserMessage, SUMMARY_SYSTEM_PROMPT } from './summaryPrompt'
 import { finalizeTaskResult, launchTaskTool, runToolCall, type TaskLaunchContext } from './toolRuntime'
 import { awaitExecResultAndClose, waitForPromiseWithHeartbeat } from './wait'
 import { restoreBlobMessageToLLMMessage } from './transcript'
-import { ActiveTurnTracker, createCurrentTurnUserMessageBlob } from './turnTracker'
+import { ActiveTurnTracker, createCurrentTurnUserMessageBlob, readTurnBaseline } from './turnTracker'
+import { contextualizeDynamicMetaTools, partitionCursorBuiltinTools, shouldEnableBuiltinDynamicProfile } from './dynamicTools'
+import { contextualizeSubagentTools } from './subagentCatalog'
 import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, getAutoCompactThreshold, shouldTriggerCompaction } from './usage'
 import { isAgentRunAbortedError } from './wait'
 import { makeProviderError, makeToolError } from '../errors'
@@ -134,19 +136,29 @@ export function buildContextBreakdown(params: {
   tracker.addText('tools', joinSections(toolsText, toolSchemaText(builtinToolSchemas)))
 
   const rulesText = extractXmlSection(params.preambleUserContent, 'rules')
-  const availableSkillsText = extractXmlSection(params.preambleUserContent, 'available_skills')
-  const attachedSkillsText = extractXmlSection(params.preambleUserContent, 'attached_skills')
+  const manuallyAttachedRulesText = extractXmlSection(params.preambleUserContent, 'cursor_rules_context')
+  const cloudInstructionsText = extractXmlSection(params.preambleUserContent, 'cloud_instructions')
+  const availableSkillsText = extractXmlSection(params.preambleUserContent, 'agent_skills')
+  const attachedSkillsText = extractXmlSection(params.preambleUserContent, 'manually_attached_skills')
   const mcpInstructionsText = extractXmlSection(params.preambleUserContent, 'mcp_instructions')
   const attachedSubagentsText = extractXmlSection(params.preambleUserContent, 'attached_subagents')
 
-  tracker.addText('rules', rulesText)
+  tracker.addText('rules', joinSections(rulesText, manuallyAttachedRulesText, cloudInstructionsText))
   tracker.addText('skills', joinSections(availableSkillsText, attachedSkillsText))
   // dynamic_tools 段 / mcp_instructions 段 / legacy 扁平表里的 MCP schema
   // (dynamic 模式下 discovery 结果的那部分在下面按 tool_result 归入同一分类)
   tracker.addText('mcp', joinSections(dynamicToolsText, mcpFileSystemText, mcpInstructionsText, toolSchemaText(mcpToolSchemas)))
   tracker.addText('subagents', joinSections(subagentDefinitionsText, attachedSubagentsText))
 
-  const knownPreambleSections = [rulesText, availableSkillsText, attachedSkillsText, mcpInstructionsText, attachedSubagentsText].filter(Boolean)
+  const knownPreambleSections = [
+    rulesText,
+    manuallyAttachedRulesText,
+    cloudInstructionsText,
+    availableSkillsText,
+    attachedSkillsText,
+    mcpInstructionsText,
+    attachedSubagentsText,
+  ].filter(Boolean)
   let conversationText = params.preambleUserContent
   for (const section of knownPreambleSections)
     conversationText = conversationText.replace(section, '')
@@ -171,17 +183,23 @@ export function buildContextBreakdown(params: {
   // 留在 conversation 里会让人误以为是对话在膨胀。
   const toolResultTexts: string[] = []
   const mcpDiscoveryTexts: string[] = []
+  const cursorDiscoveryTexts: string[] = []
   for (const message of params.requestMessages) {
     for (const { toolName, text } of extractToolResultTexts(message)) {
       if (!text)
         continue
-      if (toolName === 'GetDynamicTools')
-        mcpDiscoveryTexts.push(text)
+      if (toolName === 'GetDynamicTools') {
+        if (isCursorOnlyDynamicDiscovery(text))
+          cursorDiscoveryTexts.push(text)
+        else
+          mcpDiscoveryTexts.push(text)
+      }
       else
         toolResultTexts.push(text)
     }
   }
 
+  tracker.addText('tools', joinSections(...cursorDiscoveryTexts))
   tracker.addText('mcp', joinSections(...mcpDiscoveryTexts))
   tracker.addText('conversation', joinSections(conversationText, requestConversationText, ...toolResultTexts))
   return tracker.toBreakdownCategories()
@@ -194,6 +212,22 @@ export function buildContextBreakdown(params: {
  *   Anthropic — tool_result 作为 user 消息的 content block
  *   OpenAI/Gemini — role:'tool' 消息,content 直接是字符串
  */
+function isCursorOnlyDynamicDiscovery(text: string): boolean {
+  try {
+    const result = JSON.parse(text) as Record<string, unknown>
+    if (result.namespace === 'cursor')
+      return true
+    const namespaces = Array.isArray(result.namespaces) ? result.namespaces as Array<Record<string, unknown>> : []
+    if (namespaces.length > 0)
+      return namespaces.every(namespace => namespace.namespace === 'cursor')
+    const matches = Array.isArray(result.matches) ? result.matches as Array<Record<string, unknown>> : []
+    return matches.length > 0 && matches.every(match => match.namespace === 'cursor')
+  }
+  catch {
+    return false
+  }
+}
+
 function extractToolResultTexts(message: LLMMessage): Array<{ toolName: string, text: string }> {
   if (typeof message.content === 'string') {
     return message.role === 'tool'
@@ -482,6 +516,7 @@ async function* performInlineAutoSummarize(params: {
   contextTokenLimit: number
   messages: LLMMessage[]
   route: ReturnType<typeof resolveProviderRuntime>
+  readPaths: string[]
 }): AsyncGenerator<AgentServerMessage, {
   newBlobIds: string[]
   newSummaryArchiveIds: string[]
@@ -594,7 +629,7 @@ async function* performInlineAutoSummarize(params: {
       turnBlobIds: parsed.historyTurnBlobIds,
       summaryArchiveIds: artifacts.nextSummaryArchiveIds,
       workspaceUris: workspaceUris(parsed),
-      readPaths: [],
+      readPaths: params.readPaths,
       modelName: route.model,
       gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
     },
@@ -663,6 +698,80 @@ export async function* handleConversationRun(
     effectiveContextTokenLimit: contextTokenLimit,
     source: requestedContextTokenLimit !== undefined ? 'requestedModel.parameters.context' : 'route.contextTokenLimit',
   }, '[AGENT] context token limit resolved')
+
+  const disabledToolsForRun = new Set<string>()
+  if (!parsed.webFetchEnabled)
+    disabledToolsForRun.add('WebFetch')
+  if (!parsed.webSearchEnabled)
+    disabledToolsForRun.add('WebSearch')
+  if (!parsed.readLintsEnabled)
+    disabledToolsForRun.add('ReadLints')
+
+  const previousDynamicToolCount = [...parsed.historyTurnBlobIds]
+    .reverse()
+    .map(turnBlobId => readTurnBaseline(turnBlobId)?.dynamicToolCount)
+    .find(count => count !== undefined)
+  // 官方 dynamicToolProfile 缺省 all-static；显式 capability、meta-MCP 或同一
+  // 会话已经启用过 dynamic profile 时继续 final。后两者覆盖不带 context 的
+  // background-completion/resume 请求，避免工具集在相邻轮间来回抖动。
+  const clientSupportsDynamicProfile = shouldEnableBuiltinDynamicProfile({
+    clientSupportsDynamicTools: parsed.clientSupportsDynamicTools,
+    mcpMetaToolEnabled: parsed.mcpMetaTool?.enabled === true,
+    previousDynamicToolCount,
+    isSubagent: parsed.isSubagent,
+  })
+  const contextualizedBuiltinTools = contextualizeSubagentTools(
+    route.toolCatalog.listBuiltins(),
+    parsed.customSubagents,
+  )
+  const modeFilteredBuiltins = route.listRuntimeTools(
+    [],
+    parsed.mode,
+    parsed.isSubagent,
+    disabledToolsForRun,
+    contextualizedBuiltinTools,
+  )
+  const cursorPartition = partitionCursorBuiltinTools(
+    modeFilteredBuiltins,
+    clientSupportsDynamicProfile,
+  )
+  parsed.cursorDynamicTools = cursorPartition.dynamicTools
+  parsed.dynamicToolCount = cursorPartition.dynamicTools.length
+  const runtimeBuiltinTools = contextualizeDynamicMetaTools(
+    contextualizedBuiltinTools,
+    parsed.cursorDynamicTools,
+  )
+  for (const tool of cursorPartition.dynamicTools)
+    disabledToolsForRun.add(tool.tool)
+
+  const hasMcpDynamicNamespaces = parsed.mcpMetaTool?.enabled === true
+    && parsed.mcpMetaTool.descriptors.length > 0
+  const hasAnyDynamicNamespaces = hasMcpDynamicNamespaces || parsed.cursorDynamicTools.length > 0
+  if (!hasAnyDynamicNamespaces) {
+    disabledToolsForRun.add('GetDynamicTools')
+    disabledToolsForRun.add('CallDynamicTool')
+  }
+
+  // 旧 Cursor++ turn 没写 field 5；已有历史时把 undefined 视作 rollout 前的 0，
+  // 只在首个 dynamic turn 提醒一次，随后 checkpoint 会持久化真实计数。
+  const effectivePreviousDynamicToolCount = previousDynamicToolCount
+    ?? (parsed.historyTurnBlobIds.length > 0 ? 0 : undefined)
+  parsed.dynamicToolTransitionReminder = !parsed.isBackgroundTaskCompletion
+    && parsed.dynamicToolCount > 0
+    && effectivePreviousDynamicToolCount === 0
+
+  logger.info({
+    conversationId: parsed.conversationId,
+    transport: parsed.requestContextTransport,
+    clientSupportsDynamicProfile,
+    profile: parsed.cursorDynamicTools.length > 0 ? 'final' : 'all-static',
+    cursorDynamicToolCount: parsed.cursorDynamicTools.length,
+    cursorDynamicToolNames: parsed.cursorDynamicTools.map(tool => tool.tool),
+    previousDynamicToolCount,
+    effectivePreviousDynamicToolCount,
+    transitionReminder: parsed.dynamicToolTransitionReminder,
+  }, '[DYNAMIC-TOOLS] builtin profile resolved')
+
   const [systemMessage, preambleUserMessage, currentUserMessage] = buildMessages(parsed, route.promptProfile)
   const systemContent = typeof systemMessage.content === 'string' ? systemMessage.content : ''
   const preambleUserContent = typeof preambleUserMessage.content === 'string' ? preambleUserMessage.content : ''
@@ -702,24 +811,20 @@ export async function* handleConversationRun(
   if (session && parsed.env.terminalsFolder)
     session.terminalsFolder = parsed.env.terminalsFolder
 
-  const disabledToolsForRun = new Set<string>()
-  if (!parsed.webFetchEnabled)
-    disabledToolsForRun.add('WebFetch')
-  if (!parsed.webSearchEnabled)
-    disabledToolsForRun.add('WebSearch')
-  if (!parsed.readLintsEnabled)
-    disabledToolsForRun.add('ReadLints')
-  // dynamic namespace 的两个 meta 工具只在 meta-tool 模式下有意义:
-  // legacy 模式下 MCP 工具已逐个进扁平表,此时暴露 GetDynamicTools 只会让
-  // LLM 查到一个空 catalog,白费 token 还可能误导它去"发现"根本不存在的
-  // namespace。官方同样只在 mcpMetaToolOptions.enabled 时下发这两个工具。
-  if (!parsed.mcpMetaTool?.enabled) {
-    disabledToolsForRun.add('GetDynamicTools')
-    disabledToolsForRun.add('CallDynamicTool')
+  const readContext = {
+    cursorRules: parsed.cursorRules,
+    agentSkills: parsed.agentSkills,
+    workspacePaths: parsed.env.workspacePaths ?? [],
+    readPaths: new Set(parsed.readPaths),
   }
 
   // MCP 模式判定 —— 每轮一条,用来回答"这次会话到底走的哪条路"。
   // 没有它,"客户端没开 meta 模式"和"我们把工具弄丢了"在日志上长得一样。
+  //
+  // 内置工具侧同理: profile 一开,那批工具就从 LLM 可见表移进 cursor namespace,
+  // 现象与"工具被弄丢"完全一致。故把分区结果与触发来源一并打出 ——
+  // profileTrigger 三条路径行为不同(capability 来自 3.17 客户端字段、
+  // mcp_meta 跟随 MCP 开关、previous_turn 是跨轮防抖),出问题要先分清是哪条。
   logger.info({
     conversationId: parsed.conversationId,
     mcpMode: parsed.mcpMetaTool?.enabled ? 'dynamic_namespace' : 'legacy_flat',
@@ -729,6 +834,20 @@ export async function* handleConversationRun(
     })) ?? [],
     routingTableSize: parsed.mcpTools.length,
     supportsMcpAuth: parsed.supportsMcpAuth === true,
+    // ── 内置工具 dynamic profile (cursor namespace) ──
+    builtinDynamicProfile: clientSupportsDynamicProfile,
+    profileTrigger: !clientSupportsDynamicProfile
+      ? 'off'
+      : parsed.clientSupportsDynamicTools
+          ? 'capability'
+          : parsed.mcpMetaTool?.enabled
+            ? 'mcp_meta'
+            : 'previous_turn',
+    // staticToolCount 是模型直接可见的内置工具数;骤降说明分区把不该动的工具
+    // (Shell / Read / Edit 等)划进了 dynamic,而那类故障没有其它痕迹。
+    staticToolCount: cursorPartition.staticTools.length,
+    dynamicToolCount: parsed.dynamicToolCount,
+    cursorDynamicTools: parsed.cursorDynamicTools.map(t => t.tool),
   }, '[DYNAMIC-TOOLS] MCP mode resolved')
 
   let breakdownCategories: BreakdownCategory[] | undefined
@@ -799,6 +918,7 @@ export async function* handleConversationRun(
     if (turnBlobIds.length > 0) {
       const resumed = ActiveTurnTracker.fromTurnBlobId(turnBlobIds[turnBlobIds.length - 1]!)
       if (resumed) {
+        resumed.setDynamicToolCount(parsed.dynamicToolCount)
         activeTurn = resumed
         turnBlobIds = turnBlobIds.slice(0, -1)
       }
@@ -812,7 +932,7 @@ export async function* handleConversationRun(
       parsed,
       fallbackMessageId: syntheticUserMessageId,
     })
-    activeTurn = new ActiveTurnTracker(blob.blobId, [], messageId)
+    activeTurn = new ActiveTurnTracker(blob.blobId, [], messageId, parsed.dynamicToolCount)
     yield cacheAndBuildKvBlob(++blobCounter, blob)
   }
 
@@ -869,7 +989,10 @@ export async function* handleConversationRun(
         thinking: parsed.clientThinking,
         level: parsed.clientThinkingLevel,
         budget: parsed.clientThinkingBudget,
-      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast, disabledToolsForRun.size > 0 ? disabledToolsForRun : undefined, contextTokenLimit)
+      }, parsed.conversationId, parsed.isSubagent, parsed.clientFast,
+      disabledToolsForRun.size > 0 ? disabledToolsForRun : undefined,
+      contextTokenLimit,
+      runtimeBuiltinTools)
 
       if (!breakdownCategories) {
         breakdownCategories = buildContextBreakdown({
@@ -1109,10 +1232,12 @@ export async function* handleConversationRun(
           allocateExecMessageId: () => ++blobCounter,
           allocateInteractionId: () => interactionIdCounter++,
           imageCollector: roundImageBlocks,
+          readContext,
           // GetDynamicTools 需要据此决定取哪些 server、是否补 mcp_auth
           mcpMetaTool: parsed.mcpMetaTool,
           supportsMcpAuth: parsed.supportsMcpAuth,
-          projectDir: parsed.env.projectFolder,
+          cursorDynamicTools: parsed.cursorDynamicTools,
+          projectDir: parsed.env.projectFolder ?? parsed.env.workspacePaths?.[0],
         })
         for await (const frame of toolFrames) {
           const completedToolCall = extractCompletedToolCall(frame)
@@ -1205,7 +1330,7 @@ export async function* handleConversationRun(
         usageTotals,
         workspaceUris: workspaceUris(parsed),
         modelName: route.model,
-        readPaths: [],
+        readPaths: [...readContext.readPaths],
         gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
         breakdownCategories,
       })
@@ -1232,6 +1357,7 @@ export async function* handleConversationRun(
           contextTokenLimit,
           messages,
           route,
+          readPaths: [...readContext.readPaths],
         })
 
         if (compactionResult) {
@@ -1310,7 +1436,7 @@ export async function* handleConversationRun(
     usageTotals,
     workspaceUris: workspaceUris(parsed),
     modelName: route.model,
-    readPaths: [],
+    readPaths: [...readContext.readPaths],
     gitRepos: parsed.gitRepos?.map(r => ({ path: r.path, branchName: r.branchName })),
     breakdownCategories,
   })

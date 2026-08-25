@@ -7,7 +7,16 @@ import { clearPersistedConversationCheckpoint, getPersistedConversationCheckpoin
 import { warmupBlobsAsync } from './blobStore';
 import { logger } from '../../logger';
 import { isAgentRunAbortedError } from './wait';
-import { applyMcpsPart, fetchMcpsPart } from './requestContextParts';
+import {
+    applyMcpsPart,
+    applyRulesPart,
+    applySkillsPart,
+    applySubagentsPart,
+    fetchMcpsPart,
+    fetchRulesPart,
+    fetchSkillsPart,
+    fetchSubagentsPart,
+} from './requestContextParts';
 
 export async function* handleRunRequest(
     msg: Record<string, unknown>,
@@ -63,18 +72,44 @@ export async function* handleRunRequest(
             resolveExtraContextBlobs(parsed);
         }
 
-        // Cursor 3.13+ ref_only 传输模式: MCP tools 与 mcpMetaToolOptions 位于 mcps blob。
-        // 即使顶层偶尔仍带少量白名单工具,只要 meta 开关缺失也必须取 blob,否则
-        // 会把 dynamic namespace 模式误判成 legacy_flat。
-        if (parsed.mcpsBlobId && (parsed.mcpTools.length === 0 || !parsed.mcpMetaTool?.enabled)) {
+        // Cursor 3.13+ ref_only: 四类稳定上下文分别位于客户端 transient blob。
+        // 严格串行取回可兼容旧客户端不回 getBlobResult.id 的行为；dual 模式在
+        // parseRunRequest 中不暴露这些引用，因此不会重复 fetch。
+        if (parsed.rulesBlobId) {
+            const rulesPart = yield* fetchRulesPart({
+                session,
+                blobId: parsed.rulesBlobId,
+                allocateBlobId: () => nextBlobRequestId++,
+            });
+            if (rulesPart)
+                applyRulesPart(parsed, rulesPart);
+        }
+        if (parsed.skillsBlobId) {
+            const skillsPart = yield* fetchSkillsPart({
+                session,
+                blobId: parsed.skillsBlobId,
+                allocateBlobId: () => nextBlobRequestId++,
+            });
+            if (skillsPart)
+                applySkillsPart(parsed, skillsPart);
+        }
+        if (parsed.subagentsBlobId) {
+            const subagentsPart = yield* fetchSubagentsPart({
+                session,
+                blobId: parsed.subagentsBlobId,
+                allocateBlobId: () => nextBlobRequestId++,
+            });
+            if (subagentsPart)
+                applySubagentsPart(parsed, subagentsPart);
+        }
+        if (parsed.mcpsBlobId) {
             const mcpsPart = yield* fetchMcpsPart({
                 session,
                 blobId: parsed.mcpsBlobId,
                 allocateBlobId: () => nextBlobRequestId++,
             });
-            if (mcpsPart) {
+            if (mcpsPart)
                 applyMcpsPart(parsed, mcpsPart);
-            }
         }
 
         if (parsed.isSummarize) {
