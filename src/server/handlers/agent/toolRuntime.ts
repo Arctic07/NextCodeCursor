@@ -5,7 +5,7 @@ import type { LLMContentBlock, LLMMessage } from '../llm/types';
 import { renderDynamicToolsResult, toDynamicNamespace, type DynamicToolsQuery } from './dynamicTools';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
-import { fetchMcpState } from './mcpState';
+import { fetchMcpState, mergeMcpStateIntoRoutingTable, type McpRoutingEntry } from './mcpState';
 import { finalizeInteractionTool } from './interactionRuntime';
 import { execMessage, toolCallCompleted, toolCallStarted } from './stream';
 import { buildToolArgs } from './toolBuilders';
@@ -385,6 +385,20 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             };
         }
         else {
+            // 权威工具表落进路由表 —— 服务端此刻已确知每个 serverIdentifier +
+            // toolName,后续调用无须再从模型给的名字里反推。见 mergeMcpStateIntoRoutingTable。
+            const added = mergeMcpStateIntoRoutingTable(
+                params.availableMcpTools as McpRoutingEntry[],
+                servers,
+            );
+            if (added > 0) {
+                logger.info({
+                    callId: tc.callId,
+                    added,
+                    routingTableSize: params.availableMcpTools.length,
+                }, '[DYNAMIC-TOOLS] routing table populated from discovery');
+            }
+
             const namespaces = servers.map(s => toDynamicNamespace(s, params.supportsMcpAuth === true));
             const rendered = renderDynamicToolsResult(query, namespaces);
             const content = JSON.stringify(rendered);

@@ -117,28 +117,70 @@ export interface ToolCallInfo {
  *   askQuestionToolCall, taskToolCall, mcpToolCall, updateTodosToolCall
  */
 /**
- * 解析 MCP 生态通用的扁平工具名 `mcp__<server>__<tool>`。
+ * 拆解 Claude Code 的扁平 MCP 工具名 `mcp__<server>__<tool>`。
  *
- * 这不是 Cursor 的命名约定,而是 Claude Code / MCP 社区的惯例。LLM 在拿不到
- * namespace 清单时会回退到训练里见过的这套写法 —— 实测
- * (1-ClaudeCodeRev.log 2026-08-25) 模型连续发出
- * mcp__user-ida-pro-mcp__instance_list 这样的调用。
+ * 切分规则照抄客户端 (workbench.desktop.main.js 的 hook matcher 转换 lQg):
  *
- * 这类名字在工具表里找不到,若原样当作 cursorToolType 发给客户端,会触发
- * "[STREAM] unknown tool type — no proto Schema" 并以裸对象下发,客户端无从处理。
- * 识别出来路由成 mcpToolCall 至少能让客户端给出结构化的 tool-not-found,
- * 而不是收到一个非法的 toolCall case。
+ *   if (o.startsWith("mcp__")) {
+ *     const c = o.split("__");
+ *     if (c.length >= 3) { const l = c.slice(2).join("__"); push(`MCP:${l}`) }
+ *   }
  *
- * server 名不含 `__`,故按首个 `__` 切分。
+ * 由此确定三点:
+ *   - 前缀 `mcp__` **大小写敏感** (客户端用 startsWith,非正则)
+ *   - server 是第 2 段,不含 `__`
+ *   - toolName 是第 3 段起,**可以含 `__`** (slice(2).join("__"))
+ *
+ * 需要说明的是,客户端这段代码只用于把 Claude Code 的 hook 配置翻译成 Cursor
+ * 格式 —— 它旁边就是 Bash→Shell / Read→Read 这张 Claude Code 工具名映射表。
+ * 客户端本身**从不用这个命名收发工具调用**,所以这层归一纯属服务端职责:
+ * 模型(Claude 系)按其训练惯例发出该形式,我们负责翻译成 McpArgs 范式。
+ *
+ * 实测样本 (1-ClaudeCodeRev.log 2026-08-25) 里 server 段两种形态都出现过:
+ *   mcp__user-ida-pro-mcp__instance_list   ← serverIdentifier
+ *   mcp__ida-pro-mcp__instance_list        ← 用户在 mcp.json 里写的名字
+ *
+ * 后者其实更贴近用户认知 —— `user-` 并非名字的一部分,而是 Cursor 内部按配置
+ * 作用域加的前缀 (workbench 的 mcp-config-service.ts):
+ *
+ *   computeIdentifier(e)       → `${prefix}${e.name}` (有 extensionId 时再插一段)
+ *   computeIdentifierPrefix(p) → p ? `project-${p}-` : "user-"
+ *
+ * 即 serverIdentifier = 作用域前缀 + 用户写的 name,项目级配置的前缀还是
+ * `project-{projectPath}-`。用户和模型认的都是 name,所以 server 段两种形态
+ * 都得认 —— 且不能靠"剥掉 user- 前缀"来归一,前缀形态不止一种。
  */
 export function parseFlatMcpToolName(name: string): { server: string; toolName: string } | null {
     if (!name.startsWith('mcp__')) return null;
-    const rest = name.slice(5);
-    const sep = rest.indexOf('__');
-    if (sep <= 0) return null;
-    const server = rest.slice(0, sep);
-    const toolName = rest.slice(sep + 2);
+    const parts = name.split('__');
+    if (parts.length < 3) return null;
+    const server = parts[1];
+    const toolName = parts.slice(2).join('__');
     return server && toolName ? { server, toolName } : null;
+}
+
+/**
+ * 用路由表把扁平名解析成权威条目。
+ *
+ * server/tool 的权威来源是路由表 —— 客户端经 requestContext 下发,或 discovery
+ * 时经 mcpStateExecArgs 取回,不是模型给的这串字符。
+ *
+ * 匹配以 toolName 为主、server 为辅,对齐客户端 MCPService.callTool 的语义:
+ * 它按 toolName 查找,serverIdentifier 只用来限定范围
+ * (`for (const g in tools) { if (s && g !== s) continue; ... }`)。
+ * 因此 server 段写成 providerIdentifier 时仍能落到正确条目上。
+ */
+function resolveFlatMcpTool(
+    parsed: { server: string; toolName: string },
+    availableMcpTools: AvailableMcpTool[],
+): AvailableMcpTool | undefined {
+    const sameTool = availableMcpTools.filter(t => t.toolName === parsed.toolName);
+    if (sameTool.length === 0) return undefined;
+    const byServer = sameTool.find(t =>
+        t.serverIdentifier === parsed.server || t.providerIdentifier === parsed.server);
+    if (byServer) return byServer;
+    // server 段对不上但工具名唯一 —— 按客户端"以 toolName 为准"的语义接受
+    return sameTool.length === 1 ? sameTool[0] : undefined;
 }
 
 export function mapToolName(llmToolName: string): string {
@@ -245,28 +287,32 @@ export function resolveToolCall(
         };
     }
 
-    // LLM 幻觉出的扁平 MCP 名 `mcp__<server>__<tool>` —— 见 parseFlatMcpToolName。
-    // 放在按名精确匹配之后、通用回退之前: 真有同名工具注册时仍走正常路径。
+    // Claude Code 扁平命名 `mcp__<server>__<tool>` → Cursor McpArgs 范式。
+    // 放在按名精确匹配之后: 真有工具就注册成这个名字时仍走 descriptor 路径。
     const flat = availableMcpTools.some(t => t.name === llmToolName)
         ? null
         : parseFlatMcpToolName(llmToolName);
     if (flat) {
-        const matched = availableMcpTools.find(t =>
-            t.toolName === flat.toolName
-            && (t.serverIdentifier === flat.server || t.providerIdentifier === flat.server));
-        logger.warn({
+        const matched = resolveFlatMcpTool(flat, availableMcpTools);
+        // 命中路由表 = 正常的命名归一;未命中说明 discovery 还没跑过或工具不存在,
+        // 此时按解析值照发 —— 让客户端给出结构化 tool-not-found,
+        // 总好过把它无法解析的 toolCall case 丢过去。
+        logger[matched ? 'debug' : 'warn']({
             llmToolName,
-            parsedServer: flat.server,
-            parsedTool: flat.toolName,
-            routed: matched ? matched.name : null,
-        }, '[DYNAMIC-TOOLS] flat mcp__ tool name from model — routing to mcpToolCall');
+            server: flat.server,
+            toolName: flat.toolName,
+            routed: matched?.name ?? null,
+            routingTableSize: matched ? undefined : availableMcpTools.length,
+        }, matched
+            ? '[DYNAMIC-TOOLS] flat mcp__ name resolved via routing table'
+            : '[DYNAMIC-TOOLS] flat mcp__ name not in routing table — forwarding parsed values');
         return {
             cursorToolType: 'mcpToolCall',
             sanitizedInput: {
                 name: matched?.name ?? llmToolName,
                 args: sanitizedInput,
                 providerIdentifier: matched?.providerIdentifier ?? flat.server,
-                toolName: flat.toolName,
+                toolName: matched?.toolName ?? flat.toolName,
                 serverIdentifier: matched?.serverIdentifier ?? flat.server,
             },
         };

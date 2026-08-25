@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { buildToolArgs } from '../handlers/agent/toolBuilders'
 import { mapToolName, resolveToolCall } from '../handlers/agent/tools'
 import { getProviderToolCatalog } from '../handlers/llm/toolCatalog'
 
@@ -101,10 +102,12 @@ it('exposes both dynamic-tool metas in every provider prompt vocabulary', () => 
   }
 })
 
-describe('模型幻觉出的扁平 MCP 工具名', () => {
-  it('mcp__<server>__<tool> 路由到 mcpToolCall 而非原样透传', () => {
-    // 原样透传会让客户端收到非法的 toolCall case:
-    // "[STREAM] unknown tool type — no proto Schema, falling back to bare object"
+describe('mCP 生态扁平命名 → Cursor McpArgs 范式', () => {
+  // mcp__<server>__<tool> 是 MCP 社区(Claude Code / 各家 SDK)通用写法,
+  // 与 Cursor 自用的 `${serverIdentifier}-${toolName}` 并存。服务端负责归一,
+  // 不做转换则名字会被当成 cursorToolType 原样下发,客户端收到非法 toolCall case
+  // ("[STREAM] unknown tool type — no proto Schema", 实测 2026-08-25)。
+  it('mcp__<server>__<tool> 归一到 mcpToolCall', () => {
     const { cursorToolType, sanitizedInput } = resolveToolCall(
       'mcp__user-ida-pro-mcp__decompile',
       { address: '0x401000' },
@@ -114,6 +117,52 @@ describe('模型幻觉出的扁平 MCP 工具名', () => {
     expect(sanitizedInput.toolName).toBe('decompile')
     expect(sanitizedInput.serverIdentifier).toBe('user-ida-pro-mcp')
     expect(sanitizedInput.args).toEqual({ address: '0x401000' })
+  })
+
+  it('前缀大小写敏感 — 对齐客户端 startsWith("mcp__")', () => {
+    // 客户端 hook matcher 转换用的是 startsWith 而非正则,大写不认。
+    // 实测样本里 MCP__ 只出现在模型的 search pattern 中,从未出现在 tool_use 名字里。
+    expect(mapToolName('MCP__user-ida-pro-mcp__decompile')).toBe('MCP__user-ida-pro-mcp__decompile')
+  })
+
+  it('toolName 可含 __ — 对齐 split("__").slice(2).join("__")', () => {
+    const { sanitizedInput } = resolveToolCall('mcp__srv__we__ird', {}, [])
+    expect(sanitizedInput.serverIdentifier).toBe('srv')
+    expect(sanitizedInput.toolName).toBe('we__ird')
+  })
+
+  it('server 段用用户写的 name 也能落到正确条目 (实测出现过)', () => {
+    // serverIdentifier = 作用域前缀 + name (mcp-config-service.ts computeIdentifier):
+    //   用户级 → user-{name};项目级 → project-{projectPath}-{name}
+    // 用户和模型认的都是 name,故两种形态都要认
+    const { sanitizedInput } = resolveToolCall('mcp__ida-pro-mcp__decompile', {}, AVAILABLE)
+    expect(sanitizedInput.serverIdentifier).toBe('user-ida-pro-mcp')
+    expect(sanitizedInput.toolName).toBe('decompile')
+  })
+
+  it('项目级前缀 project-{path}- 同样适用', () => {
+    const projectScoped = [{
+      name: 'project-Users-me-proj-ida-pro-mcp-decompile',
+      providerIdentifier: 'ida-pro-mcp',
+      toolName: 'decompile',
+      serverIdentifier: 'project-Users-me-proj-ida-pro-mcp',
+    }]
+    // 模型用 name 指代
+    expect(resolveToolCall('mcp__ida-pro-mcp__decompile', {}, projectScoped)
+      .sanitizedInput.serverIdentifier).toBe('project-Users-me-proj-ida-pro-mcp')
+    // 也可能用完整 identifier
+    expect(resolveToolCall('mcp__project-Users-me-proj-ida-pro-mcp__decompile', {}, projectScoped)
+      .sanitizedInput.serverIdentifier).toBe('project-Users-me-proj-ida-pro-mcp')
+  })
+
+  it('同名工具存在于多个 server 且 server 段对不上时,不瞎猜', () => {
+    const twoServers = [
+      { name: 'a-run', providerIdentifier: 'alpha', toolName: 'run', serverIdentifier: 'user-alpha' },
+      { name: 'b-run', providerIdentifier: 'beta', toolName: 'run', serverIdentifier: 'user-beta' },
+    ]
+    const { sanitizedInput } = resolveToolCall('mcp__ghost__run', {}, twoServers)
+    // 歧义时按解析值原样透传,交客户端裁决,不随便选一个
+    expect(sanitizedInput.serverIdentifier).toBe('ghost')
   })
 
   it('未注册的 server/tool 仍路由到 mcpToolCall,由客户端报 tool-not-found', () => {
@@ -135,6 +184,21 @@ describe('模型幻觉出的扁平 MCP 工具名', () => {
     expect(mapToolName('Shell')).toBe('shellToolCall')
     expect(mapToolName('mcp__onlyserver')).toBe('mcp__onlyserver')
     expect(mapToolName('mcp____x')).toBe('mcp____x')
+  })
+
+  it('exec args 链路: 扁平名也能产出完整 McpArgs', () => {
+    // buildToolArgs 按 alias 查不到 mcp__... ,靠 sanitizedInput.providerIdentifier
+    // 兜底路由到 mcpToolCall 的 builder —— 这条链断了 args 会是空的
+    const { sanitizedInput } = resolveToolCall(
+      'mcp__user-ida-pro-mcp__decompile',
+      { address: '0x401000' },
+      AVAILABLE,
+    )
+    const args = buildToolArgs('mcp__user-ida-pro-mcp__decompile', sanitizedInput, 'call-1')
+    expect(args.toolName).toBe('decompile')
+    expect(args.serverIdentifier).toBe('user-ida-pro-mcp')
+    expect(args.toolCallId).toBe('call-1')
+    expect(args.args).toBeDefined()
   })
 
   it('真实注册的同名工具优先走精确匹配', () => {
