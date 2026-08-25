@@ -839,10 +839,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     mcpServers,
     mcpBasePath: mcpBasePath ? `${mcpBasePath}/mcps` : '',
     // ref_only 模式下 MCP 工具表不在本次请求里,把 blobId 透出去供运行时取回。
-    mcpsBlobId: (requestContextParts?.mcpsBlobId instanceof Uint8Array
-      && (requestContextParts.mcpsBlobId as Uint8Array).length > 0)
-      ? requestContextParts.mcpsBlobId as Uint8Array
-      : undefined,
+    mcpsBlobId: toBlobIdBytes(requestContextParts?.mcpsBlobId),
     supportsMcpAuth: requestContext?.supportsMcpAuth === true,
     mcpMetaTool: metaToolEnabled
       ? {
@@ -1127,4 +1124,32 @@ function extractSkillDescription(content: string): string {
   const fm = fmMatch[1]
   const descMatch = fm.match(/^description:\s*(.+)$/m)
   return descMatch ? descMatch[1].trim() : content.slice(0, 120)
+}
+
+/**
+ * 归一 proto bytes 形态的 blobId。
+ *
+ * proto 里 mcps_blob_id 是 bytes,但到达服务端时未必是 Uint8Array ——
+ * 走 JSON 编码的路径 (RunSSE / BidiAppend 降级) 会把 bytes 变成 base64 字符串。
+ * 实测 (1-ClaudeCodeRev.log 2026-08-25): ref_only 下 mcpsByteLength 读得到
+ * 9532,同一对象上的 mcpsBlobId 却过不了 instanceof 判断,于是 blob 从未被取回,
+ * mcpMetaToolOptions 随之丢失 —— MCP 整体退化成 legacy_flat + 空工具表。
+ *
+ * 本文件里 extraContext 的 blobId 早已按两种形态处理 (见 dataOrBlobId 段),
+ * 这里对齐同一套约定。差别在于返回类型: kvGetBlob 需要 bytes,故转回 Uint8Array
+ * 而非 utf-8 字符串。
+ */
+function toBlobIdBytes(raw: unknown): Uint8Array | undefined {
+  if (raw instanceof Uint8Array)
+    return raw.length > 0 ? raw : undefined
+  if (typeof raw === 'string' && raw.length > 0) {
+    try {
+      const buf = Buffer.from(raw, 'base64')
+      return buf.length > 0 ? new Uint8Array(buf) : undefined
+    }
+    catch {
+      return undefined
+    }
+  }
+  return undefined
 }

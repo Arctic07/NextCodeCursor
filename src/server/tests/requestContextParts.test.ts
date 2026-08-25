@@ -143,3 +143,77 @@ it('reads requestContextParts from the ConversationAction level, not from userMe
   expect(parsed.mcpsBlobId).toEqual(new Uint8Array([7, 7]))
   expect(parsed.webSearchEnabled).toBe(true)
 })
+
+it('accepts a base64-encoded mcpsBlobId (JSON transport turns bytes into strings)', () => {
+  // proto 里 mcps_blob_id 是 bytes,但走 JSON 编码的路径 (RunSSE / BidiAppend 降级)
+  // 会把它变成 base64 字符串。只认 Uint8Array 会让 blob 永不被取回 ——
+  // 实测 1-ClaudeCodeRev.log 2026-08-25: mcpsByteLength 读得到 9532,
+  // 同一对象上的 mcpsBlobId 却过不了 instanceof,MCP 整体退化为 legacy_flat。
+  const raw = new Uint8Array([1, 2, 3, 4])
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'c-b64',
+      modelDetails: { modelId: 'm' },
+      action: {
+        userMessageAction: { userMessage: { text: 'q' } },
+        requestContextParts: {
+          mcpsBlobId: Buffer.from(raw).toString('base64'),
+          mcpsByteLength: 9532,
+          dynamicContext: {},
+        },
+      },
+    },
+  })
+  expect(parsed.mcpsBlobId).toEqual(raw)
+})
+
+it('restores mcpMetaTool from the mcps blob, not just the tool table', () => {
+  // ref_only 下 mcp_meta_tool_options 只存在于 mcps blob (RequestContextMcpsPart field 4),
+  // 不在 dynamic_context。漏掉它会让 mcpMode 判成 legacy_flat、
+  // <dynamic_tools> 段不注入,LLM 拿不到 namespace 清单只能猜工具名。
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'c-meta',
+      modelDetails: { modelId: 'm' },
+      action: {
+        userMessageAction: { userMessage: { text: 'q' } },
+        requestContextParts: { mcpsBlobId: new Uint8Array([1]), dynamicContext: {} },
+      },
+    },
+  })
+  expect(parsed.mcpMetaTool).toBeUndefined()
+
+  applyMcpsPart(parsed, {
+    tools: [],
+    mcpInstructions: [],
+    mcpMetaToolOptions: {
+      enabled: true,
+      mcpDescriptors: [{
+        serverName: 'ida-pro-mcp',
+        serverIdentifier: 'user-ida-pro-mcp',
+        tools: [{ toolName: 'instance_list' }, { toolName: 'decompile' }, { toolName: '' }],
+      }],
+    },
+  })
+
+  expect(parsed.mcpMetaTool?.enabled).toBe(true)
+  expect(parsed.mcpMetaTool?.descriptors).toHaveLength(1)
+  expect(parsed.mcpMetaTool?.descriptors[0].serverIdentifier).toBe('user-ida-pro-mcp')
+  // 空 toolName 被剔除,与 parseRunRequest 同构
+  expect(parsed.mcpMetaTool?.descriptors[0].tools.map(t => t.toolName)).toEqual(['instance_list', 'decompile'])
+})
+
+it('leaves mcpMetaTool unset when the blob says meta-tool is disabled', () => {
+  const parsed = parseRunRequest({
+    runRequest: {
+      conversationId: 'c-meta-off',
+      modelDetails: { modelId: 'm' },
+      action: {
+        userMessageAction: { userMessage: { text: 'q' } },
+        requestContextParts: { mcpsBlobId: new Uint8Array([1]), dynamicContext: {} },
+      },
+    },
+  })
+  applyMcpsPart(parsed, { tools: [], mcpInstructions: [], mcpMetaToolOptions: { enabled: false } })
+  expect(parsed.mcpMetaTool).toBeUndefined()
+})

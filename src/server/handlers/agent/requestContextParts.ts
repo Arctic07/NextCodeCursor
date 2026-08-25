@@ -205,10 +205,43 @@ export function applyMcpsPart(parsed: ParsedRunRequest, part: FetchedMcpsPart): 
     }
   })
 
+  // mcpMetaTool — 来自 mcp_meta_tool_options (RequestContextMcpsPart field 4)
+  //
+  // ref_only 下这个开关**只存在于 mcps blob 里**,不在 dynamic_context。
+  // 早前这里漏了它: 工具表恢复了,mcpMetaTool 却仍是 undefined ——
+  // 于是 mcpMode 判定成 legacy_flat、<dynamic_tools> 段不注入,
+  // LLM 拿不到 namespace 清单只能猜工具名 (实测 1-ClaudeCodeRev.log 2026-08-25:
+  // 连续 15 次 search 猜 mcp__user-ida-pro-mcp__instance_list 之类的名字,
+  // 一次 CallDynamicTool 都没发出)。
+  const metaOpts = part.mcpMetaToolOptions
+  if (metaOpts?.enabled === true) {
+    const descriptors = (metaOpts.mcpDescriptors as Array<Record<string, unknown>> | undefined) ?? []
+    parsed.mcpMetaTool = {
+      enabled: true,
+      descriptors: descriptors.map(d => ({
+        serverName: (d.serverName as string) ?? '',
+        serverIdentifier: (d.serverIdentifier as string) ?? '',
+        ...(typeof d.serverUseInstructions === 'string' ? { serverUseInstructions: d.serverUseInstructions } : {}),
+        tools: ((d.tools as Array<Record<string, unknown>> | undefined) ?? [])
+          .map(t => ({
+            toolName: (t.toolName as string) ?? '',
+            ...(typeof t.description === 'string' && t.description ? { description: t.description } : {}),
+            ...(typeof t.annotationsJson === 'string' ? { annotationsJson: t.annotationsJson } : {}),
+          }))
+          .filter(t => t.toolName.length > 0),
+      })),
+    }
+  }
+
   logger.info({
     mcpTools: parsed.mcpTools.length,
     mcpServers: parsed.mcpServers.length,
     mcpInstructions: parsed.mcpInstructions.length,
+    mcpMetaToolEnabled: parsed.mcpMetaTool?.enabled === true,
+    namespaces: parsed.mcpMetaTool?.descriptors.map(d => ({
+      name: d.serverIdentifier,
+      tools: d.tools.length,
+    })) ?? [],
   }, '[PROTOCOL] MCP context restored from mcps blob')
 }
 
