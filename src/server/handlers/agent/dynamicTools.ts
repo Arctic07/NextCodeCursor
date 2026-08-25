@@ -1,8 +1,8 @@
 /**
  * Dynamic Tools — GetDynamicTools 结果渲染
  *
- * 1:1 复刻官方 Cursor 3.15.6 的返回结构。所有形状与常量都来自实测套取
- * (analysis/mcp-dynamic-tools.md §4.5),非推断:
+ * 基础形状来自 Cursor 3.15.6 实测,并跟进 3.17.8 的状态/error 与大结果
+ * outputFilePath 行为:
  *
  *   {"namespace":"x","toolName":"y"} → {mode:"single_tool", namespace, namespaceStatus, tool}
  *   {"namespace":"x"}                → {mode:"namespace",   namespace, namespaceStatus, tools[]}
@@ -13,22 +13,28 @@
  *   - inputSchema 只在 single_tool / namespace 出现;search / catalog 只给
  *     tool + description。对应 prompt 里 "namespace and single-tool lookups
  *     always return the complete description"。
- *   - search / catalog 的 description 超过 185 字符时截断为
- *     slice(0,185) + "... [truncated]",总长恰好 200。实测未截断样本最长 179。
+ *   - search / catalog 的 description 超过 200 字符时截断为
+ *     slice(0,185) + "... [truncated]",总长恰好 200。
  */
+import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { McpStateServerInfo, McpStateToolDefinition } from './mcpState';
 
 /** 截断后缀 — 实测原文,长度 15 */
 const TRUNCATION_SUFFIX = '... [truncated]';
-/** 截断保留的正文长度 — 实测 185,加后缀恰好 200 */
-const TRUNCATION_BODY_LIMIT = 185;
+/** 3.17.8: 超过 200 字符才截断;保留 185 + 15 字符后缀。 */
+const DESCRIPTION_LIMIT = 200;
+const TRUNCATION_BODY_LIMIT = DESCRIPTION_LIMIT - TRUNCATION_SUFFIX.length;
+/** 3.17.8 agent-exec 的 GetDynamicTools 大结果溢写阈值。 */
+export const DYNAMIC_TOOLS_SPILL_THRESHOLD_BYTES = 12_000;
 
 /**
  * search / catalog 模式的 description 裁剪。
  * 未超限时原样返回(不追加后缀)。
  */
 export function shortenDescription(description: string): string {
-    if (description.length <= TRUNCATION_BODY_LIMIT)
+    if (description.length <= DESCRIPTION_LIMIT)
         return description;
     return description.slice(0, TRUNCATION_BODY_LIMIT) + TRUNCATION_SUFFIX;
 }
@@ -53,15 +59,57 @@ export interface DynamicToolsQuery {
     pattern?: string;
 }
 
+/** 同时接受 3.17 dynamic profile 与旧 meta-MCP profile 的参数名。 */
+export function parseDynamicToolsQuery(input: Record<string, unknown>): DynamicToolsQuery {
+    const namespace = typeof input.namespace === 'string' && input.namespace
+        ? input.namespace
+        : typeof input.server === 'string' && input.server
+            ? input.server
+            : undefined;
+    const toolName = typeof input.toolName === 'string' && input.toolName
+        ? input.toolName
+        : typeof input.tool_name === 'string' && input.tool_name
+            ? input.tool_name
+            : undefined;
+    return {
+        namespace,
+        toolName,
+        pattern: typeof input.pattern === 'string' && input.pattern ? input.pattern : undefined,
+    };
+}
+
+export function validateDynamicToolsQuery(query: DynamicToolsQuery): string | undefined {
+    if (query.toolName && !query.namespace)
+        return 'toolName requires namespace to be set.';
+    if (!query.pattern)
+        return undefined;
+    if (query.pattern.length > 256)
+        return 'pattern cannot exceed 256 characters.';
+    try {
+        new RegExp(query.pattern);
+        return undefined;
+    }
+    catch (error) {
+        return `Invalid regex pattern: ${error instanceof Error ? error.message : String(error)}`;
+    }
+}
+
 /** 一个可被 discovery 的 namespace */
 export interface DynamicNamespace {
     name: string;
     source: 'mcp' | 'cursor';
-    /** MCP namespace 用它 (实测 "ready") */
+    /** MCP namespace 状态;3.17.8 客户端常回 connected,模型侧应看到 ready。 */
     status?: string;
-    /** cursor namespace 用它,与 status 互斥 */
+    /** McpStateServer.error_message (3.17.8 field 8)。 */
+    error?: string;
+    /** namespace 使用说明/描述;MCP 与 cursor namespace 均可携带。 */
     description?: string;
     tools: Array<{ tool: string; description: string; inputSchema: Record<string, unknown> }>;
+}
+
+export function normalizeDynamicNamespaceStatus(status: string | undefined): string {
+    const normalized = status?.trim();
+    return !normalized || normalized === 'connected' ? 'ready' : normalized;
 }
 
 /** 把 mcpState 拉回的 server 转成 namespace;supportsMcpAuth 时补 mcp_auth */
@@ -74,12 +122,18 @@ export function toDynamicNamespace(
         description: t.description,
         inputSchema: t.inputSchema,
     }));
-    if (supportsMcpAuth)
-        tools.push({ ...MCP_AUTH_TOOL, inputSchema: { ...MCP_AUTH_TOOL.inputSchema } });
+    if (supportsMcpAuth && !tools.some(tool => tool.tool === MCP_AUTH_TOOL.tool)) {
+        tools.push({
+            ...MCP_AUTH_TOOL,
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        });
+    }
     return {
         name: server.serverIdentifier,
         source: 'mcp',
-        status: server.status,
+        status: normalizeDynamicNamespaceStatus(server.status),
+        ...(server.errorMessage ? { error: server.errorMessage } : {}),
+        ...(server.instructions ? { description: server.instructions } : {}),
         tools,
     };
 }
@@ -95,13 +149,23 @@ function slimTool(t: DynamicNamespace['tools'][number]) {
 }
 
 /**
- * namespace 元信息 —— MCP 用 namespaceStatus,cursor 用 namespaceDescription,
- * 二者互斥 (实测)。
+ * namespace 元信息 —— MCP 带 namespaceStatus/error,两类 namespace 都可带
+ * namespaceDescription (3.17.8 用 server instructions 生成)。
  */
-function namespaceMeta(ns: DynamicNamespace): Record<string, unknown> {
+function namespaceMeta(
+    ns: DynamicNamespace,
+    descriptionDetail: 'full' | 'short' = 'full',
+): Record<string, unknown> {
+    const description = ns.description
+        ? (descriptionDetail === 'short' ? shortenDescription(ns.description) : ns.description)
+        : undefined;
     return ns.source === 'cursor'
-        ? (ns.description ? { namespaceDescription: ns.description } : {})
-        : { namespaceStatus: ns.status ?? 'ready' };
+        ? (description ? { namespaceDescription: description } : {})
+        : {
+            namespaceStatus: normalizeDynamicNamespaceStatus(ns.status),
+            ...(ns.error ? { namespaceError: ns.error } : {}),
+            ...(description ? { namespaceDescription: description } : {}),
+        };
 }
 
 /**
@@ -126,13 +190,42 @@ export function renderDynamicToolsResult(
             const literal = pattern.toLowerCase();
             regex = { test: (s: string) => s.toLowerCase().includes(literal) } as RegExp;
         }
-        const scope = namespace ? namespaces.filter(n => n.name === namespace) : namespaces;
+        const scope = (namespace ? namespaces.filter(n => n.name === namespace) : namespaces)
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name));
         const matches: Array<Record<string, unknown>> = [];
         for (const ns of scope) {
-            for (const t of ns.tools) {
-                // 官方描述: "searches namespace and tool names"
-                if (regex.test(t.tool) || regex.test(ns.name))
-                    matches.push({ namespace: ns.name, ...slimTool(t) });
+            const namespaceMatches = regex.test(ns.name);
+            const status = normalizeDynamicNamespaceStatus(ns.status);
+            if (namespaceMatches) {
+                // 3.17.8 会先返回一条 namespace 自身的 match,因此没有工具的
+                // needsAuth/error namespace 也能被发现。
+                matches.push({
+                    namespace: ns.name,
+                    ...(ns.description ? { description: shortenDescription(ns.description) } : {}),
+                    ...(ns.source === 'mcp'
+                        ? {
+                            namespaceStatus: status,
+                            ...(ns.error ? { namespaceError: ns.error } : {}),
+                        }
+                        : {}),
+                });
+            }
+            for (const t of [...ns.tools].sort((a, b) => a.tool.localeCompare(b.tool))) {
+                // 正常 ready tool match 不重复附状态;异常 namespace 才携带状态。
+                // 当 namespace 名本身命中时,状态已在上方 namespace-only entry 中。
+                if (regex.test(t.tool) || namespaceMatches) {
+                    matches.push({
+                        namespace: ns.name,
+                        ...slimTool(t),
+                        ...(!namespaceMatches && ns.source === 'mcp' && status !== 'ready'
+                            ? {
+                                namespaceStatus: status,
+                                ...(ns.error ? { namespaceError: ns.error } : {}),
+                            }
+                            : {}),
+                    });
+                }
             }
         }
         return { mode: 'search', pattern, matches };
@@ -164,18 +257,64 @@ export function renderDynamicToolsResult(
         }
 
         // 模式 1: 整个 namespace
-        return { mode: 'namespace', namespace, ...namespaceMeta(ns), tools: ns.tools.map(fullTool) };
+        return {
+            mode: 'namespace',
+            namespace,
+            ...namespaceMeta(ns),
+            tools: [...ns.tools].sort((a, b) => a.tool.localeCompare(b.tool)).map(fullTool),
+        };
     }
 
     // 模式 5: 无参数 → 全量 catalog (精简)
     return {
         mode: 'catalog',
-        namespaces: namespaces.map(ns => ({
-            namespace: ns.name,
-            ...namespaceMeta(ns),
-            tools: ns.tools.map(slimTool),
-        })),
+        namespaces: [...namespaces]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(ns => ({
+                namespace: ns.name,
+                ...namespaceMeta(ns, 'short'),
+                tools: [...ns.tools].sort((a, b) => a.tool.localeCompare(b.tool)).map(slimTool),
+            })),
     };
+}
+
+export interface SerializedDynamicToolsResult {
+    content: string;
+    outputFilePath?: string;
+    payloadBytes: number;
+    wroteToFile: boolean;
+}
+
+/**
+ * 序列化 discovery 结果,并对齐 3.17.8 的大结果溢写行为。
+ *
+ * projectDir 缺失时保持内联;写盘失败由调用方记录并降级为内联结果。
+ */
+export async function serializeDynamicToolsResult(
+    result: Record<string, unknown>,
+    options: { projectDir?: string; spillThresholdBytes?: number } = {},
+): Promise<SerializedDynamicToolsResult> {
+    const payload = JSON.stringify(result, null, 2);
+    const payloadBytes = Buffer.byteLength(payload, 'utf8');
+    const threshold = options.spillThresholdBytes ?? DYNAMIC_TOOLS_SPILL_THRESHOLD_BYTES;
+    const projectDir = options.projectDir?.trim();
+    if (!projectDir || payloadBytes <= threshold) {
+        return { content: payload, payloadBytes, wroteToFile: false };
+    }
+
+    const outputDir = join(projectDir, 'agent-tools');
+    await mkdir(outputDir, { recursive: true, mode: 0o700 });
+    const outputFilePath = join(outputDir, `${randomUUID()}.txt`);
+    await writeFile(outputFilePath, payload, { encoding: 'utf8', mode: 0o600 });
+    const lineCount = payload.split('\n').length;
+    const size = payloadBytes >= 1024
+        ? `${(payloadBytes / 1024).toFixed(1)} KB`
+        : `${payloadBytes} bytes`;
+    const content = JSON.stringify({
+        note: `Large output has been written to: ${outputFilePath} (${size}, ${lineCount} lines)`,
+        filePath: outputFilePath,
+    }, null, 2);
+    return { content, outputFilePath, payloadBytes, wroteToFile: true };
 }
 
 /**
@@ -192,7 +331,9 @@ export function buildDynamicToolsSection(
     supportsMcpAuth: boolean,
 ): string {
     const entries = servers.map((s) => {
-        const tools = supportsMcpAuth ? [...s.toolNames, MCP_AUTH_TOOL.tool] : s.toolNames;
+        const tools = supportsMcpAuth && !s.toolNames.includes(MCP_AUTH_TOOL.tool)
+            ? [...s.toolNames, MCP_AUTH_TOOL.tool]
+            : s.toolNames;
         const attrs = [
             `name="${escapeXmlAttr(s.serverIdentifier)}"`,
             `tools="${escapeXmlAttr(tools.join(', '))}"`,

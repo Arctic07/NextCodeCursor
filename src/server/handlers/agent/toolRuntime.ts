@@ -2,7 +2,13 @@ import type { AgentServerMessage } from '../../gen/agent_v1_pb';
 import { logger } from '../../logger';
 import type { ProviderRoundContext } from '../llm/providerRuntime';
 import type { LLMContentBlock, LLMMessage } from '../llm/types';
-import { renderDynamicToolsResult, toDynamicNamespace, type DynamicToolsQuery } from './dynamicTools';
+import {
+    parseDynamicToolsQuery,
+    renderDynamicToolsResult,
+    serializeDynamicToolsResult,
+    toDynamicNamespace,
+    validateDynamicToolsQuery,
+} from './dynamicTools';
 import { finalizeEditToolCall } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
 import { fetchMcpState, mergeMcpStateIntoRoutingTable, type McpRoutingEntry } from './mcpState';
@@ -70,6 +76,8 @@ export async function* runToolCall(params: {
     /** dynamic namespace 模式下 GetDynamicTools 需要的上下文 */
     mcpMetaTool?: ParsedRunRequest['mcpMetaTool'];
     supportsMcpAuth?: boolean;
+    /** Cursor agent projectDir;大 discovery 结果写入其 agent-tools 子目录。 */
+    projectDir?: string;
 }): AsyncGenerator<AgentServerMessage, void, void> {
     yield* runToolCallInner(params);
 }
@@ -333,24 +341,32 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
     // 取回完整 schema、渲染成 JSON 后直接喂回 LLM。
     //
     // 1:1 复刻官方行为 (analysis/mcp-dynamic-tools.md §4.5):
-    //   - server_identifiers: namespace/single_tool 查询传具体 server;
-    //     search/catalog 传空数组(= 要全部)
+    //   - server_identifiers: 带 namespace 的查询传具体 server;
+    //     跨 namespace search/catalog 传空数组(= 要全部)
     //   - 不做缓存: 官方实测同轮 4 次查询发了 4 次 mcpStateExecArgs
     if (cursorToolType === 'getMcpToolsToolCall') {
-        const query: DynamicToolsQuery = {
-            namespace: typeof sanitizedInput.server === 'string' && sanitizedInput.server
-                ? sanitizedInput.server
-                : undefined,
-            toolName: typeof sanitizedInput.toolName === 'string' && sanitizedInput.toolName
-                ? sanitizedInput.toolName
-                : undefined,
-            pattern: typeof sanitizedInput.pattern === 'string' && sanitizedInput.pattern
-                ? sanitizedInput.pattern
-                : undefined,
-        };
+        const query = parseDynamicToolsQuery(sanitizedInput);
 
-        // 精确查询只要目标 server;搜索/全量目录要全部
-        const scoped = query.namespace && !query.pattern ? [query.namespace] : [];
+        const invalidQuery = validateDynamicToolsQuery(query);
+        if (invalidQuery) {
+            const finalized = finalizeToolCall({
+                roundContext: params.roundContext,
+                messages: params.messages,
+                cursorToolType,
+                toolName: tc.name,
+                callId: tc.callId,
+                startedArgs,
+                rawToolResult: { result: { case: 'error', value: { error: invalidQuery } } },
+                input: sanitizedInput,
+                modelCallId,
+            });
+            yield finalized.frame;
+            return;
+        }
+
+        // 3.17.8: 只要指定 namespace 就做 scoped fetch,包括 namespace+pattern;
+        // 只有跨 namespace search / catalog 才传空数组索取全部。
+        const scoped = query.namespace ? [query.namespace] : [];
         // 查询侧 —— 记下 LLM 到底问了什么。参数全空是合法的 catalog 查询,
         // 不是"参数丢了",所以把判定出的 mode 一并打出来便于对账。
         const queryMode = query.pattern
@@ -385,37 +401,59 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
             };
         }
         else {
-            // 权威工具表落进路由表 —— 服务端此刻已确知每个 serverIdentifier +
-            // toolName,后续调用无须再从模型给的名字里反推。见 mergeMcpStateIntoRoutingTable。
-            const added = mergeMcpStateIntoRoutingTable(
+            const routingMerge = mergeMcpStateIntoRoutingTable(
                 params.availableMcpTools as McpRoutingEntry[],
                 servers,
             );
-            if (added > 0) {
+            if (routingMerge.added > 0 || routingMerge.updated > 0) {
                 logger.info({
                     callId: tc.callId,
-                    added,
+                    ...routingMerge,
                     routingTableSize: params.availableMcpTools.length,
-                }, '[DYNAMIC-TOOLS] routing table populated from discovery');
+                }, '[DYNAMIC-TOOLS] routing table synchronized from discovery');
             }
 
             const namespaces = servers.map(s => toDynamicNamespace(s, params.supportsMcpAuth === true));
             const rendered = renderDynamicToolsResult(query, namespaces);
-            const content = JSON.stringify(rendered);
-            // 结果侧 —— resultMode 应与上面的 queryMode 对得上;
-            // contentBytes 是这次 discovery 往对话历史里塞了多少,
-            // 单个 40 工具的 namespace 查询约 21KB / 6k tokens。
+            let serialized;
+            try {
+                serialized = await serializeDynamicToolsResult(rendered, { projectDir: params.projectDir });
+            }
+            catch (error) {
+                logger.warn({
+                    callId: tc.callId,
+                    projectDir: params.projectDir,
+                    error: error instanceof Error ? error.message : String(error),
+                }, '[DYNAMIC-TOOLS] result spill failed — falling back to inline content');
+                serialized = await serializeDynamicToolsResult(rendered);
+            }
+            // 结果侧 —— payloadBytes 是完整 discovery 数据量;contentBytes 是本轮实际
+            // 进入对话历史的大小。大 namespace 会溢写到 agent-tools 文件以节省 token。
             logger.info({
                 callId: tc.callId,
                 queryMode,
                 resultMode: rendered.mode,
-                namespaces: namespaces.map(n => ({ name: n.name, status: n.status, tools: n.tools.length })),
+                namespaces: namespaces.map(n => ({
+                    name: n.name,
+                    status: n.status,
+                    error: n.error,
+                    tools: n.tools.length,
+                })),
                 matches: Array.isArray(rendered.matches) ? rendered.matches.length : undefined,
-                contentBytes: Buffer.byteLength(content, 'utf8'),
+                payloadBytes: serialized.payloadBytes,
+                contentBytes: Buffer.byteLength(serialized.content, 'utf8'),
+                wroteToFile: serialized.wroteToFile,
+                outputFilePath: serialized.outputFilePath,
                 ...(rendered.error ? { error: rendered.error } : {}),
             }, '[DYNAMIC-TOOLS] GetDynamicTools result');
             rawToolResult = {
-                result: { case: 'success', value: { content } },
+                result: {
+                    case: 'success',
+                    value: {
+                        content: serialized.content,
+                        ...(serialized.outputFilePath ? { outputFilePath: serialized.outputFilePath } : {}),
+                    },
+                },
             };
         }
 

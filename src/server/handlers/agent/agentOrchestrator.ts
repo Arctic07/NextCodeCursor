@@ -63,10 +63,10 @@ export async function* handleRunRequest(
             resolveExtraContextBlobs(parsed);
         }
 
-        // Cursor 3.13+ ref_only 传输模式: requestContext 与顶层 mcp_tools 都不投递,
-        // MCP 工具表只存在于 mcps blob 里。这里补取一次,把工具表还原到 parsed。
-        // 只在"确实拿到了 blobId 且当前工具表为空"时触发,legacy/dual 模式不受影响。
-        if (parsed.mcpsBlobId && parsed.mcpTools.length === 0) {
+        // Cursor 3.13+ ref_only 传输模式: MCP tools 与 mcpMetaToolOptions 位于 mcps blob。
+        // 即使顶层偶尔仍带少量白名单工具,只要 meta 开关缺失也必须取 blob,否则
+        // 会把 dynamic namespace 模式误判成 legacy_flat。
+        if (parsed.mcpsBlobId && (parsed.mcpTools.length === 0 || !parsed.mcpMetaTool?.enabled)) {
             const mcpsPart = yield* fetchMcpsPart({
                 session,
                 blobId: parsed.mcpsBlobId,

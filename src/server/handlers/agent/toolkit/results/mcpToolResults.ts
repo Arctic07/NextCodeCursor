@@ -147,6 +147,16 @@ export function normalizeMcpToolResult(
     input: Record<string, unknown>,
 ): ToolResultEnvelope | null {
     switch (cursorToolType) {
+        case 'getMcpToolsToolCall':
+            if (resultCaseName === 'success') {
+                return envelope('success', {
+                    content: str(value.content),
+                    ...(typeof value.outputFilePath === 'string'
+                        ? { outputFilePath: value.outputFilePath }
+                        : {}),
+                });
+            }
+            return envelope(resultCaseName || 'error', value);
         case 'mcpToolCall':
             if (resultCaseName === 'success') {
                 return envelope('success', {
@@ -205,6 +215,10 @@ export function buildMcpToolResultText(
     value: Record<string, unknown>,
 ): string | null {
     switch (cursorToolType) {
+        case 'getMcpToolsToolCall':
+            if (resultCaseName === 'success')
+                return str(value.content) || 'No dynamic tools matched the query.';
+            return `Get dynamic tools ${resultCaseName || 'error'}: ${JSON.stringify(value)}`;
         case 'mcpToolCall':
             if (resultCaseName === 'success') {
                 const items = arr<Record<string, unknown>>(value.content);

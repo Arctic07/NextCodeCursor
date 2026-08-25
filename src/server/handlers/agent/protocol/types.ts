@@ -109,6 +109,8 @@ export interface ParsedRunRequest {
       tools: Array<{
         toolName: string
         description?: string
+        inputSchema?: Record<string, unknown>
+        inputSchemaJson?: string
         annotationsJson?: string
       }>
     }>

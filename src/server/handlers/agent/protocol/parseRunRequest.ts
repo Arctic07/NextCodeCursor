@@ -471,30 +471,22 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   // 关键: slim descriptor 虽缺 schema,但**路由所需字段齐全**
   //   serverIdentifier + serverName + toolName → 足以构造 McpArgs,
   // 所以工具表(路由用)可由 descriptor 直接构建,只有给 LLM 看的 schema 需按需拉。
-  const metaToolOpts = requestContext?.mcpMetaToolOptions as Record<string, unknown> | undefined
-  const metaToolEnabled = metaToolOpts?.enabled === true
-  const metaDescriptors = (metaToolOpts?.mcpDescriptors as Array<Record<string, unknown>> | undefined) ?? []
+  const mcpMetaTool = parseMcpMetaToolOptions(requestContext?.mcpMetaToolOptions)
 
   // meta-tool 开启时,把 descriptor 里的工具补进合并表,保证 CallMcpTool 能路由。
   // 已在扁平表里的(白名单 server)不覆盖,避免丢掉其完整 description/inputSchema。
-  if (metaToolEnabled) {
-    for (const d of metaDescriptors) {
-      const serverIdentifier = (d.serverIdentifier as string) ?? ''
-      const serverName = (d.serverName as string) ?? ''
-      const descriptorTools = (d.tools as Array<Record<string, unknown>> | undefined) ?? []
-      for (const dt of descriptorTools) {
-        const toolName = (dt.toolName as string) ?? ''
-        if (!toolName)
-          continue
+  if (mcpMetaTool) {
+    for (const d of mcpMetaTool.descriptors) {
+      for (const dt of d.tools) {
         // 复刻客户端扁平表的命名: `${serverIdentifier}-${toolName}` (ZOg)
-        const flatName = serverIdentifier ? `${serverIdentifier}-${toolName}` : toolName
+        const flatName = d.serverIdentifier ? `${d.serverIdentifier}-${dt.toolName}` : dt.toolName
         if (mergedToolsByName.has(flatName))
           continue
         mergedToolsByName.set(flatName, {
           name: flatName,
-          providerIdentifier: serverName,
-          toolName,
-          description: (dt.description as string) ?? '',
+          providerIdentifier: d.serverName,
+          toolName: dt.toolName,
+          description: dt.description ?? '',
           inputSchema: dt.inputSchema,
           inputSchemaJson: dt.inputSchemaJson,
           annotationsJson: dt.annotationsJson,
@@ -838,24 +830,11 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
     isGitRepo: gitRepos.length > 0,
     mcpServers,
     mcpBasePath: mcpBasePath ? `${mcpBasePath}/mcps` : '',
-    // ref_only 模式下 MCP 工具表不在本次请求里,把 blobId 透出去供运行时取回。
-    mcpsBlobId: toBytes(requestContextParts?.mcpsBlobId),
+    // 只有 ref_only 需要回取 blob。dual 已有完整 inline requestContext,
+    // 暴露 blobId 反而会导致 legacy dual 路径重复 fetch。
+    mcpsBlobId: inlineRequestContext ? undefined : toBytes(requestContextParts?.mcpsBlobId),
     supportsMcpAuth: requestContext?.supportsMcpAuth === true,
-    mcpMetaTool: metaToolEnabled
-      ? {
-          enabled: true,
-          descriptors: metaDescriptors.map(d => ({
-            serverName: (d.serverName as string) ?? '',
-            serverIdentifier: (d.serverIdentifier as string) ?? '',
-            ...(typeof d.serverUseInstructions === 'string' ? { serverUseInstructions: d.serverUseInstructions } : {}),
-            tools: ((d.tools as Array<Record<string, unknown>> | undefined) ?? []).map(t => ({
-              toolName: (t.toolName as string) ?? '',
-              ...(typeof t.description === 'string' && t.description ? { description: t.description } : {}),
-              ...(typeof t.annotationsJson === 'string' ? { annotationsJson: t.annotationsJson } : {}),
-            })).filter(t => t.toolName.length > 0),
-          })),
-        }
-      : undefined,
+    mcpMetaTool,
     mcpTools: (() => {
       const seenNames = new Set<string>()
       return mergedMcpTools.map((t) => {
@@ -873,7 +852,7 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
         return {
           name: normalizedName,
           description: (t.description as string) ?? '',
-          inputSchema: normalizeMcpInputSchema(t.inputSchema),
+          inputSchema: normalizeMcpInputSchema(t.inputSchema, t.inputSchemaJson),
           providerIdentifier,
           toolName,
           serverIdentifier: resolveMcpServerIdentifier(rawName, toolName, providerIdentifier, serverIdentifierByName),
@@ -1006,6 +985,40 @@ export function parseRunRequest(msg: Record<string, unknown>): ParsedRunRequest 
   }
 }
 
+/** 将 requestContext/RequestContextMcpsPart 中的 meta-tool 目录归一成同一形态。 */
+export function parseMcpMetaToolOptions(raw: unknown): ParsedRunRequest['mcpMetaTool'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return undefined
+  const options = raw as Record<string, unknown>
+  if (options.enabled !== true)
+    return undefined
+
+  const descriptors = (options.mcpDescriptors as Array<Record<string, unknown>> | undefined) ?? []
+  return {
+    enabled: true,
+    descriptors: descriptors.map(d => ({
+      serverName: typeof d.serverName === 'string' ? d.serverName : '',
+      serverIdentifier: typeof d.serverIdentifier === 'string' ? d.serverIdentifier : '',
+      ...(typeof d.serverUseInstructions === 'string' && d.serverUseInstructions
+        ? { serverUseInstructions: d.serverUseInstructions }
+        : {}),
+      tools: ((d.tools as Array<Record<string, unknown>> | undefined) ?? [])
+        .map(t => ({
+          toolName: typeof t.toolName === 'string' ? t.toolName : '',
+          ...(typeof t.description === 'string' && t.description ? { description: t.description } : {}),
+          ...(t.inputSchema && typeof t.inputSchema === 'object' && !Array.isArray(t.inputSchema)
+            ? { inputSchema: t.inputSchema as Record<string, unknown> }
+            : {}),
+          ...(typeof t.inputSchemaJson === 'string' && t.inputSchemaJson
+            ? { inputSchemaJson: t.inputSchemaJson }
+            : {}),
+          ...(typeof t.annotationsJson === 'string' ? { annotationsJson: t.annotationsJson } : {}),
+        }))
+        .filter(t => t.toolName.length > 0),
+    })),
+  }
+}
+
 /**
  * 规范化 MCP 工具名以匹配 Anthropic tools 的 name pattern: ^[a-zA-Z0-9_-]+$
  *
@@ -1065,7 +1078,17 @@ export function normalizeMcpToolName(raw: string, seen: Set<string>): string {
  *
  * 防御性地 unwrap 一层,并确保输出至少是 object 形态以通过 provider 侧校验。
  */
-export function normalizeMcpInputSchema(raw: unknown): Record<string, unknown> {
+export function normalizeMcpInputSchema(raw: unknown, rawJson?: unknown): Record<string, unknown> {
+  if (typeof rawJson === 'string' && rawJson.trim()) {
+    try {
+      const parsed = JSON.parse(rawJson)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        return parsed as Record<string, unknown>
+    }
+    catch {
+      // 回退到 protobuf Value 字段;调用方仍能得到可诊断的 schema。
+    }
+  }
   if (raw == null || typeof raw !== 'object')
     return { type: 'object' }
   const obj = raw as Record<string, unknown>
@@ -1125,4 +1148,3 @@ function extractSkillDescription(content: string): string {
   const descMatch = fm.match(/^description:\s*(.+)$/m)
   return descMatch ? descMatch[1].trim() : content.slice(0, 120)
 }
-

@@ -1112,6 +1112,7 @@ export async function* handleConversationRun(
           // GetDynamicTools 需要据此决定取哪些 server、是否补 mcp_auth
           mcpMetaTool: parsed.mcpMetaTool,
           supportsMcpAuth: parsed.supportsMcpAuth,
+          projectDir: parsed.env.projectFolder,
         })
         for await (const frame of toolFrames) {
           const completedToolCall = extractCompletedToolCall(frame)

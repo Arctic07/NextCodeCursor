@@ -116,40 +116,7 @@ export interface ToolCallInfo {
  *   deleteToolCall, readLintsToolCall, webSearchToolCall, webFetchToolCall,
  *   askQuestionToolCall, taskToolCall, mcpToolCall, updateTodosToolCall
  */
-/**
- * 拆解 Claude Code 的扁平 MCP 工具名 `mcp__<server>__<tool>`。
- *
- * 切分规则照抄客户端 (workbench.desktop.main.js 的 hook matcher 转换 lQg):
- *
- *   if (o.startsWith("mcp__")) {
- *     const c = o.split("__");
- *     if (c.length >= 3) { const l = c.slice(2).join("__"); push(`MCP:${l}`) }
- *   }
- *
- * 由此确定三点:
- *   - 前缀 `mcp__` **大小写敏感** (客户端用 startsWith,非正则)
- *   - server 是第 2 段,不含 `__`
- *   - toolName 是第 3 段起,**可以含 `__`** (slice(2).join("__"))
- *
- * 需要说明的是,客户端这段代码只用于把 Claude Code 的 hook 配置翻译成 Cursor
- * 格式 —— 它旁边就是 Bash→Shell / Read→Read 这张 Claude Code 工具名映射表。
- * 客户端本身**从不用这个命名收发工具调用**,所以这层归一纯属服务端职责:
- * 模型(Claude 系)按其训练惯例发出该形式,我们负责翻译成 McpArgs 范式。
- *
- * 实测样本 (1-ClaudeCodeRev.log 2026-08-25) 里 server 段两种形态都出现过:
- *   mcp__user-ida-pro-mcp__instance_list   ← serverIdentifier
- *   mcp__ida-pro-mcp__instance_list        ← 用户在 mcp.json 里写的名字
- *
- * 后者其实更贴近用户认知 —— `user-` 并非名字的一部分,而是 Cursor 内部按配置
- * 作用域加的前缀 (workbench 的 mcp-config-service.ts):
- *
- *   computeIdentifier(e)       → `${prefix}${e.name}` (有 extensionId 时再插一段)
- *   computeIdentifierPrefix(p) → p ? `project-${p}-` : "user-"
- *
- * 即 serverIdentifier = 作用域前缀 + 用户写的 name,项目级配置的前缀还是
- * `project-{projectPath}-`。用户和模型认的都是 name,所以 server 段两种形态
- * 都得认 —— 且不能靠"剥掉 user- 前缀"来归一,前缀形态不止一种。
- */
+/** 解析 Claude/MCP 生态常见的扁平名 mcp__<server>__<tool>。 */
 export function parseFlatMcpToolName(name: string): { server: string; toolName: string } | null {
     if (!name.startsWith('mcp__')) return null;
     const parts = name.split('__');
@@ -159,35 +126,18 @@ export function parseFlatMcpToolName(name: string): { server: string; toolName: 
     return server && toolName ? { server, toolName } : null;
 }
 
-/**
- * 用路由表把扁平名解析成权威条目。
- *
- * server/tool 的权威来源是路由表 —— 客户端经 requestContext 下发,或 discovery
- * 时经 mcpStateExecArgs 取回,不是模型给的这串字符。
- *
- * 匹配以 toolName 为主、server 为辅,对齐客户端 MCPService.callTool 的语义:
- * 它按 toolName 查找,serverIdentifier 只用来限定范围
- * (`for (const g in tools) { if (s && g !== s) continue; ... }`)。
- * 因此 server 段写成 providerIdentifier 时仍能落到正确条目上。
- */
 function resolveFlatMcpTool(
     parsed: { server: string; toolName: string },
     availableMcpTools: AvailableMcpTool[],
 ): AvailableMcpTool | undefined {
-    const sameTool = availableMcpTools.filter(t => t.toolName === parsed.toolName);
-    if (sameTool.length === 0) return undefined;
-    const byServer = sameTool.find(t =>
-        t.serverIdentifier === parsed.server || t.providerIdentifier === parsed.server);
-    if (byServer) return byServer;
-    // server 段对不上但工具名唯一 —— 按客户端"以 toolName 为准"的语义接受
-    return sameTool.length === 1 ? sameTool[0] : undefined;
+    return availableMcpTools.find(tool =>
+        tool.toolName === parsed.toolName
+        && (tool.serverIdentifier === parsed.server || tool.providerIdentifier === parsed.server));
 }
 
 export function mapToolName(llmToolName: string): string {
-    const registered = findToolByAlias(llmToolName)?.cursorToolType;
-    if (registered) return registered;
-    if (parseFlatMcpToolName(llmToolName)) return 'mcpToolCall';
-    return llmToolName;
+    return findToolByAlias(llmToolName)?.cursorToolType
+        ?? (parseFlatMcpToolName(llmToolName) ? 'mcpToolCall' : llmToolName);
 }
 
 export function mapPartialToolName(llmToolName: string): string {
@@ -287,37 +237,6 @@ export function resolveToolCall(
         };
     }
 
-    // Claude Code 扁平命名 `mcp__<server>__<tool>` → Cursor McpArgs 范式。
-    // 放在按名精确匹配之后: 真有工具就注册成这个名字时仍走 descriptor 路径。
-    const flat = availableMcpTools.some(t => t.name === llmToolName)
-        ? null
-        : parseFlatMcpToolName(llmToolName);
-    if (flat) {
-        const matched = resolveFlatMcpTool(flat, availableMcpTools);
-        // 命中路由表 = 正常的命名归一;未命中说明 discovery 还没跑过或工具不存在,
-        // 此时按解析值照发 —— 让客户端给出结构化 tool-not-found,
-        // 总好过把它无法解析的 toolCall case 丢过去。
-        logger[matched ? 'debug' : 'warn']({
-            llmToolName,
-            server: flat.server,
-            toolName: flat.toolName,
-            routed: matched?.name ?? null,
-            routingTableSize: matched ? undefined : availableMcpTools.length,
-        }, matched
-            ? '[DYNAMIC-TOOLS] flat mcp__ name resolved via routing table'
-            : '[DYNAMIC-TOOLS] flat mcp__ name not in routing table — forwarding parsed values');
-        return {
-            cursorToolType: 'mcpToolCall',
-            sanitizedInput: {
-                name: matched?.name ?? llmToolName,
-                args: sanitizedInput,
-                providerIdentifier: matched?.providerIdentifier ?? flat.server,
-                toolName: matched?.toolName ?? flat.toolName,
-                serverIdentifier: matched?.serverIdentifier ?? flat.server,
-            },
-        };
-    }
-
     const descriptor = availableMcpTools.find(tool => tool.name === llmToolName);
 
     if (descriptor && (descriptor.providerIdentifier || descriptor.toolName)) {
@@ -329,6 +248,31 @@ export function resolveToolCall(
                 providerIdentifier: descriptor.providerIdentifier ?? '',
                 toolName: descriptor.toolName ?? '',
                 serverIdentifier: descriptor.serverIdentifier ?? '',
+            },
+        };
+    }
+
+    // Dynamic profile 正常情况下不会走到这里;保留这条防御路径处理模型根据
+    // Claude Code 训练惯例发出的 mcp__server__tool 名称。仍由客户端执行审批。
+    const flat = parseFlatMcpToolName(llmToolName);
+    if (flat) {
+        const matched = resolveFlatMcpTool(flat, availableMcpTools);
+        logger[matched ? 'debug' : 'warn']({
+            llmToolName,
+            server: flat.server,
+            toolName: flat.toolName,
+            routed: matched?.name ?? null,
+        }, matched
+            ? '[DYNAMIC-TOOLS] flat MCP name routed'
+            : '[DYNAMIC-TOOLS] flat MCP name not in routing table — forwarding parsed values');
+        return {
+            cursorToolType: 'mcpToolCall',
+            sanitizedInput: {
+                name: matched?.name ?? llmToolName,
+                args: sanitizedInput,
+                providerIdentifier: matched?.providerIdentifier ?? flat.server,
+                toolName: matched?.toolName ?? flat.toolName,
+                serverIdentifier: matched?.serverIdentifier ?? flat.server,
             },
         };
     }

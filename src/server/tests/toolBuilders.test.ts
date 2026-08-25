@@ -199,6 +199,32 @@ it('partialToolCall maps dynamic external tool names to valid proto tool cases',
   expect(json).toMatch(/"mcpToolCall"/)
 })
 
+it('getDynamicTools completion uses the typed proto case and preserves outputFilePath', () => {
+  const raw: ToolResultEnvelope = {
+    result: {
+      case: 'success',
+      value: {
+        content: '{"note":"written"}',
+        outputFilePath: '/tmp/agent-tools/tools.txt',
+      },
+    },
+  }
+  const normalized = normalizeToolResult('getMcpToolsToolCall', raw, {})
+  expect(buildToolResultText('getMcpToolsToolCall', normalized, {})).toBe('{"note":"written"}')
+
+  const frame = toolCallCompleted(
+    'call-discovery',
+    'getMcpToolsToolCall',
+    { server: 'user-test', toolCallId: 'call-discovery' },
+    normalized,
+    'model-discovery',
+  )
+  const json = toJsonString(AgentServerMessageSchema, frame)
+  expect(json).toContain('"getMcpToolsToolCall"')
+  expect(json).toContain('"outputFilePath":"/tmp/agent-tools/tools.txt"')
+  expect(toBinary(AgentServerMessageSchema, frame).length).toBeGreaterThan(0)
+})
+
 it('normalizeToolResult preserves shell failure semantics and error classification', () => {
   const toolResult: ToolResultEnvelope = normalizeToolResult('shellToolCall', {
     result: {

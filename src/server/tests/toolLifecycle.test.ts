@@ -625,6 +625,91 @@ it('runToolCall ApplyPatch Update File fails on fileNotFound without writeArgs',
   expect(roundContext.pendingToolResults[0].content).toContain('File not found')
 })
 
+it('runToolCall scopes GetDynamicTools by namespace and returns typed discovery content', async () => {
+  const session = createEphemeralSession('dynamic-tools-runtime')
+  pushSessionMessage(session, {
+    execClientMessage: {
+      id: 1,
+      mcpStateExecResult: {
+        success: {
+          servers: [{
+            serverName: 'ida-pro-mcp',
+            serverIdentifier: 'user-ida-pro-mcp',
+            status: 'connected',
+            instructions: [{ instructions: 'Use exact addresses.' }],
+            tools: [{
+              name: 'user-ida-pro-mcp-decompile',
+              providerIdentifier: 'ida-pro-mcp',
+              toolName: 'decompile',
+              description: 'Decompile a function.',
+              inputSchemaJson: '{"type":"object","properties":{"address":{"type":"string"}}}',
+            }],
+          }],
+        },
+      },
+    },
+  })
+
+  const messages: LLMMessage[] = []
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  const availableMcpTools: Array<{
+    name: string
+    providerIdentifier?: string
+    toolName?: string
+    serverIdentifier?: string
+  }> = []
+  let execId = 0
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-discovery-runtime',
+      name: 'GetDynamicTools',
+      input: { namespace: 'user-ida-pro-mcp' },
+    },
+    availableMcpTools,
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    round: 0,
+    session,
+    roundContext,
+    messages,
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+  })
+
+  const frames: AgentServerMessage[] = []
+  for await (const frame of iterator)
+    frames.push(frame)
+
+  const execFrame = frames.find(frame => frame.message.case === 'execServerMessage')
+  expect(execFrame?.message.case).toBe('execServerMessage')
+  if (!execFrame || execFrame.message.case !== 'execServerMessage')
+    throw new Error('expected mcpState exec frame')
+  expect(execFrame.message.value.message.case).toBe('mcpStateExecArgs')
+  expect((execFrame.message.value.message.value as any).serverIdentifiers).toEqual(['user-ida-pro-mcp'])
+
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  const discovery = JSON.parse(roundContext.pendingToolResults[0].content)
+  expect(discovery.mode).toBe('namespace')
+  expect(discovery.namespace).toBe('user-ida-pro-mcp')
+  expect(discovery.namespaceStatus).toBe('ready')
+  expect(discovery.namespaceDescription).toBe('Use exact addresses.')
+  expect(discovery.tools[0].inputSchema.properties.address.type).toBe('string')
+  expect(availableMcpTools).toMatchObject([{
+    name: 'user-ida-pro-mcp-decompile',
+    toolName: 'decompile',
+    serverIdentifier: 'user-ida-pro-mcp',
+  }])
+
+  const completed = frames.at(-1)
+  expect(completed?.message.case).toBe('interactionUpdate')
+  if (!completed || completed.message.case !== 'interactionUpdate')
+    throw new Error('expected completion frame')
+  expect(completed.message.value.message.case).toBe('toolCallCompleted')
+  if (completed.message.value.message.case !== 'toolCallCompleted')
+    throw new Error('expected toolCallCompleted')
+  expect(completed.message.value.message.value.toolCall?.tool.case).toBe('getMcpToolsToolCall')
+})
+
 it('runToolCall does not inject workspace workingDirectory into shell tool args when model omits it', async () => {
   const session = createEphemeralSession('shell-runtime')
   const messages: LLMMessage[] = []

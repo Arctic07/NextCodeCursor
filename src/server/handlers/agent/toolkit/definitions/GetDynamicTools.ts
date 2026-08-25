@@ -35,7 +35,8 @@ const PROPERTIES = {
     },
     pattern: {
         type: 'string',
-        description: 'Regular expression used to search namespace and tool names.',
+        maxLength: 256,
+        description: 'Regular expression (max 256 characters) used to search namespace and tool names.',
     },
 };
 

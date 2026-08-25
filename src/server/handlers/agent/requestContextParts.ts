@@ -35,6 +35,7 @@ import type { ParsedRunRequest } from './protocol/types'
 import {
   normalizeMcpInputSchema,
   normalizeMcpToolName,
+  parseMcpMetaToolOptions,
   resolveMcpServerIdentifier,
 } from './protocol/parseRunRequest'
 import { toBytes } from './protocol/shared'
@@ -70,8 +71,7 @@ function extractBlobData(msg: Record<string, unknown>): Uint8Array | null {
     logger.warn({ error: result.error }, '[PROTOCOL] getBlobResult returned error')
     return null
   }
-  // blob_data 同样是 proto bytes,JSON 路径下会是 base64 字符串 ——
-  // 只认 Uint8Array 会把正常返回误判成 "no data"
+  // JSON transport 会把 proto bytes 编成 base64 string;统一归一后再解码 protobuf。
   return toBytes(result.blobData) ?? null
 }
 
@@ -182,14 +182,22 @@ export function applyMcpsPart(parsed: ParsedRunRequest, part: FetchedMcpsPart): 
     }))
   }
 
-  // serverName → serverIdentifier 反查表 (与 parseRunRequest 同构)
+  // ref_only 下 mcp_meta_tool_options 只存在于 mcps blob,不在 dynamic_context。
+  // 漏掉它会把本轮误判成 legacy_flat,从而既不注入 namespace 目录也不暴露 meta tools。
+  const recoveredMetaTool = parseMcpMetaToolOptions(part.mcpMetaToolOptions)
+  if (recoveredMetaTool)
+    parsed.mcpMetaTool = recoveredMetaTool
+
+  // serverName → serverIdentifier 反查表 (与 parseRunRequest 同构)。meta descriptor
+  // 同样是权威来源,尤其在 mcpFileSystemOptions 未启用时不能只依赖 fs descriptors。
   const serverIdentifierByName = new Map<string, string>()
-  for (const src of [...parsed.mcpServers, ...parsed.mcpInstructions]) {
+  for (const src of [...parsed.mcpServers, ...parsed.mcpInstructions, ...(parsed.mcpMetaTool?.descriptors ?? [])]) {
     if (src.serverName && src.serverIdentifier && !serverIdentifierByName.has(src.serverName))
       serverIdentifierByName.set(src.serverName, src.serverIdentifier)
   }
 
-  // mcpTools
+  // mcpTools: 先恢复完整/白名单工具,再从 slim meta descriptor 补齐路由条目。
+  // 后者即使没有 schema,也具备 CallDynamicTool 所需的 serverIdentifier + toolName。
   const seenNames = new Set<string>()
   parsed.mcpTools = part.tools.map((t) => {
     const rawName = (t.name as string) ?? ''
@@ -200,38 +208,33 @@ export function applyMcpsPart(parsed: ParsedRunRequest, part: FetchedMcpsPart): 
     return {
       name: normalizedName,
       description: (t.description as string) ?? '',
-      inputSchema: normalizeMcpInputSchema(t.inputSchema),
+      inputSchema: normalizeMcpInputSchema(t.inputSchema, t.inputSchemaJson),
       providerIdentifier,
       toolName,
       serverIdentifier: resolveMcpServerIdentifier(rawName, toolName, providerIdentifier, serverIdentifierByName),
     }
   })
 
-  // mcpMetaTool — 来自 mcp_meta_tool_options (RequestContextMcpsPart field 4)
-  //
-  // ref_only 下这个开关**只存在于 mcps blob 里**,不在 dynamic_context。
-  // 早前这里漏了它: 工具表恢复了,mcpMetaTool 却仍是 undefined ——
-  // 于是 mcpMode 判定成 legacy_flat、<dynamic_tools> 段不注入,
-  // LLM 拿不到 namespace 清单只能猜工具名 (实测 1-ClaudeCodeRev.log 2026-08-25:
-  // 连续 15 次 search 猜 mcp__user-ida-pro-mcp__instance_list 之类的名字,
-  // 一次 CallDynamicTool 都没发出)。
-  const metaOpts = part.mcpMetaToolOptions
-  if (metaOpts?.enabled === true) {
-    const descriptors = (metaOpts.mcpDescriptors as Array<Record<string, unknown>> | undefined) ?? []
-    parsed.mcpMetaTool = {
-      enabled: true,
-      descriptors: descriptors.map(d => ({
-        serverName: (d.serverName as string) ?? '',
-        serverIdentifier: (d.serverIdentifier as string) ?? '',
-        ...(typeof d.serverUseInstructions === 'string' ? { serverUseInstructions: d.serverUseInstructions } : {}),
-        tools: ((d.tools as Array<Record<string, unknown>> | undefined) ?? [])
-          .map(t => ({
-            toolName: (t.toolName as string) ?? '',
-            ...(typeof t.description === 'string' && t.description ? { description: t.description } : {}),
-            ...(typeof t.annotationsJson === 'string' ? { annotationsJson: t.annotationsJson } : {}),
-          }))
-          .filter(t => t.toolName.length > 0),
-      })),
+  const routed = new Set(parsed.mcpTools.map(t => `${t.serverIdentifier}\u0000${t.toolName}`))
+  for (const descriptor of parsed.mcpMetaTool?.descriptors ?? []) {
+    for (const tool of descriptor.tools) {
+      const routeKey = `${descriptor.serverIdentifier}\u0000${tool.toolName}`
+      if (routed.has(routeKey))
+        continue
+      routed.add(routeKey)
+      const rawName = descriptor.serverIdentifier
+        ? `${descriptor.serverIdentifier}-${tool.toolName}`
+        : tool.toolName
+      const name = normalizeMcpToolName(rawName, seenNames)
+      seenNames.add(name)
+      parsed.mcpTools.push({
+        name,
+        description: tool.description ?? '',
+        inputSchema: normalizeMcpInputSchema(tool.inputSchema, tool.inputSchemaJson),
+        providerIdentifier: descriptor.serverName,
+        toolName: tool.toolName,
+        serverIdentifier: descriptor.serverIdentifier,
+      })
     }
   }
 

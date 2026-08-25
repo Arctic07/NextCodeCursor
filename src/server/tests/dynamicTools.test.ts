@@ -1,12 +1,18 @@
 import type { DynamicNamespace } from '../handlers/agent/dynamicTools'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildDynamicToolsSection,
-
   MCP_AUTH_TOOL,
+  normalizeDynamicNamespaceStatus,
+  parseDynamicToolsQuery,
   renderDynamicToolsResult,
+  serializeDynamicToolsResult,
   shortenDescription,
   toDynamicNamespace,
+  validateDynamicToolsQuery,
 } from '../handlers/agent/dynamicTools'
 
 /**
@@ -45,7 +51,7 @@ const NS: DynamicNamespace[] = [
 ]
 
 describe('截断规则', () => {
-  it('超过 185 字符时截断,总长恰好 200', () => {
+  it('超过 200 字符时截断,总长恰好 200', () => {
     const out = shortenDescription(LONG_DESC)
     expect(out).toHaveLength(200)
     expect(out.endsWith('... [truncated]')).toBe(true)
@@ -57,6 +63,9 @@ describe('截断规则', () => {
     const short = 'x'.repeat(179)
     expect(shortenDescription(short)).toBe(short)
     expect(shortenDescription('x'.repeat(185))).toBe('x'.repeat(185))
+    expect(shortenDescription('x'.repeat(200))).toBe('x'.repeat(200))
+    expect(shortenDescription('x'.repeat(201))).toHaveLength(200)
+    expect(shortenDescription('x'.repeat(201))).toMatch(/\.\.\. \[truncated\]$/)
   })
 })
 
@@ -96,12 +105,27 @@ describe('search 模式', () => {
     expect(matches[0].namespace).toBe('user-probe-two')
     expect(matches[0].tool).toBe('alpha')
     expect(matches[0].inputSchema).toBeUndefined()
+    expect(matches[0].namespaceStatus).toBeUndefined()
   })
 
   it('截断长 description', () => {
     const r = renderDynamicToolsResult({ pattern: 'list_funcs' }, NS)
     const matches = r.matches as Array<Record<string, unknown>>
     expect(matches[0].description).toHaveLength(200)
+  })
+
+  it('namespace 名命中时先返回 namespace-only match', () => {
+    const r = renderDynamicToolsResult({ pattern: 'ida-pro' }, [{
+      ...NS[0],
+      description: 'IDA integration instructions.',
+    }])
+    const matches = r.matches as Array<Record<string, unknown>>
+    expect(matches[0]).toEqual({
+      namespace: 'user-ida-pro-mcp',
+      description: 'IDA integration instructions.',
+      namespaceStatus: 'ready',
+    })
+    expect(matches.slice(1).map(m => m.tool)).toEqual(['decompile', 'list_funcs'])
   })
 
   it('非法正则退化为子串匹配而不抛出', () => {
@@ -122,6 +146,18 @@ describe('catalog 模式', () => {
     expect(tools[1].description).toHaveLength(200)
   })
 
+  it('catalog 会把过长 namespaceDescription 同样截到 200 字符', () => {
+    const r = renderDynamicToolsResult({}, [{
+      name: 'user-docs',
+      source: 'mcp',
+      status: 'ready',
+      description: 'x'.repeat(300),
+      tools: [],
+    }])
+    const ns = (r.namespaces as Array<Record<string, unknown>>)[0]
+    expect(ns.namespaceDescription).toHaveLength(200)
+  })
+
   it('cursor 源 namespace 用 namespaceDescription 而非 namespaceStatus', () => {
     const r = renderDynamicToolsResult({}, [
       { name: 'cursor', source: 'cursor', description: 'Native Cursor tools.', tools: [] },
@@ -129,6 +165,37 @@ describe('catalog 模式', () => {
     const ns = (r.namespaces as Array<Record<string, unknown>>)[0]
     expect(ns.namespaceDescription).toBe('Native Cursor tools.')
     expect(ns.namespaceStatus).toBeUndefined()
+  })
+})
+
+describe('3.17 namespace 状态', () => {
+  it('把客户端 connected 映射成模型侧 ready,并传播 error_message', () => {
+    const ns = toDynamicNamespace({
+      serverName: 'broken',
+      serverIdentifier: 'user-broken',
+      status: 'error',
+      errorMessage: 'spawn ENOENT',
+      instructions: 'Use only read-only operations.',
+      tools: [],
+    }, false)
+    const result = renderDynamicToolsResult({ namespace: 'user-broken' }, [ns])
+    expect(result.namespaceStatus).toBe('error')
+    expect(result.namespaceError).toBe('spawn ENOENT')
+    expect(result.namespaceDescription).toBe('Use only read-only operations.')
+    expect(normalizeDynamicNamespaceStatus('connected')).toBe('ready')
+  })
+
+  it('search 结果携带异常 namespace 的状态与错误', () => {
+    const result = renderDynamicToolsResult({ pattern: 'alpha' }, [{
+      name: 'user-broken',
+      source: 'mcp',
+      status: 'error',
+      error: 'not running',
+      tools: [{ tool: 'alpha', description: 'd', inputSchema: { type: 'object' } }],
+    }])
+    const match = (result.matches as Array<Record<string, unknown>>)[0]
+    expect(match.namespaceStatus).toBe('error')
+    expect(match.namespaceError).toBe('not running')
   })
 })
 
@@ -154,11 +221,29 @@ describe('mcp_auth 追加', () => {
     expect(ns.tools).toEqual([])
   })
 
+  it('客户端已提供 mcp_auth 时不重复追加', () => {
+    const ns = toDynamicNamespace({
+      serverName: 'a',
+      serverIdentifier: 'user-a',
+      status: 'connected',
+      tools: [{
+        name: 'user-a-mcp_auth',
+        providerIdentifier: 'a',
+        toolName: 'mcp_auth',
+        description: 'auth',
+        inputSchema: { type: 'object' },
+      }],
+    }, true)
+    expect(ns.tools.filter(t => t.tool === 'mcp_auth')).toHaveLength(1)
+    expect(ns.status).toBe('ready')
+  })
+
   it('每个 namespace 各自持有独立的 mcp_auth schema 对象', () => {
     // 共享引用会让一处 mutation 污染所有 namespace
     const a = toDynamicNamespace({ serverName: 'a', serverIdentifier: 'user-a', status: 'ready', tools: [] }, true)
     const b = toDynamicNamespace({ serverName: 'b', serverIdentifier: 'user-b', status: 'ready', tools: [] }, true)
     expect(a.tools[0].inputSchema).not.toBe(b.tools[0].inputSchema)
+    expect((a.tools[0].inputSchema as any).properties).not.toBe((b.tools[0].inputSchema as any).properties)
   })
 })
 
@@ -174,6 +259,50 @@ describe('未知 namespace', () => {
     expect(r.mode).toBe('single_tool')
     expect(r.namespaceStatus).toBe('ready')
     expect(r.error).toContain('nope')
+  })
+})
+
+describe('3.17 参数兼容与大结果溢写', () => {
+  it('优先读取 dynamic namespace,同时兼容旧 server/tool_name 参数', () => {
+    expect(parseDynamicToolsQuery({ namespace: 'new', server: 'old', toolName: 't' })).toEqual({
+      namespace: 'new',
+      toolName: 't',
+      pattern: undefined,
+    })
+    expect(parseDynamicToolsQuery({ server: 'old', tool_name: 'legacy' })).toEqual({
+      namespace: 'old',
+      toolName: 'legacy',
+      pattern: undefined,
+    })
+    expect(validateDynamicToolsQuery({ toolName: 'orphan' })).toContain('requires namespace')
+    expect(validateDynamicToolsQuery({ pattern: '[unclosed' })).toContain('Invalid regex pattern')
+    expect(validateDynamicToolsQuery({ pattern: 'x'.repeat(257) })).toContain('256')
+  })
+
+  it('超过阈值时写入 projectDir/agent-tools 并返回 outputFilePath', async () => {
+    const projectDir = await mkdtemp(join(tmpdir(), 'ccursor-dynamic-tools-'))
+    try {
+      const result = { mode: 'namespace', tools: [{ tool: 'large', description: 'x'.repeat(512) }] }
+      const serialized = await serializeDynamicToolsResult(result, {
+        projectDir,
+        spillThresholdBytes: 64,
+      })
+      expect(serialized.wroteToFile).toBe(true)
+      expect(serialized.outputFilePath).toContain(join(projectDir, 'agent-tools'))
+      expect(JSON.parse(await readFile(serialized.outputFilePath!, 'utf8'))).toEqual(result)
+      expect(JSON.parse(serialized.content).filePath).toBe(serialized.outputFilePath)
+    }
+    finally {
+      await rm(projectDir, { recursive: true, force: true })
+    }
+  })
+
+  it('小结果保持内联且使用可读 JSON', async () => {
+    const result = { mode: 'catalog', namespaces: [] }
+    const serialized = await serializeDynamicToolsResult(result, { spillThresholdBytes: 10_000 })
+    expect(serialized.wroteToFile).toBe(false)
+    expect(serialized.outputFilePath).toBeUndefined()
+    expect(JSON.parse(serialized.content)).toEqual(result)
   })
 })
 
@@ -197,6 +326,14 @@ describe('<dynamic_tools> prompt 段', () => {
     const s = buildDynamicToolsSection(servers, true)
     expect(s).toContain('tools="decompile, list_funcs, mcp_auth"')
     expect(s).toContain('call `mcp_auth` through `CallDynamicTool`')
+  })
+
+  it('descriptor 已含 mcp_auth 时 prompt 不重复列出', () => {
+    const s = buildDynamicToolsSection([
+      { serverIdentifier: 'user-auth', toolNames: ['mcp_auth'] },
+    ], true)
+    expect(s).toContain('tools="mcp_auth"')
+    expect(s).not.toContain('tools="mcp_auth, mcp_auth"')
   })
 
   it('不支持认证时既不列 mcp_auth 也不附说明', () => {
