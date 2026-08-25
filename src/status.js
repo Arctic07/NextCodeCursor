@@ -9,6 +9,9 @@ import { hasBackup } from './backup.js';
 import { CCURSOR_DIR } from './routes.js';
 import { PROVIDERS_FILE_NAME, ROUTES_FILE_NAME } from './defaults.js';
 import { needsProxy39Patch, isProxy39Patched, getProxy39Target } from './patch-proxy-39.js';
+import { inspectAlwaysLocalPatch } from './patch-always-local.js';
+import { getAgentHostBackupTargets, inspectAgentHostPatch } from './patch-agent-host.js';
+import { isInjectPatched } from './patch-inject.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
 const fail = s => `\x1b[31m✗ ${s}\x1b[0m`;
@@ -32,7 +35,7 @@ export async function status() {
   // Inject (desktop)
   if (existsSync(paths.workbenchJs)) {
     const wb = readFileSync(paths.workbenchJs, 'utf-8');
-    const injected = wb.includes('__byokWrapTransport');
+    const injected = isInjectPatched(wb);
     console.log(injected ? ok('Renderer hook injected (desktop)') : fail('Renderer hook not injected (desktop)'));
   } else {
     console.log(na('workbench.desktop.main.js not found'));
@@ -41,19 +44,41 @@ export async function status() {
   // Inject (glass / Agent Window)
   if (existsSync(paths.glassJs)) {
     const gl = readFileSync(paths.glassJs, 'utf-8');
-    const injected = gl.includes('__byokWrapTransport');
+    const injected = isInjectPatched(gl);
     console.log(injected ? ok('Renderer hook injected (glass)') : fail('Renderer hook not injected (glass)'));
   } else {
     console.log(na('workbench.glass.main.js not found (pre-3.8)'));
   }
 
-  // Always-local
-  if (existsSync(paths.alwaysLocalMain)) {
-    const al = readFileSync(paths.alwaysLocalMain, 'utf-8');
-    const patched = al.includes('__byokUrlRewrite');
-    console.log(patched ? ok('Always-local patched') : fail('Always-local not patched'));
-  } else {
+  // Legacy Agent transport (cursor-always-local)
+  const alwaysLocal = inspectAlwaysLocalPatch(paths);
+  if (alwaysLocal.present) {
+    console.log(alwaysLocal.router ? ok('Legacy Agent HTTP/1.1 router active') : fail('Legacy Agent HTTP/1.1 router missing'));
+    console.log(alwaysLocal.wait ? ok('Legacy Agent server wait active') : fail('Legacy Agent server wait missing'));
+  }
+  else {
     console.log(na('cursor-always-local not found'));
+  }
+
+  // Independent Agent Host transport (Cursor 3.13+)
+  const agentHost = inspectAgentHostPatch(paths);
+  if (!agentHost.present) {
+    console.log(na('cursor-agent-host not found (pre-3.13)'));
+  }
+  else {
+    console.log(agentHost.router ? ok('Agent Host HTTP/1.1 router active') : fail('Agent Host HTTP/1.1 router missing'));
+    console.log(agentHost.wait ? ok('Agent Host server wait active') : fail('Agent Host server wait missing'));
+    console.log(agentHost.networkTargets.length > 0
+      ? ok(`Agent Host network target verified (${agentHost.networkTargets.map(file => file.split(/[\\/]/).pop()).join(', ')})`)
+      : fail('Agent Host network target not found'));
+    if (agentHost.websocketTargets.length > 0) {
+      console.log(agentHost.websocketDisabled
+        ? ok('Agent Host WebSocket bypass disabled')
+        : fail('Agent Host WebSocket bypass is active'));
+    }
+    else {
+      console.log(na('Agent Host WebSocket transport not present (3.13–3.15)'));
+    }
   }
 
   // Sig bypass
@@ -63,13 +88,6 @@ export async function status() {
     console.log(bypassed ? ok('Signature bypass active') : fail('Signature bypass not active'));
   } else {
     console.log(na('extensionHostProcess.js not found'));
-  }
-
-  // Wait-for-server injection in activate
-  if (existsSync(paths.alwaysLocalMain)) {
-    const al = readFileSync(paths.alwaysLocalMain, 'utf-8');
-    const hasWait = al.includes('__byokWaitServer');
-    console.log(hasWait ? ok('Server wait injection active') : fail('Server wait injection not active'));
   }
 
   // Cursor 3.9+ always-local singleton BYOK router/proxy sync
@@ -88,7 +106,15 @@ export async function status() {
 
   // Backups
   console.log('');
-  const backupFiles = [paths.workbenchJs, paths.glassJs, paths.alwaysLocalMain, paths.alwaysLocalSingletonJs, paths.extensionHostJs, paths.productJson];
+  const backupFiles = [...new Set([
+    paths.workbenchJs,
+    paths.glassJs,
+    paths.alwaysLocalMain,
+    paths.alwaysLocalSingletonJs,
+    paths.extensionHostJs,
+    paths.productJson,
+    ...getAgentHostBackupTargets(paths),
+  ])];
   const backupCount = backupFiles.filter(f => hasBackup(f)).length;
   console.log(`Backups: ${backupCount}/${backupFiles.length} files backed up`);
 }

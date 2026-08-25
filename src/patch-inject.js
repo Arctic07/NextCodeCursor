@@ -12,6 +12,14 @@ import { BASE_REDIRECT } from './defaults.js';
 import { DEFAULT_REDIRECT } from './defaults.js';
 
 const HOOK_MARKER = '__byokWrapTransport';
+const HOOK_SOURCE_MARKER = 'CURSOR-BYOK-HOOK-START';
+const HOOK_CALL_SITE = `typeof globalThis.${HOOK_MARKER}==="function"?globalThis.${HOOK_MARKER}(`;
+
+/** Verify both the prepended payload and the active Connect transport call site. */
+export function isInjectPatched(code) {
+  return code.slice(0, 120000).includes(`/* ${HOOK_SOURCE_MARKER} */`)
+    && code.includes(HOOK_CALL_SITE);
+}
 // ConnectRPC 客户端模块的 esbuild 注册键。
 //
 // 3.17.8 起构建把模块路径从完整路径缩短成纯文件名:
@@ -605,9 +613,12 @@ function patchGlassExtensionAllowlist(code, log) {
 function patchSingleWorkbench(filePath, label, paths, log) {
   const code = readFileSync(filePath, 'utf-8');
 
-  if (code.includes(HOOK_MARKER)) {
+  if (isInjectPatched(code)) {
     log?.(`[inject] ${label}: already patched`);
     return;
+  }
+  if (code.includes(HOOK_MARKER) || code.includes(HOOK_SOURCE_MARKER)) {
+    throw new Error(`${label}: partial renderer hook detected (payload/call-site mismatch)`);
   }
 
   const target = findTarget(code, log);
