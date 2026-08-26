@@ -1,0 +1,141 @@
+{
+  "publisher": "cometix-space",
+  "name": "cursor2plus",
+  "displayName": "Cursor++",
+  "version": "0.0.14",
+  "description": "Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE",
+  "icon": "resources/icon.png",
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "extensionDependencies": [],
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursor2plus.toggleByok",
+        "title": "Cursor++: Toggle BYOK Mode (on/off)"
+      },
+      {
+        "command": "cursor2plus.serverToggle",
+        "title": "Cursor++: Toggle BYOK Server"
+      },
+      {
+        "command": "cursor2plus.editRoutes",
+        "title": "Cursor++: Edit Routes Config"
+      },
+      {
+        "command": "cursor2plus.editProviders",
+        "title": "Cursor++: Edit Providers Config"
+      },
+      {
+        "command": "cursor2plus.openSettings",
+        "title": "Cursor++: Open Settings"
+      },
+      {
+        "command": "cursor2plus.toggleFileLog",
+        "title": "Cursor++: Toggle File Logging (debug)"
+      },
+      {
+        "command": "cursor2plus.openLogFile",
+        "title": "Cursor++: Open Log File"
+      }
+    ],
+    "configuration": {
+      "title": "Cursor++",
+      "properties": {
+        "cursor2plus.server.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "BYOK server listen host"
+        },
+        "cursor2plus.server.port": {
+          "type": "number",
+          "default": 39831,
+          "description": "BYOK server listen port"
+        },
+        "cursor2plus.server.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-start BYOK server on activation"
+        },
+        "cursor2plus.collector.port": {
+          "type": "number",
+          "default": 14800,
+          "description": "Hook collector port (merged into BYOK server when 0)"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cursor2plus-sidebar",
+          "title": "Cursor++",
+          "icon": "resources/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "cursor2plus-sidebar": [
+        {
+          "type": "webview",
+          "id": "cursor2plus.panel",
+          "name": "Control Panel"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "test:server": "vitest run",
+    "vsix": "pnpm run package && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --allow-star-activation"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.111.0",
+    "@bufbuild/protobuf": "^2.12.0",
+    "@connectrpc/connect": "^2.1.1",
+    "@connectrpc/connect-fastify": "^2.1.1",
+    "@connectrpc/connect-node": "^2.1.1",
+    "@fastify/cors": "^11.2.0",
+    "@google/genai": "^2.7.0",
+    "@vakra-dev/supermarkdown": "^0.0.6",
+    "acorn": "^8.14.0",
+    "acorn-walk": "^8.3.4",
+    "diff": "^9.0.0",
+    "fastify": "^5.8.5",
+    "fuse.js": "^7.3.0",
+    "gpt-tokenizer": "^3.4.0",
+    "hono": "^4.12.23",
+    "openai": "^6.46.0",
+    "pino": "^10.3.1",
+    "undici": "^8.3.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^9.0.0",
+    "@types/alpinejs": "^3.13.11",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.100.0",
+    "@types/ws": "^8.18.0",
+    "@vscode/vsce": "^3.9.1",
+    "alpinejs": "^3.15.12",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.4.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}

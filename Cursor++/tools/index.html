@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BYOK Inspector</title>
+<style>
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+  --fg: #c9d1d9; --fg2: #8b949e; --fg3: #484f58;
+  --blue: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  --purple: #bc8cff; --cyan: #39d2c0; --orange: #f0883e; --magenta: #db61a2;
+  --sel: #1f6feb22; --sel-border: #1f6feb;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; color: var(--fg); background: var(--bg);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+/* Header */
+#header { display:flex; align-items:center; justify-content:space-between; padding:6px 12px; border-bottom:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
+#header h1 { font-size:14px; font-weight:700; margin-right:10px; }
+.badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:500; }
+.badge-ok { background:#238636; color:#fff; }
+.badge-err { background:#da3633; color:#fff; animation:pulse 2s infinite; }
+@keyframes pulse { 50%{opacity:.6} }
+.hdr-left,.hdr-right { display:flex; align-items:center; gap:8px; }
+.hdr-right button { background:var(--bg3); border:1px solid var(--border); color:var(--fg2); padding:3px 10px; border-radius:6px; cursor:pointer; font-size:12px; }
+.hdr-right button:hover { color:var(--fg); border-color:var(--fg3); }
+.hdr-right button.active { background:var(--sel-border); color:#fff; border-color:var(--sel-border); }
+.counter { font-size:11px; color:var(--fg2); }
+
+/* Panels */
+#panels { display:flex; flex:1; min-height:0; }
+.panel { height:100%; overflow:hidden; display:flex; flex-direction:column; }
+.panel-header { padding:6px 10px; font-size:11px; font-weight:600; color:var(--fg2); text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); background:var(--bg2); flex-shrink:0; display:flex; justify-content:space-between; align-items:center; }
+.panel-header .clear-link { font-size:10px; color:var(--blue); cursor:pointer; text-transform:none; letter-spacing:0; font-weight:400; }
+.panel-header .clear-link:hover { text-decoration:underline; }
+.panel-header #rpc-scroll-indicator { font-size:10px; color:var(--blue); cursor:pointer; text-transform:none; letter-spacing:0; font-weight:500; display:flex; align-items:center; gap:4px; }
+.panel-header #rpc-scroll-indicator:hover { text-decoration:underline; }
+.panel-body { flex:1; overflow-y:auto; overflow-x:hidden; }
+.separator { width:4px; flex-shrink:0; background:var(--border); cursor:col-resize; transition:background .15s; }
+.separator:hover,.separator.active { background:var(--sel-border); }
+
+/* Col 1: Service Tree */
+.svc-group { border-bottom:1px solid var(--border); }
+.svc-item { padding:5px 10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; font-size:12px; border-left:3px solid transparent; font-weight:500; }
+.svc-item:hover { background:var(--bg3); }
+.svc-item.selected { background:var(--sel); border-left-color:var(--sel-border); color:var(--blue); }
+.svc-item .cnt { font-size:10px; color:var(--fg3); background:var(--bg3); padding:0 6px; border-radius:8px; min-width:18px; text-align:center; }
+.svc-item.selected .cnt { background:var(--sel-border); color:#fff; }
+.mtd-item { padding:3px 10px 3px 22px; cursor:pointer; font-size:12px; display:flex; justify-content:space-between; color:var(--fg2); }
+.mtd-item:hover { background:var(--bg3); color:var(--fg); }
+.mtd-item.selected { color:var(--blue); background:var(--sel); }
+.mtd-item .cnt { font-size:10px; color:var(--fg3); }
+
+/* Col 2: RPC Calls */
+.rpc-item { padding:7px 10px; cursor:pointer; border-bottom:1px solid var(--border); border-left:3px solid transparent; }
+.rpc-item:hover { background:var(--bg3); }
+.rpc-item.selected { background:var(--sel); border-left-color:var(--sel-border); }
+.rpc-row1 { display:flex; align-items:center; gap:6px; }
+.rpc-mtd { font-size:12px; font-weight:500; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.rpc-status { font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px; flex-shrink:0; }
+.rpc-status.ok { background:#23863644; color:var(--green); }
+.rpc-status.err { background:#da363344; color:var(--red); }
+.rpc-status.pending { background:var(--bg3); color:var(--yellow); }
+.rpc-status.stream { background:#d2992244; color:var(--yellow); }
+.rpc-row2 { display:flex; gap:8px; font-size:11px; color:var(--fg2); margin-top:3px; align-items:center; }
+.rpc-row2 .dur { color:var(--fg3); }
+.rpc-row2 .time { color:var(--fg3); font-family:monospace; font-size:10px; }
+.rpc-preview { font-size:11px; color:var(--fg3); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:monospace; }
+
+/* Col 3: Frame List */
+.frame-item { padding:5px 10px; cursor:pointer; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; font-size:12px; }
+.frame-item:hover { background:var(--bg3); }
+.frame-item.selected { background:var(--sel); border-left:2px solid var(--sel-border); padding-left:8px; }
+.frame-item.search-match { background:#d2992215; }
+.tag { display:inline-block; font-size:10px; font-weight:600; padding:1px 5px; border-radius:3px; flex-shrink:0; text-align:center; min-width:28px; }
+.tag-c2s { background:#1f6feb33; color:var(--blue); }
+.tag-s2c { background:#23863633; color:var(--green); }
+.tag-err { background:#da363333; color:var(--red); }
+.tag-end { background:var(--bg3); color:var(--fg3); }
+.frame-info { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--fg2); }
+.frame-info .key-hint { color:var(--purple); }
+.frame-time { font-size:10px; color:var(--fg3); flex-shrink:0; font-family:monospace; }
+
+/* Search bar */
+#frame-search { display:flex; padding:4px 8px; border-bottom:1px solid var(--border); background:var(--bg2); gap:4px; align-items:center; }
+#frame-search input { flex:1; background:var(--bg); border:1px solid var(--border); color:var(--fg); padding:3px 8px; border-radius:4px; font-size:12px; outline:none; }
+#frame-search input:focus { border-color:var(--sel-border); }
+.match-info { font-size:10px; color:var(--fg3); white-space:nowrap; }
+
+/* Col 4: Detail */
+.detail-section { padding:8px 12px; border-bottom:1px solid var(--border); }
+.detail-section:last-child { border-bottom:none; }
+.detail-label { font-size:10px; color:var(--fg3); text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px; font-weight:500; }
+.detail-value { font-size:12px; word-break:break-all; }
+.detail-row { display:flex; gap:24px; flex-wrap:wrap; }
+.detail-row .detail-cell { flex:1; min-width:120px; }
+.detail-pair { display:flex; gap:16px; margin-bottom:6px; }
+.detail-pair .detail-label { min-width:60px; margin-bottom:0; line-height:1.6; }
+.detail-pair .detail-value { line-height:1.6; }
+pre.json { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:11.5px; font-family:'SF Mono',Menlo,Consolas,monospace; overflow:auto; white-space:pre; line-height:1.5; margin:4px 0; max-height:calc(100vh - 280px); tab-size:2; }
+.json-key { color:var(--purple); }
+.json-str { color:var(--green); }
+.json-num { color:var(--blue); }
+.json-bool { color:var(--orange); }
+.json-null { color:var(--fg3); }
+.json-wrap { position:relative; }
+.copy-btn { position:absolute; top:6px; right:6px; background:var(--bg3); border:1px solid var(--border); color:var(--fg2); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:11px; opacity:0; transition:opacity .15s; z-index:1; }
+.json-wrap:hover .copy-btn { opacity:1; }
+.copy-btn:hover { color:var(--fg); border-color:var(--fg2); }
+
+/* Detail: call summary header */
+.call-summary { padding:10px 12px; background:var(--bg2); border-bottom:1px solid var(--border); }
+.call-summary .cs-title { font-size:13px; font-weight:600; margin-bottom:4px; }
+.call-summary .cs-meta { font-size:11px; color:var(--fg2); display:flex; gap:12px; flex-wrap:wrap; }
+
+/* Empty */
+.empty { padding:24px; text-align:center; color:var(--fg3); font-size:12px; }
+.empty-icon { font-size:24px; margin-bottom:8px; opacity:.4; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--fg3); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:var(--fg2); }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="hdr-left">
+    <h1>BYOK Inspector</h1>
+    <span id="ws-badge" class="badge badge-err">Connecting...</span>
+    <span id="counter" class="counter"></span>
+  </div>
+  <div class="hdr-right">
+    <button id="btn-pause">⏸ Pause</button>
+    <button id="btn-clear">Clear</button>
+  </div>
+</div>
+
+<div id="panels">
+  <div class="panel" id="p1" style="width:15%">
+    <div class="panel-header"><span>Services</span><span class="clear-link" id="filter-clear" style="display:none">Clear</span></div>
+    <div class="panel-body" id="svc-list"></div>
+  </div>
+  <div class="separator" data-idx="0"></div>
+  <div class="panel" id="p2" style="width:22%">
+    <div class="panel-header">
+      <span>RPC Calls</span>
+      <span id="rpc-scroll-indicator" style="display:none;cursor:pointer;color:var(--blue);font-size:10px;">⬆ <span id="unseen-count">0</span> new — Click to jump</span>
+    </div>
+    <div class="panel-body" id="rpc-list"></div>
+  </div>
+  <div class="separator" data-idx="1"></div>
+  <div class="panel" id="p3" style="width:22%">
+    <div class="panel-header">Frames</div>
+    <div id="frame-search"><input type="text" placeholder="Search frames..." id="search-input"><span class="match-info" id="match-count"></span></div>
+    <div class="panel-body" id="frame-list"></div>
+  </div>
+  <div class="separator" data-idx="2"></div>
+  <div class="panel" id="p4" style="width:41%">
+    <div class="panel-header">Detail</div>
+    <div class="panel-body" id="detail"></div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────
+const records = [];
+const callMap = new Map();
+let selSvc = null, selMtd = null, selCallId = null, selRecord = null;
+let paused = false, searchText = '';
+
+// Auto-scroll state for RPC list (Col 2)
+let autoScroll = true; // Auto-scroll to top when new calls arrive
+let unseenCount = 0; // Number of calls arrived while not at top
+let latestCallId = null; // Track the most recent call ID
+let scrollLocked = false; // Prevent scroll during user interaction
+let preserveRpcViewport = false; // Keep visible items stable when new calls prepend at the top
+let detailLocked = false; // Freeze detail repaint while user is interacting with detail panel
+let pendingDetailRender = null; // Defer detail repaint until interaction ends
+
+// ── Type info ────────────────────────────────────
+const TI = {
+  unary_req:  { tag:'REQ', cls:'tag-c2s' },
+  unary_res:  { tag:'RES', cls:'tag-s2c' },
+  unary_err:  { tag:'ERR', cls:'tag-err' },
+  stream_req: { tag:'REQ', cls:'tag-c2s' },
+  stream_in:  { tag:'C2S', cls:'tag-c2s' },
+  stream_out: { tag:'S2C', cls:'tag-s2c' },
+  stream_end: { tag:'END', cls:'tag-end' },
+  stream_err: { tag:'ERR', cls:'tag-err' },
+  rest_redirect: { tag:'REST', cls:'tag-c2s' },
+  rest_response: { tag:'RES', cls:'tag-s2c' },
+  rest_body: { tag:'BODY', cls:'tag-c2s' },
+  rest_error: { tag:'ERR', cls:'tag-err' },
+};
+
+function shortSvc(s) { if(!s) return '?'; const p=s.split('.'); return p[p.length-1]; }
+function fmtTime(t) { return t ? new Date(t).toISOString().slice(11,23) : ''; }
+function fmtDur(ms) { return ms < 1000 ? ms+'ms' : (ms/1000).toFixed(1)+'s'; }
+function isEmpty(o) { return !o || (typeof o==='object' && Object.keys(o).length===0); }
+function tryParseJson(s) { if(typeof s!=='string') return s; try{ return JSON.parse(s); }catch{ return { text: s }; } }
+
+function msgPreview(msg, max) {
+  if (isEmpty(msg)) return '';
+  const s = JSON.stringify(msg);
+  if (s === '{}' || s === '[]') return '';
+  return s.length > max ? s.slice(0, max)+'…' : s;
+}
+
+function msgKeyHints(msg) {
+  if (isEmpty(msg)) return '';
+  const keys = Object.keys(msg).slice(0, 4);
+  if (keys.length === 0) return '';
+  return keys.map(k => `<span class="key-hint">${esc(k)}</span>`).join(' ');
+}
+
+// ── Ingestion ────────────────────────────────────
+const REST_CALL_TIMEOUT = 5000; // ms 内未收到响应则视为独立记录
+const pendingRestCalls = new Map(); // restId -> { timeoutId, call }
+
+function createRestCall(entry) {
+  const restId = entry.id; // This is the random ID from inject.js
+  const call = {
+    id: restId, svc: 'REST', mtd: entry.path, records: [entry],
+    startTime: entry._t, endTime: entry._t,
+    isStream: false, hasError: false,
+    status: 'pending', dur: null, chunks: null,
+  };
+  // Set timeout to flush if response never arrives
+  const timeoutId = setTimeout(() => {
+    pendingRestCalls.delete(restId);
+    callMap.set(restId, call);
+    scheduleRender();
+  }, REST_CALL_TIMEOUT);
+  pendingRestCalls.set(restId, { timeoutId, call });
+}
+
+function completeRestCall(entry, type) {
+  // Find matching pending call using entry.id (the original random ID)
+  const restId = entry.id;
+  let pending = pendingRestCalls.get(restId);
+
+  // If not in pending, check if already in callMap (timeout already fired)
+  if (!pending && callMap.has(restId)) {
+    const existingCall = callMap.get(restId);
+    existingCall.records.push(entry);
+    existingCall.endTime = entry._t;
+    if (type === 'rest_error') { existingCall.hasError = true; existingCall.status = 'error'; }
+    if (type === 'rest_response') { existingCall.status = entry.status >= 400 ? 'error' : 'ok'; existingCall.dur = entry._t - existingCall.startTime; }
+    scheduleRender();
+    return;
+  }
+
+  if (pending) {
+    clearTimeout(pending.timeoutId);
+    pendingRestCalls.delete(restId);
+    pending.call.records.push(entry);
+    pending.call.endTime = entry._t;
+    if (type === 'rest_error') { pending.call.hasError = true; pending.call.status = 'error'; }
+    if (type === 'rest_response') { pending.call.status = entry.status >= 400 ? 'error' : 'ok'; pending.call.dur = entry._t - pending.call.startTime; }
+    callMap.set(restId, pending.call);
+  } else {
+    // No matching call found, create standalone
+    const call = {
+      id: restId, svc: 'REST', mtd: entry.path || '/unknown', records: [entry],
+      startTime: entry._t, endTime: entry._t,
+      isStream: false, hasError: type === 'rest_error',
+      status: type === 'rest_error' ? 'error' : 'ok', dur: null, chunks: null,
+    };
+    callMap.set(restId, call);
+  }
+}
+
+function addRecord(entry) {
+  if (paused) return;
+  records.push(entry);
+  if (records.length > 10000) records.splice(0, records.length - 10000);
+
+  // REST redirect: create pending call, wait for response
+  if (entry.type === 'rest_redirect') {
+    entry.svc = 'REST';
+    entry.mtd = entry.path;
+    // entry.id is already the random ID from inject.js
+    createRestCall(entry);
+    return;
+  }
+
+  // REST response/body: complete the pending call using original id
+  if (entry.type === 'rest_response' || entry.type === 'rest_body') {
+    completeRestCall(entry, entry.type);
+    scheduleRender();
+    return;
+  }
+
+  // REST error: complete immediately
+  if (entry.type === 'rest_error') {
+    completeRestCall(entry, 'rest_error');
+    scheduleRender();
+    return;
+  }
+
+  // ConnectRPC: existing logic
+  const id = entry.id;
+  if (!id) return;
+  if (!callMap.has(id)) {
+    callMap.set(id, {
+      id, svc: entry.svc||'', mtd: entry.mtd||'', records: [],
+      startTime: entry._t, endTime: entry._t,
+      isStream: entry.type?.startsWith('stream'), hasError: false,
+      status: 'pending', dur: null, chunks: null,
+    });
+  }
+  const c = callMap.get(id);
+  c.records.push(entry);
+  c.endTime = entry._t;
+  if (entry.type?.includes('err')) { c.hasError = true; c.status = 'error'; }
+  if (entry.type === 'unary_res') c.status = 'ok';
+  if (entry.type === 'stream_end') { c.status = 'ok'; if(entry.chunks) c.chunks = entry.chunks; }
+  if (entry.dur) c.dur = entry.dur;
+  scheduleRender();
+}
+
+// ── Derived ──────────────────────────────────────
+function getSvcTree() {
+  const tree = new Map();
+  for (const [,c] of callMap) {
+    if (!tree.has(c.svc)) tree.set(c.svc, new Map());
+    tree.get(c.svc).set(c.mtd, (tree.get(c.svc).get(c.mtd)||0)+1);
+  }
+  return tree;
+}
+function getFilteredCalls() {
+  let calls = [...callMap.values()].sort((a,b) => b.startTime - a.startTime);
+  if (selSvc && selMtd) calls = calls.filter(c => c.svc===selSvc && c.mtd===selMtd);
+  else if (selSvc) calls = calls.filter(c => c.svc===selSvc);
+  return calls;
+}
+function getFrames() {
+  if (!selCallId) return [];
+  return callMap.get(selCallId)?.records || [];
+}
+function getCall() { return selCallId ? callMap.get(selCallId) : null; }
+
+// ── Render ───────────────────────────────────────
+let rp = false;
+// scrollLocked is declared in State section
+
+function scheduleRender() {
+  if (rp) return;
+  rp = true;
+  requestAnimationFrame(() => {
+    rp = false;
+
+    const calls = getFilteredCalls();
+    const wasAtTop = rpcListEl.scrollTop < 50;
+
+    if (calls.length > 0) {
+      const newestCallId = calls[0].id;
+      if (newestCallId !== latestCallId) {
+        latestCallId = newestCallId;
+
+        if (wasAtTop) {
+          // Stay at top, keep auto-scroll
+          autoScroll = true;
+          unseenCount = 0;
+          preserveRpcViewport = false;
+        } else {
+          // User scrolled down - disable auto-scroll, keep viewport stable, count unseen
+          autoScroll = false;
+          preserveRpcViewport = true;
+          unseenCount++;
+          updateScrollIndicator();
+        }
+      }
+    }
+
+    renderAll();
+    // Auto-scroll is now handled inside renderRpcList
+  });
+}
+
+function updateScrollIndicator() {
+  const indicator = document.getElementById('rpc-scroll-indicator');
+  const countEl = document.getElementById('unseen-count');
+  if (unseenCount > 0) {
+    indicator.style.display = '';
+    countEl.textContent = unseenCount;
+  } else {
+    indicator.style.display = 'none';
+  }
+}
+
+function renderAll() {
+  renderSvcTree(); renderRpcList(); renderFrameList(); renderDetail();
+  const el = document.getElementById('counter');
+  el.textContent = `${callMap.size} calls · ${records.length} records`;
+  document.getElementById('filter-clear').style.display = (selSvc||selMtd) ? '' : 'none';
+}
+
+// Col 1
+function renderSvcTree() {
+  const el = document.getElementById('svc-list');
+  const tree = getSvcTree();
+  if (!tree.size) { el.innerHTML = '<div class="empty"><div class="empty-icon">📡</div>Waiting for data...</div>'; return; }
+
+  let h = '';
+
+  // Separate REST from other services
+  const restEntries = [];
+  const rpcEntries = [];
+  for (const [svc, mtds] of tree.entries()) {
+    if (svc === 'REST') restEntries.push([svc, mtds]);
+    else rpcEntries.push([svc, mtds]);
+  }
+
+  // Sort RPC services by count
+  rpcEntries.sort((a,b) => {
+    let ca=0; for(const v of a[1].values()) ca+=v;
+    let cb=0; for(const v of b[1].values()) cb+=v;
+    return cb-ca;
+  });
+
+  // Render RPC services
+  for (const [svc, mtds] of rpcEntries) {
+    let total=0; for(const v of mtds.values()) total+=v;
+    const isSel = selSvc===svc && !selMtd;
+    h += `<div class="svc-group"><div class="svc-item${isSel?' selected':''}" data-svc="${esc(svc)}"><span>${esc(shortSvc(svc))}</span><span class="cnt">${total}</span></div>`;
+    for (const [mtd, cnt] of [...mtds.entries()].sort((a,b)=>b[1]-a[1])) {
+      const ms = selSvc===svc && selMtd===mtd;
+      h += `<div class="mtd-item${ms?' selected':''}" data-svc="${esc(svc)}" data-mtd="${esc(mtd)}"><span>${esc(mtd)}</span><span class="cnt">${cnt}</span></div>`;
+    }
+    h += '</div>';
+  }
+
+  // Render REST category (at same level as services)
+  for (const [svc, mtds] of restEntries) {
+    let total=0; for(const v of mtds.values()) total+=v;
+    const isSel = selSvc===svc && !selMtd;
+    h += `<div class="svc-group"><div class="svc-item${isSel?' selected':''}" style="${isSel?'border-left-color:var(--yellow);':''}" data-svc="${esc(svc)}"><span style="color:var(--yellow)">${esc(svc)}</span><span class="cnt">${total}</span></div>`;
+    for (const [path, cnt] of [...mtds.entries()].sort((a,b)=>b[1]-a[1])) {
+      const ms = selSvc===svc && selMtd===path;
+      h += `<div class="mtd-item${ms?' selected':''}" data-svc="${esc(svc)}" data-mtd="${esc(path)}"><span>${esc(path)}</span><span class="cnt">${cnt}</span></div>`;
+    }
+    h += '</div>';
+  }
+
+  el.innerHTML = h;
+}
+
+// Col 2
+function renderRpcList() {
+  const el = document.getElementById('rpc-list');
+  const calls = getFilteredCalls();
+
+  // Preserve scroll state before re-rendering
+  const scrollPos = el.scrollTop;
+  const scrollHeight = el.scrollHeight;
+
+  if (!calls.length) { el.innerHTML = '<div class="empty">No calls match filter</div>'; return; }
+  let h = '';
+  for (const c of calls) {
+    const sel = selCallId===c.id;
+    // Status badge
+    let stCls, stTxt;
+    if (c.hasError) { stCls='err'; stTxt='ERR'; }
+    else if (c.isStream && c.status==='ok') { stCls='stream'; stTxt=`${c.chunks||c.records.length} frames`; }
+    else if (c.isStream) { stCls='stream'; stTxt='streaming'; }
+    else if (c.status==='ok') { stCls='ok'; stTxt=c.dur?fmtDur(c.dur):'OK'; }
+    else { stCls='pending'; stTxt='…'; }
+
+    // Preview: REST or ConnectRPC
+    let preview = '';
+    if (c.svc === 'REST') {
+      const redirect = c.records.find(r => r.type === 'rest_redirect');
+      if (redirect?.reqBody) {
+        const bodyStr = typeof redirect.reqBody === 'string' ? redirect.reqBody : JSON.stringify(redirect.reqBody);
+        preview = bodyStr.length > 80 ? bodyStr.slice(0, 80) + '…' : bodyStr;
+      }
+    } else {
+      const reqRec = c.records.find(r => (r.type==='unary_req'||r.type==='stream_req') && !isEmpty(r.msg));
+      if (reqRec) preview = msgPreview(reqRec.msg, 80);
+    }
+
+    h += `<div class="rpc-item${sel?' selected':''}" data-id="${esc(c.id)}">
+      <div class="rpc-row1">
+        <span class="rpc-mtd">${esc(c.mtd||'?')}</span>
+        <span class="rpc-status ${stCls}">${stTxt}</span>
+      </div>
+      <div class="rpc-row2">
+        <span>${esc(shortSvc(c.svc))}</span>
+        <span class="time">${fmtTime(c.startTime)}</span>
+      </div>
+      ${preview ? `<div class="rpc-preview">${esc(preview)}</div>` : ''}
+    </div>`;
+  }
+  el.innerHTML = h;
+
+  // Restore scroll position when not auto-scrolling, or reset to top when auto-scrolling
+  if (autoScroll) {
+    el.scrollTop = 0;
+    preserveRpcViewport = false;
+  } else if (preserveRpcViewport) {
+    const heightDelta = el.scrollHeight - scrollHeight;
+    el.scrollTop = Math.max(0, scrollPos + heightDelta);
+    preserveRpcViewport = false;
+  } else {
+    el.scrollTop = scrollPos;
+  }
+}
+
+// Col 3
+function renderFrameList() {
+  const el = document.getElementById('frame-list');
+  const frames = getFrames();
+  const mc = document.getElementById('match-count');
+  const call = getCall();
+
+  if (!frames.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">←</div>Select a call to see frames</div>';
+    mc.textContent = ''; return;
+  }
+
+  const q = searchText.toLowerCase();
+  let matchN = 0, h = '';
+
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i];
+    const ti = TI[f.type] || { tag:f.type, cls:'tag-end' };
+    const sel = selRecord === f;
+    const info = isEmpty(f.msg) ? (f.err||f.type) : msgKeyHints(f.msg);
+    // Relative time from call start
+    const offset = call ? f._t - call.startTime : 0;
+    const offsetStr = offset > 0 ? '+'+fmtDur(offset) : '0ms';
+
+    const str = JSON.stringify(f).toLowerCase();
+    const match = q && str.includes(q);
+    if (match) matchN++;
+
+    h += `<div class="frame-item${sel?' selected':''}${match?' search-match':''}" data-idx="${i}">
+      <span class="tag ${ti.cls}">${ti.tag}</span>
+      <span class="frame-info">${info}</span>
+      <span class="frame-time">${offsetStr}</span>
+    </div>`;
+  }
+  el.innerHTML = h;
+  mc.textContent = q ? `${matchN}/${frames.length}` : `${frames.length} frames`;
+}
+
+// Col 4
+function setPanelHtmlPreserveScroll(el, html) {
+  if (el.__lastRenderedHtml === html) return false;
+  const prevScrollTop = el.scrollTop;
+  const prevScrollLeft = el.scrollLeft;
+  el.innerHTML = html;
+  el.__lastRenderedHtml = html;
+  el.scrollTop = prevScrollTop;
+  el.scrollLeft = prevScrollLeft;
+  return true;
+}
+
+function getDetailViewKey() {
+  if (selRecord) {
+    const idx = getFrames().indexOf(selRecord);
+    return `record:${selCallId || ''}:${idx}`;
+  }
+  if (selCallId) return `call:${selCallId}`;
+  return 'empty';
+}
+
+function flushPendingDetailRender() {
+  if (!pendingDetailRender) return;
+  setPanelHtmlPreserveScroll(pendingDetailRender.el, pendingDetailRender.html);
+  pendingDetailRender.el.__lastRenderedDetailViewKey = pendingDetailRender.viewKey;
+  pendingDetailRender = null;
+}
+
+function renderDetail() {
+  const el = document.getElementById('detail');
+  const call = getCall();
+  const viewKey = getDetailViewKey();
+
+  if (!selRecord && !call) {
+    const html = '<div class="empty"><div class="empty-icon">🔍</div>Select a call or frame to inspect</div>';
+    if (detailLocked) {
+      pendingDetailRender = { el, html, viewKey };
+      return;
+    }
+    setPanelHtmlPreserveScroll(el, html);
+    el.__lastRenderedDetailViewKey = viewKey;
+    pendingDetailRender = null;
+    return;
+  }
+
+  let h = '';
+
+  // Call summary header (always shown when a call is selected)
+  if (call) {
+    const stColor = call.hasError ? 'var(--red)' : call.status==='ok' ? 'var(--green)' : 'var(--yellow)';
+    h += `<div class="call-summary">
+      <div class="cs-title">${esc(call.svc)}/<strong>${esc(call.mtd)}</strong></div>
+      <div class="cs-meta">
+        <span>ID: <code>${esc(call.id)}</code></span>
+        <span style="color:${stColor}">${call.hasError?'Error':call.status==='ok'?'Complete':'In progress'}</span>
+        ${call.dur ? `<span>${fmtDur(call.dur)}</span>` : ''}
+        <span>${call.records.length} frames</span>
+        <span>${fmtTime(call.startTime)}</span>
+      </div>
+    </div>`;
+  }
+
+  // If we have a specific frame selected, show its detail
+  if (selRecord) {
+    const r = selRecord;
+    const ti = TI[r.type] || {};
+
+    // Frame metadata as compact pairs
+    h += `<div class="detail-section"><div class="detail-row">`;
+    h += `<div class="detail-cell"><div class="detail-label">Type</div><div class="detail-value"><span class="tag ${ti.cls||'tag-end'}">${ti.tag||r.type}</span> ${esc(r.type)}</div></div>`;
+    if (r.idx !== undefined) h += `<div class="detail-cell"><div class="detail-label">Frame</div><div class="detail-value">#${r.idx}</div></div>`;
+    if (r.dur) h += `<div class="detail-cell"><div class="detail-label">Duration</div><div class="detail-value">${fmtDur(r.dur)}</div></div>`;
+    if (r.chunks) h += `<div class="detail-cell"><div class="detail-label">Chunks</div><div class="detail-value">${r.chunks}</div></div>`;
+    h += `</div></div>`;
+
+    if (r.err) {
+      h += `<div class="detail-section" style="background:#da363315"><div class="detail-label">Error${r.code !== undefined ? ' (code '+r.code+')' : ''}</div><div class="detail-value" style="color:var(--red)">${esc(r.err)}</div></div>`;
+    }
+
+    // REST-specific fields
+    if (r.type === 'rest_redirect') {
+      if (r.reqHeaders && Object.keys(r.reqHeaders).length > 0) h += jsonSection('Request Headers', r.reqHeaders, '200px');
+      if (r.reqBody) {
+        const reqBodyData = typeof r.reqBody === 'string' ? tryParseJson(r.reqBody) : r.reqBody;
+        h += jsonSection('Request Body', reqBodyData);
+      }
+    }
+    if (r.type === 'rest_response') {
+      if (r.resHeaders && Object.keys(r.resHeaders).length > 0) h += jsonSection('Response Headers', r.resHeaders, '200px');
+    }
+    if (r.type === 'rest_body') {
+      if (r.body) {
+        const bodyData = tryParseJson(r.body);
+        h += jsonSection('Response Body', bodyData);
+      }
+    }
+
+    // ConnectRPC fields
+    if (r.hdr && Object.keys(r.hdr).length > 0) {
+      h += jsonSection('Headers', r.hdr, '200px');
+    }
+    if (!isEmpty(r.msg)) {
+      h += jsonSection('Message', r.msg);
+    }
+  } else if (call) {
+    // REST call detail view
+    if (call.svc === 'REST') {
+      const redirect = call.records.find(r => r.type === 'rest_redirect');
+      const response = call.records.find(r => r.type === 'rest_response');
+      const body = call.records.find(r => r.type === 'rest_body');
+      const err = call.records.find(r => r.type === 'rest_error');
+
+      if (redirect) {
+        if (redirect.reqHeaders && Object.keys(redirect.reqHeaders).length > 0) h += jsonSection('Request Headers', redirect.reqHeaders, '200px');
+        if (redirect.reqBody) {
+          const reqBodyData = tryParseJson(redirect.reqBody);
+          h += jsonSection('Request Body', reqBodyData);
+        }
+      }
+      if (response?.resHeaders && Object.keys(response.resHeaders).length > 0) h += jsonSection('Response Headers', response.resHeaders, '200px');
+      if (body?.body) {
+        const bodyData = tryParseJson(body.body);
+        h += jsonSection('Response Body', bodyData);
+      }
+      if (err) {
+        h += `<div class="detail-section" style="background:#da363315"><div class="detail-label">Error</div><div class="detail-value" style="color:var(--red)">${esc(err.error||'Unknown error')}</div></div>`;
+      }
+    } else {
+      // ConnectRPC call detail view
+      const req = call.records.find(r => r.type==='unary_req'||r.type==='stream_req');
+      const res = call.records.find(r => r.type==='unary_res');
+      const errRec = call.records.find(r => r.type?.includes('err'));
+
+      if (req?.hdr && Object.keys(req.hdr).length > 0) {
+        h += jsonSection('Request Headers', req.hdr, '180px');
+      }
+      if (req && !isEmpty(req.msg)) {
+        h += jsonSection('Request', req.msg);
+      }
+      if (res && !isEmpty(res.msg)) {
+        h += jsonSection('Response', res.msg);
+      }
+      if (errRec) {
+        h += `<div class="detail-section" style="background:#da363315"><div class="detail-label">Error${errRec.code!==undefined?' (code '+errRec.code+')':''}</div><div class="detail-value" style="color:var(--red)">${esc(errRec.err||'Unknown error')}</div></div>`;
+      }
+      if (call.isStream && !req && !res) {
+        h += '<div class="detail-section"><div class="detail-value" style="color:var(--fg3)">Select a frame on the left to view its content</div></div>';
+      }
+    }
+  }
+
+  const lastViewKey = el.__lastRenderedDetailViewKey;
+  if (detailLocked && lastViewKey === viewKey) {
+    pendingDetailRender = { el, html: h, viewKey };
+    return;
+  }
+
+  setPanelHtmlPreserveScroll(el, h);
+  el.__lastRenderedDetailViewKey = viewKey;
+  pendingDetailRender = null;
+}
+
+function jsonSection(label, data, maxH) {
+  const raw = JSON.stringify(data, null, 2);
+  const safeRaw = raw.replace(/'/g, '&#x27;').replace(/\\/g, '\\\\');
+  return `<div class="detail-section"><div class="detail-label">${esc(label)}</div><div class="json-wrap">
+    <button class="copy-btn" onclick="doCopy(this)">Copy</button>
+    <pre class="json"${maxH ? ` style="max-height:${maxH}"` : ''}>${highlightJson(raw)}</pre>
+  </div></div>`;
+}
+
+// ── JSON highlighting ────────────────────────────
+function highlightJson(s) {
+  return esc(s)
+    .replace(/&quot;([^&]*?)&quot;(\s*:)/g, '<span class="json-key">"$1"</span>$2')
+    .replace(/:\s*&quot;([^&]*?)&quot;/g, ': <span class="json-str">"$1"</span>')
+    .replace(/:\s*(-?\d+\.?\d*([eE][+-]?\d+)?)/g, ': <span class="json-num">$1</span>')
+    .replace(/:\s*(true|false)/g, ': <span class="json-bool">$1</span>')
+    .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>');
+}
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function doCopy(btn) {
+  const pre = btn.parentElement.querySelector('pre');
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.textContent).then(() => {
+    btn.textContent='Copied!'; setTimeout(()=>{btn.textContent='Copy';},1500);
+  });
+}
+
+// ── Events ───────────────────────────────────────
+// RPC list scroll detection for auto-scroll
+const rpcListEl = document.getElementById('rpc-list');
+const detailEl = document.getElementById('detail');
+
+// Debounce scroll lock - released after user stops scrolling
+let scrollLockTimer = null;
+function releaseScrollLock() {
+  scrollLocked = false;
+}
+
+rpcListEl.addEventListener('scroll', () => {
+  // Lock scroll during user interaction
+  scrollLocked = true;
+  clearTimeout(scrollLockTimer);
+  scrollLockTimer = setTimeout(releaseScrollLock, 150);
+
+  // Latest items are at the TOP - check if scrolled to top
+  const atTop = rpcListEl.scrollTop < 50;
+
+  if (atTop) {
+    // User scrolled back to top - re-enable auto-scroll and hide indicator
+    autoScroll = true;
+    unseenCount = 0;
+    preserveRpcViewport = false;
+    updateScrollIndicator();
+  } else {
+    // User left the top - stop auto-scroll immediately
+    autoScroll = false;
+  }
+});
+
+document.getElementById('rpc-scroll-indicator').addEventListener('click', () => {
+  // Scroll to top and re-enable auto-scroll
+  rpcListEl.scrollTop = 0;
+  autoScroll = true;
+  unseenCount = 0;
+  preserveRpcViewport = false;
+  updateScrollIndicator();
+});
+
+function lockDetailRender() {
+  detailLocked = true;
+}
+
+function unlockDetailRender() {
+  detailLocked = false;
+  flushPendingDetailRender();
+}
+
+detailEl.addEventListener('pointerenter', lockDetailRender);
+detailEl.addEventListener('pointerleave', unlockDetailRender);
+detailEl.addEventListener('focusin', lockDetailRender);
+detailEl.addEventListener('focusout', e => {
+  if (!detailEl.contains(e.relatedTarget)) unlockDetailRender();
+});
+
+document.getElementById('svc-list').addEventListener('click', e => {
+  const me = e.target.closest('.mtd-item');
+  if (me) {
+    const svc=me.dataset.svc, mtd=me.dataset.mtd;
+    if(selSvc===svc && selMtd===mtd){selSvc=null;selMtd=null;}else{selSvc=svc;selMtd=mtd;}
+    selCallId=null; selRecord=null; renderAll(); return;
+  }
+  const se = e.target.closest('.svc-item');
+  if (se) {
+    const svc=se.dataset.svc;
+    if(selSvc===svc && !selMtd){selSvc=null;}else{selSvc=svc;selMtd=null;}
+    selCallId=null; selRecord=null; renderAll();
+  }
+});
+document.getElementById('filter-clear').addEventListener('click', () => {
+  selSvc=null; selMtd=null; selCallId=null; selRecord=null; renderAll();
+});
+document.getElementById('rpc-list').addEventListener('click', e => {
+  const el=e.target.closest('.rpc-item'); if(!el) return;
+  const id=el.dataset.id;
+  if(selCallId===id){selCallId=null;selRecord=null;}
+  else{selCallId=id; selRecord=null;} // don't auto-select frame, show call summary
+  renderAll();
+});
+document.getElementById('frame-list').addEventListener('click', e => {
+  const el=e.target.closest('.frame-item'); if(!el) return;
+  selRecord = getFrames()[parseInt(el.dataset.idx,10)] || null;
+  renderAll();
+});
+document.getElementById('search-input').addEventListener('input', e => { searchText=e.target.value; renderFrameList(); });
+document.getElementById('btn-pause').addEventListener('click', () => {
+  paused=!paused;
+  const btn=document.getElementById('btn-pause');
+  btn.textContent=paused?'▶ Resume':'⏸ Pause';
+  btn.classList.toggle('active',paused);
+});
+document.getElementById('btn-clear').addEventListener('click', () => {
+  records.length=0; callMap.clear();
+  selSvc=null; selMtd=null; selCallId=null; selRecord=null;
+  renderAll();
+});
+
+// ── Resizable panels ─────────────────────────────
+const panels=[document.getElementById('p1'),document.getElementById('p2'),document.getElementById('p3'),document.getElementById('p4')];
+let sizes=[15,22,22,41], dragging=null, dragX=0, dragSizes=[];
+document.querySelectorAll('.separator').forEach(s=>{
+  s.addEventListener('mousedown',e=>{e.preventDefault();dragging=+s.dataset.idx;dragX=e.clientX;dragSizes=[...sizes];s.classList.add('active');document.body.style.cursor='col-resize';document.body.style.userSelect='none';});
+});
+document.addEventListener('mousemove',e=>{
+  if(dragging===null)return;
+  const w=document.getElementById('panels').offsetWidth;
+  const dx=((e.clientX-dragX)/w)*100;
+  const ns=[...dragSizes]; ns[dragging]=Math.max(8,ns[dragging]+dx); ns[dragging+1]=Math.max(8,ns[dragging+1]-dx);
+  sizes=ns; applySizes();
+});
+document.addEventListener('mouseup',()=>{if(dragging!==null){document.querySelectorAll('.separator')[dragging]?.classList.remove('active');dragging=null;document.body.style.cursor='';document.body.style.userSelect='';}});
+function applySizes(){const t=3*4;panels.forEach((p,i)=>{p.style.width=`calc(${sizes[i]}% - ${t/4}px)`;});}
+applySizes();
+
+// ── WebSocket ────────────────────────────────────
+let ws=null, wsDelay=1000;
+function connectWS(){
+  const host=location.host||'127.0.0.1:14800';
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(`${proto}//${host}/ws`);
+  ws.onopen=()=>{
+    document.getElementById('ws-badge').className='badge badge-ok';
+    document.getElementById('ws-badge').textContent='Connected';
+    wsDelay=1000;
+    const base=location.host?'':'http://127.0.0.1:14800';
+    fetch(`${base}/api/records?limit=500`).then(r=>r.json()).then(d=>{
+      if(Array.isArray(d)) {
+        // Disable auto-scroll during initial load to prevent jump
+        const wasAutoScroll = autoScroll;
+        autoScroll = false;
+        d.forEach(addRecord);
+        // Initialize latestCallId to the most recent existing call
+        const calls = getFilteredCalls();
+        if (calls.length > 0) latestCallId = calls[0].id;
+        // Restore auto-scroll after a short delay
+        setTimeout(() => { autoScroll = wasAutoScroll; }, 500);
+      }
+    }).catch(()=>{});
+  };
+  ws.onmessage=e=>{try{addRecord(JSON.parse(e.data));}catch{}};
+  ws.onclose=()=>{
+    document.getElementById('ws-badge').className='badge badge-err';
+    document.getElementById('ws-badge').textContent='Reconnecting...';
+    setTimeout(connectWS,wsDelay); wsDelay=Math.min(wsDelay*1.5,30000);
+  };
+  ws.onerror=()=>{ws.close();};
+}
+connectWS(); renderAll();
+</script>
+</body>
+</html>
