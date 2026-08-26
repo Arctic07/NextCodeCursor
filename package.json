@@ -113,8 +113,7 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test:server": "vitest run",
-    "vsix": "pnpm run package && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --allow-star-activation",
-    "vsix:obf": "pnpm run package && node obfuscate.js && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --allow-star-activation"
+    "vsix": "pnpm run package && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license --allow-star-activation"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
