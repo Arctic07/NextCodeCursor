@@ -1,8 +1,6 @@
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import * as http from 'node:http'
 import * as vscode from 'vscode'
-import { gateCheck, promptLogin, startPeriodicReCheck } from './hub/gate'
-import { loginCommand, logoutCommand, openDeviceManagerCommand } from './hub/login'
 import { bumpRefreshSignal, pushRoutesUpdate, startServer, stopServer } from './server'
 import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
@@ -338,24 +336,8 @@ function stopHeartbeat() {
 //
 // 点击 → toggle BYOK Mode (非 server)。Server 启停走命令面板/侧边栏。
 
-// ── Hub 登录状态 (gate) ──
-//
-// 仅在 activate 时做一次 check, 之后靠 periodic re-check 更新。
-// 未登录 → 状态栏显示 $(account) × + 警告背景, 点击触发 login 命令。
-let hubSignedIn = false
-let hubUsername: string | undefined
-
 function renderStatusBar() {
   const s = getState()
-
-  // 未登录优先显示登录提示
-  if (!hubSignedIn) {
-    statusBarItem.text = '$(account) Sign in to Cursor++'
-    statusBarItem.tooltip = 'Cursor++ Hub 未登录。点击进行设备授权。'
-    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground')
-    statusBarItem.command = 'cursor2plus.hub.login'
-    return
-  }
 
   // server 状态前缀 codicon: ✓ on / ✗ offline (close 是 × 不是字母 x)
   const serverIcon = s.server === 'offline' ? '$(close)' : '$(check)'
@@ -374,10 +356,8 @@ function renderStatusBar() {
     ? 'BYOK ON — using local providers.json'
     : 'BYOK OFF — passing through to official Cursor'
 
-  const userTip = hubUsername ? `\nSigned in as ${hubUsername}` : ''
-
   statusBarItem.text = `${serverIcon} BYOK ${byokGlyph}`
-  statusBarItem.tooltip = `${serverTip}\n${byokTip}${userTip}\n\nClick: toggle BYOK Mode`
+  statusBarItem.tooltip = `${serverTip}\n${byokTip}\n\nClick: toggle BYOK Mode`
   statusBarItem.backgroundColor = s.byokMode
     ? undefined
     : new vscode.ThemeColor('statusBarItem.warningBackground')
@@ -494,59 +474,6 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider),
   )
 
-  // ── Hub 登录命令 (无论 gate 结果都要注册,失败用户才能点"立即登录") ──
-  context.subscriptions.push(
-    vscode.commands.registerCommand('cursor2plus.hub.login', async () => {
-      await loginCommand(context)
-      // 登录后重新 gate + 刷新
-      const g = await gateCheck(context, msg => log('info', msg))
-      hubSignedIn = g.allowed
-      hubUsername = g.username
-      renderStatusBar()
-      if (g.allowed && getState().server === 'offline') {
-        const { autoStart } = getServerConfig()
-        if (autoStart)
-          await doStartServer()
-      }
-      await refreshState()
-    }),
-    vscode.commands.registerCommand('cursor2plus.hub.logout', async () => {
-      await logoutCommand(context)
-      await stopServer()
-      hubSignedIn = false
-      hubUsername = undefined
-      renderStatusBar()
-      await refreshState()
-    }),
-    vscode.commands.registerCommand('cursor2plus.hub.openDeviceManager', () => openDeviceManagerCommand()),
-  )
-
-  // ── Gate check: 门控写在 server 启动最前面 ──
-  const gate = await gateCheck(context, msg => log('info', msg))
-  hubSignedIn = gate.allowed
-  hubUsername = gate.username
-
-  if (!gate.allowed) {
-    log('warn', `[HUB] denied (reason=${gate.reason}), BYOK server will NOT start`)
-    renderStatusBar()
-    // 只注册登录/登出命令,其他命令仍注册但 server 不启
-    context.subscriptions.push(
-      vscode.commands.registerCommand('cursor2plus.serverToggle', () => {
-        vscode.window.showWarningMessage('Cursor++ Hub: 未登录,无法启动 Server。')
-        promptLogin()
-      }),
-      vscode.commands.registerCommand('cursor2plus.toggleByok', () => promptLogin()),
-      vscode.commands.registerCommand('cursor2plus.editRoutes', () => promptLogin()),
-      vscode.commands.registerCommand('cursor2plus.editProviders', () => promptLogin()),
-      vscode.commands.registerCommand('cursor2plus.openSettings', () => {
-        vscode.commands.executeCommand('cursor2plus.panel.focus')
-      }),
-    )
-    promptLogin()
-    log('info', 'Cursor++ activated (login-only mode)')
-    return
-  }
-
   // ── 正常命令注册 ──
   context.subscriptions.push(
     vscode.commands.registerCommand('cursor2plus.serverToggle', () => toggleServer()),
@@ -576,21 +503,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('cursor2plus.toggleFileLog', () => toggleFileLog(context)),
     vscode.commands.registerCommand('cursor2plus.openLogFile', () => openLogFile()),
-  )
-
-  // ── 周期 re-check: 1 小时轮询一次, 发现 revoke 立即停 server ──
-  context.subscriptions.push(
-    startPeriodicReCheck(
-      context,
-      async () => {
-        hubSignedIn = false
-        hubUsername = undefined
-        await stopServer()
-        renderStatusBar()
-        await refreshState()
-      },
-      msg => log('info', msg),
-    ),
   )
 
   // 确保配置文件存在 —— 即使 server 未启动,面板也能读写

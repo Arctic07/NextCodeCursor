@@ -35,18 +35,6 @@
         "title": "Cursor++: Edit Providers Config"
       },
       {
-        "command": "cursor2plus.hub.login",
-        "title": "Cursor++: Sign in to Hub"
-      },
-      {
-        "command": "cursor2plus.hub.logout",
-        "title": "Cursor++: Sign out of Hub"
-      },
-      {
-        "command": "cursor2plus.hub.openDeviceManager",
-        "title": "Cursor++: Open Device Manager"
-      },
-      {
         "command": "cursor2plus.openSettings",
         "title": "Cursor++: Open Settings"
       },
