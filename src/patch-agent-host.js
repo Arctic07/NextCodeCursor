@@ -10,17 +10,24 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import * as acorn from 'acorn';
-import * as walk from 'acorn-walk';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { hasActivateWait, injectActivateWait } from './patch-always-local.js';
 import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched } from './node-http11-router.js';
+import {
+  AGENT_WS_GATE_MARKER,
+  AGENT_WS_ORIGINS_MARKER,
+  disableAgentWebSocket,
+  hasAgentWebSocketStack,
+  isAgentWebSocketDisabled,
+} from './agent-websocket-guard.js';
 
+export { disableAgentWebSocket, hasAgentWebSocketStack, isAgentWebSocketDisabled };
 const TAG = 'agent-host';
 export const AGENT_HOST_ROUTER_MARKER = '__byokAgentHostUrlRewrite';
-export const AGENT_HOST_WS_GATE_MARKER = '__byokAgentHostWebSocketGateDisabled';
-export const AGENT_HOST_WS_ORIGINS_MARKER = '__byokAgentHostWebSocketOriginsDisabled';
-const DISABLED_WS_GATE = '__byok_disabled_nal_websocket_client';
+// Backward-compatible export names; new injections use topology-neutral markers.
+export const AGENT_HOST_WS_GATE_MARKER = AGENT_WS_GATE_MARKER;
+export const AGENT_HOST_WS_ORIGINS_MARKER = AGENT_WS_ORIGINS_MARKER;
 
 const ENTRY_FINGERPRINTS = [
   'cursorAgentHostEnabled',
@@ -87,83 +94,6 @@ export function findAgentHostNetworkTargets(paths) {
     if (isAgentHostNetworkSource(source)) targets.push(file);
   }
   return targets;
-}
-
-function websocketAstInfo(source, label) {
-  const ast = parseBundle(source, label);
-  const gateLiterals = [];
-  const acceptedOriginArrays = [];
-
-  walk.simple(ast, {
-    Literal(node) {
-      if (node.value === 'nal_websocket_client') gateLiterals.push(node);
-    },
-    ArrayExpression(node) {
-      const values = node.elements
-        .filter(Boolean)
-        .map(element => element.type === 'Literal' ? element.value : undefined);
-      if (values.includes('https://api.playground.cursor.sh') && values.includes('https://api2.cursor.sh')) {
-        acceptedOriginArrays.push(node);
-      }
-    },
-  });
-
-  return { gateLiterals, acceptedOriginArrays };
-}
-
-export function hasAgentWebSocketStack(source) {
-  // Use the exported selector plus protocol path as the primary semantic
-  // fingerprint. If Cursor renames the gate, installation must fail closed
-  // instead of incorrectly reporting that no WebSocket transport exists.
-  return source.includes('/agent/v1/run')
-    && source.includes('createAgentRunWebSocketSelection');
-}
-
-export function isAgentWebSocketDisabled(source, label = 'Agent Host network chunk') {
-  if (!hasAgentWebSocketStack(source)) return true;
-  if (!source.includes(AGENT_HOST_WS_GATE_MARKER) || !source.includes(AGENT_HOST_WS_ORIGINS_MARKER)) return false;
-  const info = websocketAstInfo(source, label);
-  return info.gateLiterals.length === 0 && info.acceptedOriginArrays.length === 0;
-}
-
-/** Disable both the gate lookup and the accepted-origin resolver. */
-export function disableAgentWebSocket(source, label = 'Agent Host network chunk') {
-  if (!hasAgentWebSocketStack(source)) return { source, changed: false, required: false };
-  if (isAgentWebSocketDisabled(source, label)) return { source, changed: false, required: true };
-
-  const info = websocketAstInfo(source, label);
-  const edits = [];
-
-  if (!source.includes(AGENT_HOST_WS_GATE_MARKER)) {
-    if (info.gateLiterals.length !== 1) {
-      throw new Error(`${label}: expected one nal_websocket_client gate literal, found ${info.gateLiterals.length}`);
-    }
-    const gate = info.gateLiterals[0];
-    edits.push({
-      start: gate.start,
-      end: gate.end,
-      text: `${JSON.stringify(DISABLED_WS_GATE)}/*${AGENT_HOST_WS_GATE_MARKER}*/`,
-    });
-  }
-
-  if (!source.includes(AGENT_HOST_WS_ORIGINS_MARKER)) {
-    if (info.acceptedOriginArrays.length !== 1) {
-      throw new Error(`${label}: expected one Agent WebSocket accepted-origin set, found ${info.acceptedOriginArrays.length}`);
-    }
-    const origins = info.acceptedOriginArrays[0];
-    edits.push({
-      start: origins.start + 1,
-      end: origins.end - 1,
-      text: `/*${AGENT_HOST_WS_ORIGINS_MARKER}*/`,
-    });
-  }
-
-  edits.sort((a, b) => b.start - a.start);
-  let patched = source;
-  for (const edit of edits) patched = patched.slice(0, edit.start) + edit.text + patched.slice(edit.end);
-  parseBundle(patched, `${label} (patched)`);
-  if (!isAgentWebSocketDisabled(patched, label)) throw new Error(`${label}: WebSocket disable verification failed`);
-  return { source: patched, changed: edits.length > 0, required: true };
 }
 
 function buildAgentHostRouter() {

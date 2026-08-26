@@ -7,6 +7,7 @@ import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { CCURSOR_DIR_NAME, ROUTES_FILE_NAME, DEFAULT_HOST, DEFAULT_PORT } from './defaults.js';
 import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched } from './node-http11-router.js';
+import { disableAgentWebSocket, hasAgentWebSocketStack, isAgentWebSocketDisabled } from './agent-websocket-guard.js';
 
 export const ALWAYS_LOCAL_ROUTER_MARKER = '__byokUrlRewrite';
 export const WAIT_MARKER = '__byokWaitServer';
@@ -40,7 +41,15 @@ export function patchAlwaysLocal(paths, log) {
     log?.('  HTTP/1.1 whitelist router already active');
   }
 
-  // 2. Wait for the Cursor++ server before the legacy Agent transport starts.
+  // 2. Cursor 3.16+ embeds the same Agent WebSocket selector in the legacy
+  //    bundle. It must be disabled too or false/auto topology can bypass HTTP.
+  const websocket = disableAgentWebSocket(patched, 'cursor-always-local main.js');
+  patched = websocket.source;
+  if (websocket.required) {
+    log?.('  Legacy Agent WebSocket bypass disabled');
+  }
+
+  // 3. Wait for the Cursor++ server before the legacy Agent transport starts.
   const waited = injectActivateWait(patched, 'always-local', log);
   if (!waited.ok) throw new Error('cursor-always-local activate function not found');
   patched = waited.source;
@@ -51,7 +60,7 @@ export function patchAlwaysLocal(paths, log) {
     modified.push(paths.alwaysLocalMain);
   }
 
-  // 3. Built-in extension signature bypass.
+  // 4. Built-in extension signature bypass.
   const ehCode = readFileSync(paths.extensionHostJs, 'utf-8');
   const ehPatched = ehCode.includes('if(!1)') && !SIG_PATTERN.test(ehCode);
   if (ehPatched) {
@@ -77,11 +86,15 @@ export function inspectAlwaysLocalPatch(paths) {
   const source = readFileSync(paths.alwaysLocalMain, 'utf-8');
   const router = isNodeHttp11RouterPatched(source, ALWAYS_LOCAL_ROUTER_MARKER);
   const wait = hasActivateWait(source);
+  const websocketRequired = hasAgentWebSocketStack(source);
+  const websocketDisabled = isAgentWebSocketDisabled(source, 'cursor-always-local main.js');
   return {
     present: true,
     router,
     wait,
-    fullyPatched: router && wait,
+    websocketRequired,
+    websocketDisabled,
+    fullyPatched: router && wait && websocketDisabled,
   };
 }
 
@@ -95,13 +108,15 @@ export function checkAlwaysLocalPatch(paths, log) {
   try {
     let candidate = readFileSync(paths.alwaysLocalMain, 'utf-8');
     if (!isNodeHttp11RouterPatched(candidate, ALWAYS_LOCAL_ROUTER_MARKER)) candidate = buildPayload() + candidate;
+    candidate = disableAgentWebSocket(candidate, 'cursor-always-local main.js').source;
     const waited = injectActivateWait(candidate, 'always-local', log);
     if (!waited.ok) throw new Error('activate function not found');
     candidate = waited.source;
 
     if (!isNodeHttp11RouterPatched(candidate, ALWAYS_LOCAL_ROUTER_MARKER)) throw new Error('router call-site verification failed');
     if (!hasActivateWait(candidate)) throw new Error('activate wait verification failed');
-    log?.('  [OK] HTTP/1.1 router + activate wait');
+    if (!isAgentWebSocketDisabled(candidate, 'cursor-always-local main.js')) throw new Error('legacy WebSocket disable verification failed');
+    log?.('  [OK] HTTP/1.1 router + activate wait + legacy WebSocket guard');
     return true;
   }
   catch (error) {

@@ -55,6 +55,11 @@ export async function status() {
   if (alwaysLocal.present) {
     console.log(alwaysLocal.router ? ok('Legacy Agent HTTP/1.1 router active') : fail('Legacy Agent HTTP/1.1 router missing'));
     console.log(alwaysLocal.wait ? ok('Legacy Agent server wait active') : fail('Legacy Agent server wait missing'));
+    if (alwaysLocal.websocketRequired) {
+      console.log(alwaysLocal.websocketDisabled
+        ? ok('Legacy Agent WebSocket bypass disabled')
+        : fail('Legacy Agent WebSocket bypass is active'));
+    }
   }
   else {
     console.log(na('cursor-always-local not found'));
