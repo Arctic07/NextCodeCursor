@@ -8,10 +8,8 @@
   },
   "scripts": {
     "build": "node esbuild.js",
-    "build:production": "node esbuild.js --production",
     "build:vsix": "node src/build-vsix.js",
-    "build:vsix:obf": "node src/build-vsix.js --obf",
-    "build:all": "npm run build:vsix:obf && npm run build:production"
+    "build:all": "npm run build:vsix && npm run build"
   },
   "files": [
     "dist/",

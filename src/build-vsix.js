@@ -40,8 +40,7 @@ console.log(`[build] Building Cursor++ extension from: ${extensionRoot}`);
 if (!existsSync(join(extensionRoot, 'package.json'))) {
   throw new Error(`Invalid extension root: ${extensionRoot} (package.json not found)`);
 }
-const obf = process.argv.includes('--obf');
-execSync(obf ? 'pnpm run vsix:obf' : 'pnpm run vsix', { cwd: extensionRoot, stdio: 'inherit' });
+execSync('pnpm run vsix', { cwd: extensionRoot, stdio: 'inherit' });
 
 // 找到生成的 vsix (此时 Cursor++/ 只可能剩下刚打的那一份)
 const vsixFiles = readdirSync(extensionRoot).filter(f => f.endsWith('.vsix'));
