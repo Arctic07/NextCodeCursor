@@ -22,7 +22,7 @@
     "ai"
   ],
   "author": "CometixSpace",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
   "private": false,
   "publishConfig": {
     "access": "public"
