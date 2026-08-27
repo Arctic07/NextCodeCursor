@@ -40,6 +40,7 @@ import {
 } from '../../config/knowledgeBaseStore'
 import { buildByokAvailableModels } from '../../handlers/models/byokModelBuilder'
 import { flattenModels } from '../../config/providersStore'
+import { isModelDefaultOn } from '../../data/defaults'
 import { logger } from '../../logger'
 
 /**
@@ -78,6 +79,29 @@ async function handleAvailableModels() {
   })
 }
 
+/**
+ * GetDefaultModel — 从 providers.json 推送 BYOK 默认模型到 Composer + Cmd+K。
+ *
+ * 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
+ * 返回空 {} = 不推送(客户端保留上次选择)。
+ *
+ * 候选集必须与 AvailableModels 下发的启用集一致 —— 都走 isModelDefaultOn,
+ * 否则会把选择器里根本没启用的模型推成默认模型。
+ */
+export async function handleGetDefaultModel() {
+  const all = flattenModels().filter(x => isModelDefaultOn(x.model))
+  const first = all[0]
+  if (!first)
+    return {}
+  const thinkingModel = all.find(x => x.model.thinking)
+  return {
+    model: first.model.id,
+    thinkingModel: thinkingModel?.model.id ?? '',
+    maxMode: false,
+    nextDefaultSetDate: String(Date.now()),
+  }
+}
+
 export default (router: ConnectRouter) => {
   router.service(AiService, {
     serverTime: async () => ({
@@ -87,21 +111,7 @@ export default (router: ConnectRouter) => {
 
     availableModels: handleAvailableModels,
 
-    // GetDefaultModel — 从 providers.json 推送 BYOK 默认模型到 Composer + Cmd+K
-    // 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
-    // 返回空 {} = 不推送(客户端保留上次选择)
-    getDefaultModel: async () => {
-      const all = flattenModels().filter(x => x.model.defaultOn !== false)
-      const first = all[0]
-      if (!first) return {}
-      const thinkingModel = all.find(x => x.model.thinking)
-      return {
-        model: first.model.id,
-        thinkingModel: thinkingModel?.model.id ?? '',
-        maxMode: false,
-        nextDefaultSetDate: String(Date.now()),
-      }
-    },
+    getDefaultModel: handleGetDefaultModel,
     getDefaultModelNudgeData: async () => ({ nudgeDate: '0' }),
     cppConfig: async () => ({
       isOn: true,
