@@ -1,7 +1,9 @@
+import type { AgentServerMessage } from '../gen/agent_v1_pb'
 import { describe, expect, it } from 'vitest'
 import { mergeMcpStateIntoRoutingTable } from '../handlers/agent/mcpState'
 import { buildToolArgs } from '../handlers/agent/toolBuilders'
-import { mapToolName, parseFlatMcpToolName, resolveToolCall } from '../handlers/agent/tools'
+import { launchTaskTool } from '../handlers/agent/toolRuntime'
+import { mapPartialToolName, mapToolName, parseFlatMcpToolName, resolveExecutionToolName, resolveToolCall } from '../handlers/agent/tools'
 import { getProviderToolCatalog } from '../handlers/llm/toolCatalog'
 
 /**
@@ -163,6 +165,132 @@ describe('defensive flat MCP routing', () => {
   it('keeps malformed or differently-cased names untouched', () => {
     expect(parseFlatMcpToolName('mcp__only-server')).toBeNull()
     expect(mapToolName('MCP__srv__tool')).toBe('MCP__srv__tool')
+  })
+})
+
+/**
+ * cursor namespace 下的原生工具身份必须贯穿"预告 → 分流 → 执行"三段。
+ *
+ * 客户端按 toolCall.tool.case 分派到独立 handler。其中 editToolCall /
+ * updateTodosToolCall / shellToolCall / createPlanToolCall / taskToolCall /
+ * askQuestionToolCall 六种走 specialToolHandlers,命中已有 bubble 时只
+ * setBubbleData(status/params/toolCall) 而**不写 toolCallType** ——
+ * 类型由建 bubble 的那一帧永久决定 (3.15.6 / 3.16.29 / 3.17.19 一致)。
+ *
+ * 所以任何一段用错名字,后面都改不回来:
+ *   预告帧猜成 mcpToolCall  → Task 永远渲染成 MCP 菱形图标
+ *   分流按 tc.name 判断     → Task 掉进串行路径,丢掉并发启动与 subagent 模型解析
+ */
+describe('cursor namespace 的原生工具身份', () => {
+  it('对 CallDynamicTool 不发预告帧 —— 此刻参数未到,类型不可判定', () => {
+    for (const alias of ['CallDynamicTool', 'call_dynamic_tool', 'CallMcpTool', 'call_mcp_tool'])
+      expect(mapPartialToolName(alias), alias).toBeNull()
+  })
+
+  it('类型确定的工具照发预告帧', () => {
+    // GetDynamicTools 的 cursorToolType 固定,不存在歧义
+    expect(mapPartialToolName('GetDynamicTools')).toBe('getMcpToolsToolCall')
+    expect(mapPartialToolName('Task')).toBe('taskToolCall')
+    expect(mapPartialToolName('user-ida-pro-mcp-decompile')).toBe('mcpToolCall')
+  })
+
+  it('解包出执行侧的真实工具名', () => {
+    expect(resolveExecutionToolName(
+      'CallDynamicTool',
+      { namespace: 'cursor', toolName: 'Task', arguments: { prompt: 'go' } },
+      [{ tool: 'Task' }],
+    )).toBe('Task')
+  })
+
+  it('未注册 / 参数非法 / 非 cursor namespace 一律不解包', () => {
+    // 不解包 = 交给 resolveToolCall 走 resolutionError 反馈给 LLM,
+    // 而不是在分流处静默当成原生工具启动
+    expect(resolveExecutionToolName(
+      'CallDynamicTool',
+      { namespace: 'cursor', toolName: 'Task', arguments: {} },
+      [{ tool: 'TodoWrite' }],
+    )).toBe('CallDynamicTool')
+    expect(resolveExecutionToolName(
+      'CallDynamicTool',
+      { namespace: 'cursor', toolName: 'Task', arguments: [] },
+      [{ tool: 'Task' }],
+    )).toBe('CallDynamicTool')
+    expect(resolveExecutionToolName(
+      'CallDynamicTool',
+      { namespace: 'user-ida-pro-mcp', toolName: 'decompile', arguments: {} },
+      [{ tool: 'Task' }],
+    )).toBe('CallDynamicTool')
+    expect(resolveExecutionToolName('Shell', { command: 'ls' }, [{ tool: 'Task' }])).toBe('Shell')
+  })
+
+  it('分流判据与执行判据不得漂移', () => {
+    // resolveExecutionToolName (分流) 与 resolveToolCall (执行) 若给出不同答案,
+    // 就会出现"分流当 MCP、执行当 Task"这类自相矛盾的状态
+    const cases: Array<[Record<string, unknown>, Array<{ tool: string }>]> = [
+      [{ namespace: 'cursor', toolName: 'Task', arguments: {} }, [{ tool: 'Task' }]],
+      [{ namespace: 'cursor', toolName: 'Task', arguments: {} }, []],
+      [{ namespace: 'cursor', toolName: 'TodoWrite', arguments: { todos: [] } }, [{ tool: 'TodoWrite' }]],
+      [{ namespace: 'cursor', toolName: 'Task', arguments: 'oops' }, [{ tool: 'Task' }]],
+      [{ namespace: 'user-ida-pro-mcp', toolName: 'decompile', arguments: {} }, [{ tool: 'Task' }]],
+    ]
+    for (const [input, registry] of cases) {
+      const resolved = resolveToolCall('CallDynamicTool', input, AVAILABLE, registry)
+      expect(resolveExecutionToolName('CallDynamicTool', input, registry), JSON.stringify(input))
+        .toBe(resolved.effectiveToolName ?? 'CallDynamicTool')
+    }
+  })
+
+  it('经 CallDynamicTool 启动的 Task 走 subagent 通道,不走 mcpArgs', async () => {
+    const frames: AgentServerMessage[] = []
+    const iterator = launchTaskTool({
+      toolCall: {
+        callId: 'call-task-1',
+        name: 'CallDynamicTool',
+        input: {
+          namespace: 'cursor',
+          toolName: 'Task',
+          arguments: { description: 'probe', prompt: 'look around', subagent_type: 'explore' },
+        },
+      },
+      availableMcpTools: AVAILABLE,
+      conversationId: 'conv-1',
+      currentModelId: 'test-model',
+      round: 0,
+      allocateExecMessageId: () => 1,
+      cursorDynamicTools: [{ tool: 'Task' }],
+    })
+    let result = await iterator.next()
+    while (!result.done) {
+      frames.push(result.value)
+      result = await iterator.next()
+    }
+
+    expect(result.value?.cursorToolType).toBe('taskToolCall')
+
+    // 帧的 case 由 cursorToolType / 硬编码 kind 决定,不受工具名影响 ——
+    // tc.name 真正决定的是 args 用哪个 builder 填充。曾用 tc.name 构建,
+    // 于是走到 McpArgs 的 builder 上,proto 字段全部对不上号:
+    // taskToolCall 拿不到 description/prompt,subagentArgs 拿不到 prompt/subagentType。
+    const started = frames.find(frame => frame.message.case === 'interactionUpdate')
+    if (started?.message.case !== 'interactionUpdate')
+      throw new Error('expected toolCallStarted frame')
+    if (started.message.value.message.case !== 'toolCallStarted')
+      throw new Error('expected toolCallStarted frame')
+    const startedTool = started.message.value.message.value.toolCall?.tool
+    expect(startedTool?.case).toBe('taskToolCall')
+    expect((startedTool?.value as any)?.args).toMatchObject({
+      description: 'probe',
+      prompt: 'look around',
+    })
+
+    const execFrame = frames.find(frame => frame.message.case === 'execServerMessage')
+    if (execFrame?.message.case !== 'execServerMessage')
+      throw new Error('expected exec frame')
+    expect(execFrame.message.value.message.case).toBe('subagentArgs')
+    expect(execFrame.message.value.message.value).toMatchObject({
+      prompt: 'look around',
+      subagentType: 'explore',
+    })
   })
 })
 

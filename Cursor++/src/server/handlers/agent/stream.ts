@@ -765,8 +765,16 @@ export async function* translateStream(
         idleHintSent = false
         const defaultModelCallId = `model-${stepId}`
         const modelCallId = resolveToolModelCallId?.(event, defaultModelCallId) ?? defaultModelCallId
-        streamLogger.debug({ callId: event.id, toolType: mapPartialToolName(event.name), mcid: modelCallId }, '[EDIT_T] 0.partialToolCall{empty}')
-        yield partialToolCall(event.id, mapPartialToolName(event.name), modelCallId)
+        // null = 类型此刻不可判定 (CallDynamicTool),跳过预告帧,
+        // 由 toolCallStarted 一次给出准确类型 —— 见 mapPartialToolName 注释。
+        const partialType = mapPartialToolName(event.name)
+        if (partialType) {
+          streamLogger.debug({ callId: event.id, toolType: partialType, mcid: modelCallId }, '[EDIT_T] 0.partialToolCall{empty}')
+          yield partialToolCall(event.id, partialType, modelCallId)
+        }
+        else {
+          streamLogger.debug({ callId: event.id, llmToolName: event.name, mcid: modelCallId }, '[EDIT_T] 0.partialToolCall{skipped: type undecidable}')
+        }
         tokenCount++
         yield tokenDelta(1)
         break

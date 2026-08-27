@@ -52,10 +52,98 @@ export interface AgentSession {
     backgroundJobs: Map<string, BackgroundJob>;
     /** env.terminalsFolder — 用于构造后台 shell 的终端文件路径 {terminalsFolder}/{shellId}.txt */
     terminalsFolder?: string;
+    /**
+     * 客户端 cancelAction 携带的 reason;一经设置即表示本 run 已被客户端中断。
+     *
+     * 客户端中断当前生成 (点停止、提交新消息抢占、steer 降级后升级为 interrupt)
+     * 时,ControlledConversationActionManager.abort() 会往同一条 BiDi 客户端流
+     * 发 ConversationAction{cancelAction},随后才本地 abort。这是服务端唯一能
+     * 感知"该停了"的信号 —— 不消费它,旧 run 会一直跑到 LLM 流自然结束,
+     * 表现为"发新消息时前一条没有被终止"。
+     *
+     * 与 closed 的区别: closed 是传输层断开,cancelled 是应用层中断,
+     * 后者到达时连接仍然活着(客户端还要用它接收后续帧)。
+     */
+    cancelledReason?: string;
 }
 
 export function createEphemeralSession(requestId: string): AgentSession {
-    return { requestId, messages: [], notify: null, listeners: new Set(), closed: false, backgroundJobs: new Map() };
+    return {
+        requestId,
+        messages: [],
+        notify: null,
+        listeners: new Set(),
+        closed: false,
+        backgroundJobs: new Map(),
+    };
+}
+
+/**
+ * 判定一条 AgentClientMessage 是否为 steer 的运行中上下文注入。
+ *
+ * injectContextAction 与 userMessageAction / cancelAction 平级挂在
+ * ConversationAction 上,走同一条 BiDi 客户端流发来。
+ */
+function isContextInjection(json: Record<string, unknown>): boolean {
+    const action = json.conversationAction as Record<string, unknown> | undefined;
+    return action !== undefined && 'injectContextAction' in action;
+}
+
+/**
+ * 判定一条 AgentClientMessage 是否为客户端中断信号,并取出 reason。
+ *
+ * 判据是 cancelAction 存不存在,不是 reason 有没有值 —— proto3 里空字符串
+ * 与缺省不可区分,而客户端确实可能发不带 reason 的中断。
+ *
+ * 实测 reason (3.17.19):
+ *   "new_message_submitted"    submitChatMaybeAbortCurrent,提交新消息抢占当前生成
+ *   "user_stopped_generation"  用户点停止按钮
+ */
+function extractCancelReason(json: Record<string, unknown>): string | undefined {
+    const action = json.conversationAction as Record<string, unknown> | undefined;
+    if (!action || !('cancelAction' in action))
+        return undefined;
+    const cancel = action.cancelAction as Record<string, unknown> | undefined;
+    const reason = cancel?.reason;
+    return typeof reason === 'string' && reason ? reason : 'cancelled';
+}
+
+/**
+ * 消息入队的统一入口。两条上行通道 (bidi 的 pushSessionMessage、SSE 降级的
+ * appendMessage) 都经过这里,保证不论客户端走哪条路都是同一套处理。
+ *
+ * 三类去向:
+ *   injectContextAction — 丢弃 (见下)
+ *   cancelAction        — 记为中断信号
+ *   其余                — 进 messages 供 waitForMessageMatching 消费
+ *
+ * 丢弃注入的理由: 我们不支持运行中注入,而客户端对"服务端没有应答"本就有兜底 ——
+ * run 结束时 reconcileSteerItemsWhenIdle 会撤掉乐观气泡、把消息退回队列,
+ * 随后 tryDispatchNextQueueItem 自动发出,消息不会丢。但它没有任何
+ * waitForMessageMatching 的 predicate 会匹配,留在 messages 里只会无限堆积。
+ */
+function ingestSessionMessage(session: AgentSession, json: Record<string, unknown>): void {
+    if (isContextInjection(json)) {
+        logger.debug({ requestId: session.requestId }, '[SESSION] dropping context injection (run-time injection unsupported)');
+        return;
+    }
+    const cancelReason = extractCancelReason(json);
+    if (cancelReason !== undefined) {
+        // 只认第一次 —— 客户端可能重复发,reason 以最先到达的为准
+        if (session.cancelledReason === undefined) {
+            session.cancelledReason = cancelReason;
+            logger.info({ requestId: session.requestId, reason: cancelReason }, '[CANCEL] client cancelled the run');
+        }
+    }
+    else {
+        session.messages.push(json);
+    }
+    notifyAll(session);
+}
+
+/** 客户端是否已中断本 run。 */
+export function isSessionCancelled(session: AgentSession): boolean {
+    return session.cancelledReason !== undefined;
 }
 
 /** 登记一个后台 job, 供后续 AwaitShell 分流。key = task_id 字符串形式。 */
@@ -75,8 +163,7 @@ function notifyAll(session: AgentSession): void {
 }
 
 export function pushSessionMessage(session: AgentSession, json: Record<string, unknown>): void {
-    session.messages.push(json);
-    notifyAll(session);
+    ingestSessionMessage(session, json);
 }
 
 export function markSessionClosed(session: AgentSession): void {
@@ -89,7 +176,8 @@ const sessions = new Map<string, AgentSession>();
 export function getOrCreateSession(requestId: string): AgentSession {
     let session = sessions.get(requestId);
     if (!session) {
-        session = { requestId, messages: [], notify: null, listeners: new Set(), closed: false, backgroundJobs: new Map() };
+        // 复用 createEphemeralSession —— 两处各自写字面量时,新增字段容易只补一处
+        session = createEphemeralSession(requestId);
         sessions.set(requestId, session);
         logger.debug({ requestId }, '[SESSION] created');
     }
@@ -108,8 +196,7 @@ export function appendMessage(requestId: string, data: string): void {
         const json = toJson(AgentClientMessageSchema, clientMsg) as Record<string, unknown>;
         const keys = Object.keys(json);
         logger.info({ requestId, keys, protoBytes: bytes.length }, '[SESSION] appendMessage');
-        session.messages.push(json);
-        notifyAll(session);
+        ingestSessionMessage(session, json);
     } catch (e) {
         logger.warn({ requestId, dataLen: data.length, error: (e as Error).message }, '[SESSION] proto decode failed');
     }
@@ -140,7 +227,9 @@ export async function waitForMessageMatching(
     if (idx >= 0) {
         return session.messages.splice(idx, 1)[0];
     }
-    if (session.closed) return null;
+    // cancelled 与 closed 同样立即结束等待 —— 调用方 (wait.ts) 据
+    // session.cancelledReason 区分二者,把前者转成 AgentRunAbortedError
+    if (session.closed || session.cancelledReason !== undefined) return null;
 
     return new Promise<Record<string, unknown> | null>((resolve) => {
         let resolved = false;
@@ -169,7 +258,7 @@ export async function waitForMessageMatching(
                 resolve(session.messages.splice(i, 1)[0]);
                 return;
             }
-            if (session.closed) {
+            if (session.closed || session.cancelledReason !== undefined) {
                 cleanup();
                 resolve(null);
             }

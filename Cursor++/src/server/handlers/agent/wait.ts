@@ -19,6 +19,19 @@ export function isAgentRunAbortedError(error: unknown): error is AgentRunAborted
     return error instanceof AgentRunAbortedError;
 }
 
+/**
+ * 客户端已发 cancelAction 则抛出中断,把控制权交回 conversationRuntime /
+ * agentOrchestrator 的 isAgentRunAbortedError 分支干净收尾。
+ *
+ * 放在每个可能长时间停留的位置调用: 工具等待返回后、LLM 流每个事件、
+ * round 边界。中断粒度因此收敛到单个事件而非整轮。
+ */
+export function throwIfSessionCancelled(session: AgentSession): void {
+    if (session.cancelledReason === undefined)
+        return;
+    throw new AgentRunAbortedError(`client cancelled the run: ${session.cancelledReason}`);
+}
+
 export function isExecClientMessageForId(msg: Record<string, unknown>, execMessageId: number): boolean {
     return 'execClientMessage' in msg
         && Number((msg.execClientMessage as Record<string, unknown>).id) === execMessageId;
@@ -58,6 +71,10 @@ export async function waitForExecMessageMatching(
         (candidate) => predicate(candidate) || !!getExecThrowForId(candidate, execMessageId),
         timeoutMs,
     );
+    // 客户端中断 (cancelAction) 会让 waitForMessageMatching 立即返回 null。
+    // 转成 AgentRunAbortedError,与 exec throw 走同一条干净收尾路径 ——
+    // 否则工具会拿着 null 结果继续往下跑。
+    throwIfSessionCancelled(session);
     if (!msg) return null;
 
     const execThrow = getExecThrowForId(msg, execMessageId);

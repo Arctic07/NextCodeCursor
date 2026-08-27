@@ -3,6 +3,7 @@ import type { LLMContentBlock, LLMMessage, LLMTool, LLMToolResultBlock } from '.
 import type { ParsedRunRequest } from './protocol'
 import type { AgentSession } from './session'
 import type { ToolCallInfo } from './tools'
+import { resolveExecutionToolName } from './tools'
 import { clearDraftCheckpoint, persistConversationCheckpoint } from '../../database/checkpoints'
 import { logger } from '../../logger'
 import { resolveProviderRuntime } from '../llm'
@@ -22,7 +23,8 @@ import { ActiveTurnTracker, createCurrentTurnUserMessageBlob, readTurnBaseline }
 import { contextualizeDynamicMetaTools, partitionCursorBuiltinTools, shouldEnableBuiltinDynamicProfile } from './dynamicTools'
 import { contextualizeSubagentTools } from './subagentCatalog'
 import { addUsage, clampTokenDetails, emptyUsageTotals, estimateContextTokens, getAutoCompactThreshold, shouldTriggerCompaction } from './usage'
-import { isAgentRunAbortedError } from './wait'
+import { isAgentRunAbortedError, throwIfSessionCancelled } from './wait'
+import { isSessionCancelled } from './session'
 import { makeProviderError, makeToolError } from '../errors'
 import { createRepairDiagnostics, hasRepairMutations, repairConversationHistory } from '../llm/transformMessages'
 
@@ -970,6 +972,17 @@ export async function* handleConversationRun(
   let stepCounter = 0
 
   for (let round = 0; ; round++) {
+    // 轮次边界的中断检查 —— 上一轮工具刚跑完时客户端可能已经中断,
+    // 此处拦下可避免白发一次 LLM 请求
+    if (session && isSessionCancelled(session)) {
+      logger.info({
+        conversationId: parsed.conversationId,
+        round,
+        reason: session.cancelledReason,
+      }, '[CANCEL] run cancelled at round boundary')
+      return
+    }
+
     const pendingToolCalls: ToolCallInfo[] = []
     const inflightToolCalls = new Map<string, { name: string, input: string }>()
     const roundAssistantBlocks: LLMContentBlock[] = []
@@ -1148,10 +1161,28 @@ export async function* handleConversationRun(
       })
 
       for await (const frame of translatedFrames) {
+        // LLM 流是一轮里最长的一段停留,中断多半落在这里。逐帧检查把中断
+        // 粒度收敛到单个事件 (thinking_delta 级,毫秒量级)。抛出后由下方
+        // catch 的 isAgentRunAbortedError 分支干净收尾,半截的
+        // roundAssistantBlocks 一并丢弃,不污染历史。
+        if (session)
+          throwIfSessionCancelled(session)
         yield frame
       }
     }
     catch (e) {
+      // 客户端主动中断不是错误 —— 必须先于 makeProviderError 拦下,
+      // 否则会被包成 ErrorDetails,在客户端渲染出一条 retry banner:
+      // 用户只是发了新消息抢占当前生成,却看到"上一条失败了"。
+      if (isAgentRunAbortedError(e)) {
+        logger.info({
+          conversationId: parsed.conversationId,
+          round,
+          reason: session?.cancelledReason,
+        }, '[CANCEL] LLM stream aborted by client')
+        return
+      }
+
       // 关键: 不再往对话流 yield textDelta('[BYOK Error] ...') —— 那会让错误文本
       // 伪装成 assistant 的"正常回复", 同时被写进 roundAssistantBlocks 污染历史,
       // 下一轮 LLM 会看到自己刚刚回复了 [BYOK Error] 导致状态错乱。
@@ -1196,7 +1227,11 @@ export async function* handleConversationRun(
       const taskLaunches: TaskLaunchContext[] = []
       const nonTaskCalls: typeof pendingToolCalls = []
       for (const tc of pendingToolCalls) {
-        if ((tc.name === 'Task' || tc.name === 'Subagent') && session) {
+        // dynamic profile 下 Task 落在 cursor namespace,LLM 侧名字是
+        // CallDynamicTool,真实身份藏在 arguments 里。按 tc.name 分流会让
+        // Task 掉进 Phase 2 串行路径,丢掉并发启动与 subagent 模型解析。
+        const executionToolName = resolveExecutionToolName(tc.name, tc.input, parsed.cursorDynamicTools)
+        if ((executionToolName === 'Task' || executionToolName === 'Subagent') && session) {
           const ctx = yield* launchTaskTool({
             toolCall: tc,
             availableMcpTools: parsed.mcpTools,
@@ -1205,6 +1240,7 @@ export async function* handleConversationRun(
             subagentModelOverrides: parsed.subagentModelOverrides,
             round,
             allocateExecMessageId: () => ++blobCounter,
+            cursorDynamicTools: parsed.cursorDynamicTools,
           })
           if (ctx)
             taskLaunches.push(ctx)
