@@ -3,6 +3,7 @@ import type { LLMContentBlock, LLMMessage, LLMTool, LLMToolResultBlock } from '.
 import type { ParsedRunRequest } from './protocol'
 import type { AgentSession } from './session'
 import type { ToolCallInfo } from './tools'
+import { resolveExecutionToolName } from './tools'
 import { clearDraftCheckpoint, persistConversationCheckpoint } from '../../database/checkpoints'
 import { logger } from '../../logger'
 import { resolveProviderRuntime } from '../llm'
@@ -1196,7 +1197,11 @@ export async function* handleConversationRun(
       const taskLaunches: TaskLaunchContext[] = []
       const nonTaskCalls: typeof pendingToolCalls = []
       for (const tc of pendingToolCalls) {
-        if ((tc.name === 'Task' || tc.name === 'Subagent') && session) {
+        // dynamic profile 下 Task 落在 cursor namespace,LLM 侧名字是
+        // CallDynamicTool,真实身份藏在 arguments 里。按 tc.name 分流会让
+        // Task 掉进 Phase 2 串行路径,丢掉并发启动与 subagent 模型解析。
+        const executionToolName = resolveExecutionToolName(tc.name, tc.input, parsed.cursorDynamicTools)
+        if ((executionToolName === 'Task' || executionToolName === 'Subagent') && session) {
           const ctx = yield* launchTaskTool({
             toolCall: tc,
             availableMcpTools: parsed.mcpTools,
@@ -1205,6 +1210,7 @@ export async function* handleConversationRun(
             subagentModelOverrides: parsed.subagentModelOverrides,
             round,
             allocateExecMessageId: () => ++blobCounter,
+            cursorDynamicTools: parsed.cursorDynamicTools,
           })
           if (ctx)
             taskLaunches.push(ctx)

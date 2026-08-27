@@ -24,7 +24,7 @@ import {
     buildWebSearchApprovalResultFromInteractionResponse,
 } from './toolResults';
 import { finalizeToolCall } from './toolLifecycle';
-import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableMcpTool, type ToolCallInfo } from './tools';
+import { buildEditPlan, buildExecArgs, mapToolToExecArgs, resolveToolCall, type AvailableDynamicBuiltinTool, type AvailableMcpTool, type ToolCallInfo } from './tools';
 import { getBackgroundJob, registerBackgroundJob, type AgentSession } from './session';
 import { buildExecToolResult } from './toolResults';
 import { str } from './toolkit/results/shared';
@@ -725,10 +725,20 @@ export async function* launchTaskTool(params: {
     subagentModelOverrides?: SubagentModelOverride[];
     round: number;
     allocateExecMessageId: () => number;
+    /** cursor namespace 已注册的内置工具 —— Task 经 CallDynamicTool 进来时据此解包 */
+    cursorDynamicTools?: AvailableDynamicBuiltinTool[];
 }): AsyncGenerator<AgentServerMessage, TaskLaunchContext | null, void> {
     const tc = params.toolCall;
-    const resolvedTool = resolveToolCall(tc.name, tc.input, params.availableMcpTools);
+    const resolvedTool = resolveToolCall(
+        tc.name,
+        tc.input,
+        params.availableMcpTools,
+        params.cursorDynamicTools,
+    );
     const cursorToolType = resolvedTool.cursorToolType;
+    // tc.name 是 LLM 侧名字 (dynamic 模式下为 CallDynamicTool),只用于结果回喂;
+    // args 构建必须用解包后的执行侧名字,否则会走到 McpArgs 的 builder 上。
+    const executionToolName = resolvedTool.effectiveToolName ?? tc.name;
     const modelCallId = `${params.conversationId}-${params.round}-${tc.callId.slice(-4)}`;
 
     let sanitizedInput = resolvedTool.sanitizedInput;
@@ -738,6 +748,8 @@ export async function* launchTaskTool(params: {
 
     logger.info({
         callId: tc.callId,
+        llmToolName: tc.name,
+        executionToolName,
         runInBackground: sanitizedInput.run_in_background ?? sanitizedInput.runInBackground ?? '(unset)',
         resume: sanitizedInput.resume ?? '(none)',
         subagentType,
@@ -746,7 +758,7 @@ export async function* launchTaskTool(params: {
 
     let startedArgs: Record<string, unknown>;
     try {
-        startedArgs = buildToolArgs(tc.name, sanitizedInput, tc.callId, {
+        startedArgs = buildToolArgs(executionToolName, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
             currentModelId: params.currentModelId,
         });
@@ -764,7 +776,7 @@ export async function* launchTaskTool(params: {
         const execModelId = typeof sanitizedInput.modelId === 'string'
             ? sanitizedInput.modelId
             : params.currentModelId;
-        args = buildExecArgs(tc.name, sanitizedInput, tc.callId, {
+        args = buildExecArgs(executionToolName, sanitizedInput, tc.callId, {
             conversationId: params.conversationId,
             currentModelId: execModelId,
         });

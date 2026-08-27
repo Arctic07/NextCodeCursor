@@ -144,9 +144,107 @@ export function mapToolName(llmToolName: string): string {
         ?? (parseFlatMcpToolName(llmToolName) ? 'mcpToolCall' : llmToolName);
 }
 
-export function mapPartialToolName(llmToolName: string): string {
+/**
+ * partialToolCall 预告帧的类型 —— 返回 null 表示本轮不发预告帧。
+ *
+ * 预告帧发出时 tool_use 的参数尚未到达,只有 LLM 侧工具名可用。对
+ * CallDynamicTool 而言真实身份藏在 arguments.namespace/toolName 里,此刻
+ * 无从判定,只能猜一个 —— 而猜错的代价是不可逆的:
+ *
+ * 客户端按 toolCall.tool.case 分派 handler。editToolCall / updateTodosToolCall /
+ * shellToolCall / createPlanToolCall / taskToolCall / askQuestionToolCall 六种
+ * 走 specialToolHandlers,其余走通用路径。通用路径的 upsertToolFormerBubbleData
+ * 会写 tool 字段,允许后续帧改型;而 specialToolHandler 命中已有 bubble 时只
+ * setBubbleData(status/params/toolCall),**不写 toolCallType** ——
+ * bubble 被预告帧的类型永久锁死 (3.15.6 / 3.16.29 / 3.17.19 行为一致)。
+ *
+ * 于是 CallDynamicTool(cursor, Task) 猜成 mcpToolCall 后,即便 toolCallStarted
+ * 发的是 taskToolCall,UI 仍渲染成 MCP 菱形图标。预告帧本就是可选的
+ * (handlePartialToolCall 只做 markToolCallAsUnfinished + 建预览 bubble),
+ * 省掉它,让 toolCallStarted 一次给出准确类型。
+ *
+ * GetDynamicTools 不在此列 —— 它的 cursorToolType 固定为 getMcpToolsToolCall,
+ * 不存在歧义,预告帧照发。
+ */
+export function mapPartialToolName(llmToolName: string): string | null {
+    if (isDynamicInvokeToolName(llmToolName)) return null;
     if (llmToolName.startsWith('user-')) return 'mcpToolCall';
     return mapToolName(llmToolName);
+}
+
+/**
+ * CallDynamicTool 的别名集合。
+ *
+ * CallDynamicTool / call_dynamic_tool 是官方 3.15.6 起的名字;
+ * CallMcpTool / call_mcp_tool 是本项目早期实现与旧版本的参数名,保留兼容,
+ * 避免会话中途升级时正在进行的调用失配。
+ */
+const DYNAMIC_INVOKE_ALIASES = new Set([
+    'CallDynamicTool',
+    'call_dynamic_tool',
+    'CallMcpTool',
+    'call_mcp_tool',
+]);
+
+export function isDynamicInvokeToolName(llmToolName: string): boolean {
+    return DYNAMIC_INVOKE_ALIASES.has(llmToolName);
+}
+
+export interface DynamicInvokeTarget {
+    /** 官方用 serverIdentifier (如 user-ida-pro-mcp);保留 cursor 作为内置保留字 */
+    namespace: string;
+    toolName: string;
+    args: Record<string, unknown>;
+    /** arguments 存在但不是 JSON object —— 官方 schema 要求 object,须拒绝 */
+    invalidArgs: boolean;
+}
+
+/**
+ * 解包 CallDynamicTool 的路由目标 —— 纯函数,无日志无副作用。
+ *
+ * 参数名兼容三种来源: 官方 namespace/toolName/arguments、
+ * snake_case 变体、以及本项目早期的 server/args。
+ */
+export function parseDynamicInvoke(
+    llmToolName: string,
+    input: Record<string, unknown>,
+): DynamicInvokeTarget | null {
+    if (!isDynamicInvokeToolName(llmToolName)) return null;
+    const rawArgs = input.arguments ?? input.args;
+    const invalidArgs = rawArgs !== undefined
+        && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs));
+    return {
+        namespace: String(input.namespace ?? input.server ?? ''),
+        toolName: String(input.toolName ?? input.tool_name ?? ''),
+        args: !invalidArgs && rawArgs && typeof rawArgs === 'object'
+            ? rawArgs as Record<string, unknown>
+            : {},
+        invalidArgs,
+    };
+}
+
+/**
+ * 一次 tool call 最终执行的是哪个工具。
+ *
+ * cursor namespace 下 CallDynamicTool 只是信封,真正执行的是内置工具本身。
+ * 分流 (conversationRuntime Phase 1 的 Task 并发启动) 与执行
+ * (toolRuntime 的 executionToolName) 必须用同一套判据,否则会出现
+ * "分流当 MCP、执行当 Task" 这类自相矛盾的状态。
+ *
+ * 未注册的 toolName 不展开 —— 保持与 resolveToolCall 一致,让它走
+ * resolutionError 把错误反馈给 LLM,而不是在这里静默当成原生工具启动。
+ */
+export function resolveExecutionToolName(
+    llmToolName: string,
+    input: Record<string, unknown>,
+    availableDynamicBuiltinTools: AvailableDynamicBuiltinTool[] = [],
+): string {
+    const target = parseDynamicInvoke(llmToolName, input);
+    if (!target || target.namespace !== 'cursor' || target.invalidArgs)
+        return llmToolName;
+    return availableDynamicBuiltinTools.some(tool => tool.tool === target.toolName)
+        ? target.toolName
+        : llmToolName;
 }
 
 /**
@@ -207,18 +305,11 @@ export function resolveToolCall(
     // <dynamic_tools> 段里的 name 属性就是它。但也接受 serverName,
     // 因为 LLM 可能从 mcp_instructions 等处读到展示名。
     //
-    // CallMcpTool / server 是本项目早期实现与旧版本的参数名,保留兼容,
-    // 避免会话中途升级时正在进行的调用失配。
-    if (llmToolName === 'CallDynamicTool' || llmToolName === 'call_dynamic_tool'
-      || llmToolName === 'CallMcpTool' || llmToolName === 'call_mcp_tool') {
-        const server = String(input.namespace ?? input.server ?? '');
-        const toolName = String(input.toolName ?? input.tool_name ?? '');
-        const rawArgs = input.arguments ?? input.args;
-        const hasInvalidArgs = rawArgs !== undefined
-            && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs));
-        const args = !hasInvalidArgs && rawArgs && typeof rawArgs === 'object'
-            ? rawArgs as Record<string, unknown>
-            : {};
+    // 解包走 parseDynamicInvoke —— 与 resolveExecutionToolName 共用,
+    // 保证"分流判据"与"执行判据"永远一致。
+    const dynamicInvoke = parseDynamicInvoke(llmToolName, input);
+    if (dynamicInvoke) {
+        const { namespace: server, toolName, args, invalidArgs: hasInvalidArgs } = dynamicInvoke;
 
         if (server === 'cursor') {
             if (hasInvalidArgs) {
