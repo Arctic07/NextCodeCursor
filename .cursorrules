@@ -1,0 +1,10 @@
+# NextCodeCursor — Legacy Cursor Rules Fallback (Cursor < 0.45 兼容)
+
+> 新版 Cursor 请读 `.cursor/rules/relay.mdc`。本文件仅为旧版兼容，内容与 `AGENTS.md` 一致。
+
+执行任何任务前必须全文阅读 `AGENTS.md`，遵守 Relay 叠加层约束：
+- 唯一真源 `relay.config.json`，改后 `node Cursor++/scripts/sync-relay.mjs`，禁止手改生成文件
+- 新增中转逻辑仅入 `Cursor++/src/server/relay/*` / `installer/src/relay/*`
+- 禁止硬编码品牌、禁止删 `.gitattributes` 的 `merge=ours`
+- 上游 `upstream=CometixSpace/CCursor`，校验 `sync-relay --check && pnpm --dir Cursor++ run check-types && pnpm --dir Cursor++ run lint`
+详见 `AGENTS.md` 与 `docs/RELAY_GUIDE.md`

@@ -1,16 +1,14 @@
 /**
  * 版本更新检查
  *
- * 从 npm registry 查询 @cometix/ccursor 最新版本，
+ * 从 npm registry 查询最新版本（包名由 relay.config.json 驱动），
  * 与当前 extension 版本比较，有更新时弹通知。
  */
 import * as vscode from 'vscode'
 import { version as CURRENT_VERSION } from '../package.json'
+import { NPM_PACKAGE, UPDATE_COMMAND } from './server/relay/branding'
 
-const NPM_PACKAGE = '@cometix/ccursor'
 const REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE}/latest`
-/** 提示用户自行在终端执行；不代跑（可能需管理员/Cursor 关闭等权限） */
-const UPDATE_COMMAND = `npx ${NPM_PACKAGE} update`
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
 const STATE_KEY_LAST_CHECK = 'ccursor.updateCheck.lastCheckMs'
 const STATE_KEY_DISMISSED = 'ccursor.updateCheck.dismissedVersion'

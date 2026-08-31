@@ -9,6 +9,7 @@ export default antfu({
     'src/server/database/blobs.ts',
     'src/server/database/checkpoints.ts',
     'src/server/database/chatSummaries.ts',
+    'src/server/relay/**',
     'dist/**',
     'out/**',
     'obfuscate.js',

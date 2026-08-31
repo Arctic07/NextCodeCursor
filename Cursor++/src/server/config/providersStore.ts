@@ -6,13 +6,16 @@
  *   - 加载时建立反向索引,modelId 跨 provider 重名 → first-wins + warn
  *   - 写入立即重建索引
  *
- * 读: 文件不存在 → 默认种子;损坏 → 默认种子并 warn
+ * Relay 叠加: RELAY_PROVIDERS 仅在“种子/兜底”阶段合并，不覆盖用户已有配置。
+ * 详见 src/server/relay/preset.ts 与 relay.config.json
+ * 读: 文件不存在 → 默认种子（含 relay 预设）;损坏 → 兜底（含 relay 预设）并 warn
  * 写: tmp + rename, withSerial 串行化
  */
 import type { ProviderEntry, ProviderModel, ProvidersConfig } from '../data/defaults'
 import { existsSync, unwatchFile, watchFile } from 'node:fs'
 import { DEFAULT_PROVIDERS } from '../data/defaults'
 import { logger } from '../logger'
+import { RELAY_PROVIDERS } from '../relay/preset'
 import { readJsonOrNull, withSerial, writeJsonAtomic } from './atomic'
 import { getProvidersFilePath } from './paths'
 
@@ -27,6 +30,15 @@ function clone<T>(value: T): T {
 
 let cache: ProvidersConfig | null = null
 let reverseIndex: Map<string, ResolvedProviderModel> = new Map()
+
+function getEffectiveDefaults(): ProvidersConfig {
+  if (RELAY_PROVIDERS.length === 0)
+    return clone(DEFAULT_PROVIDERS)
+  const seen: Record<string, true> = {}
+  for (const p of DEFAULT_PROVIDERS.providers) seen[p.id] = true
+  const extra = RELAY_PROVIDERS.filter(p => !seen[p.id])
+  return { ...clone(DEFAULT_PROVIDERS), providers: [...clone(DEFAULT_PROVIDERS).providers, ...clone(extra)] }
+}
 
 function rebuildIndex(config: ProvidersConfig): Map<string, ResolvedProviderModel> {
   const idx = new Map<string, ResolvedProviderModel>()
@@ -54,7 +66,7 @@ function rebuildIndex(config: ProvidersConfig): Map<string, ResolvedProviderMode
 
 function withFallback(loaded: Partial<ProvidersConfig> | null): ProvidersConfig {
   if (!loaded || !Array.isArray(loaded.providers))
-    return clone(DEFAULT_PROVIDERS)
+    return getEffectiveDefaults()
   return {
     $schemaVersion: loaded.$schemaVersion ?? DEFAULT_PROVIDERS.$schemaVersion,
     providers: loaded.providers.map(p => ({
@@ -95,15 +107,15 @@ export async function ensureProvidersFile(): Promise<ProvidersConfig> {
       reverseIndex = rebuildIndex(cache)
       return cache
     }
-    // 文件物理存在但解析失败 → 不覆盖,用空默认值运行 (让用户修复文件)
+    // 文件物理存在但解析失败 → 不覆盖,用带 relay 的兜底运行 (让用户修复文件)
     if (existsSync(path)) {
       logger.warn({ path }, '[CFG] providers.json exists but failed to parse — not overwriting, using empty defaults')
-      cache = clone(DEFAULT_PROVIDERS)
+      cache = getEffectiveDefaults()
       reverseIndex = rebuildIndex(cache)
       return cache
     }
-    // 文件真的不存在 → 写入种子
-    const seed = clone(DEFAULT_PROVIDERS)
+    // 文件真的不存在 → 写入种子（含 relay 预设）
+    const seed = getEffectiveDefaults()
     writeJsonAtomic(path, seed)
     cache = seed
     reverseIndex = rebuildIndex(cache)

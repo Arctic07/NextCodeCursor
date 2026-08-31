@@ -3,17 +3,37 @@
  *
  * 读: 文件不存在或损坏 → 返回内置 DEFAULT_ROUTES (深拷贝)
  * 写: tmp + rename, withSerial 保证进程内顺序
+ *
+ * Relay 叠加: RELAY_EXTRA_REDIRECT 会在 BYOK=on 时追加到白名单 (relay.config.json → relay/preset.ts)。
  */
 import type { ByokMode, RoutesConfig } from '../data/defaults'
 import { unwatchFile, watchFile } from 'node:fs'
-import { buildRedirectForMode, DEFAULT_ROUTES } from '../data/defaults'
+import { BASE_REDIRECT, buildRedirectForMode as baseBuildRedirectForMode, BYOK_REDIRECT, DEFAULT_ROUTES } from '../data/defaults'
 import { logger } from '../logger'
+import { RELAY_EXTRA_REDIRECT } from '../relay/preset'
 import { readJsonOrNull, withSerial, writeJsonAtomic } from './atomic'
 import { getRoutesFilePath } from './paths'
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
+
+/**
+ * 带 relay 叠加的 redirect 构造器。
+ * BYOK=on 时在官方白名单后追加 RELAY_EXTRA_REDIRECT（去重）。
+ */
+export function buildRedirectForMode(mode: ByokMode): string[] {
+  const base = baseBuildRedirectForMode(mode)
+  if (!mode || RELAY_EXTRA_REDIRECT.length === 0)
+    return base
+  const seen: Record<string, true> = {}
+  for (const r of base) seen[r] = true
+  const extra = RELAY_EXTRA_REDIRECT.filter(r => !seen[r])
+  return [...base, ...extra]
+}
+
+// 供不经过 routesStore 的地方（如 installer 对照）查询纯官方白名单
+export { BASE_REDIRECT, BYOK_REDIRECT }
 
 function normalizeByokMode(value: unknown): ByokMode {
   // 0 / 1 / true / false / 'on' / 'off' 一律收敛到 0|1
@@ -24,6 +44,8 @@ function normalizeByokMode(value: unknown): ByokMode {
 
 function withFallback(loaded: Partial<RoutesConfig> | null): RoutesConfig {
   const fallback = clone(DEFAULT_ROUTES)
+  // fallback 的 redirect 也要带 relay
+  fallback.redirect = buildRedirectForMode(fallback.byokMode)
   if (!loaded)
     return fallback
   const byokMode = normalizeByokMode(loaded.byokMode)
@@ -160,7 +182,6 @@ export function startRoutesWatcher(): void {
   })
   watching = true
 }
-
 /** 停止文件监听 */
 export function stopRoutesWatcher(): void {
   if (!watching)

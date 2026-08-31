@@ -2,9 +2,12 @@
  * Install 时释放默认资源到 ~/.ccursor/
  *
  * 释放内容:
- *   - routes.json         ← DEFAULT_ROUTES (强制覆盖:白名单由开发者编排,非用户数据)
- *   - providers.json      ← DEFAULT_PROVIDERS (keep-if-exists:用户 API Key 不能丢)
+ *   - routes.json         ← DEFAULT_ROUTES (+ RELAY_EXTRA_REDIRECT) (强制覆盖:白名单由开发者编排,非用户数据)
+ *   - providers.json      ← DEFAULT_PROVIDERS (+ RELAY_PROVIDERS) (keep-if-exists:用户 API Key 不能丢)
  *   - models-catalog.json ← 从 installer 自带的 assets 复制 (models.dev 快照,强制覆盖)
+ *
+ * Relay 叠加: RELAY_PROVIDERS / RELAY_EXTRA_REDIRECT 来自 relay.config.json → installer/src/relay/preset.js
+ * 由 Cursor++/scripts/sync-relay.mjs 生成。providers 仅在文件不存在时种子；routes 每次 install 强制覆盖。
  *
  * routes.json 强制覆盖的理由:
  *   redirect 数组由我们主动编排,用户不应手改;每次 install 都会拿到最新白名单,
@@ -32,6 +35,26 @@ import {
   DEFAULT_REDIRECT,
 } from './defaults.js';
 import { CCURSOR_DIR } from './routes.js';
+import { RELAY_EXTRA_REDIRECT, RELAY_PROVIDERS } from './relay/preset.js';
+
+function getEffectiveProviders() {
+  if (!RELAY_PROVIDERS || RELAY_PROVIDERS.length === 0) return DEFAULT_PROVIDERS;
+  const seen = Object.create(null);
+  for (const p of DEFAULT_PROVIDERS.providers) seen[p.id] = true;
+  const extra = RELAY_PROVIDERS.filter(p => !seen[p.id]);
+  if (extra.length === 0) return DEFAULT_PROVIDERS;
+  return { ...DEFAULT_PROVIDERS, providers: [...DEFAULT_PROVIDERS.providers, ...extra] };
+}
+
+function getEffectiveRedirect(byokMode) {
+  if (!byokMode || !RELAY_EXTRA_REDIRECT || RELAY_EXTRA_REDIRECT.length === 0) {
+    return byokMode ? [...DEFAULT_REDIRECT] : [...BASE_REDIRECT];
+  }
+  const seen = Object.create(null);
+  for (const r of DEFAULT_REDIRECT) seen[r] = true;
+  const extra = RELAY_EXTRA_REDIRECT.filter(r => !seen[r]);
+  return [...DEFAULT_REDIRECT, ...extra];
+}
 
 function getCursorStateDbPath() {
   const home = homedir();
@@ -126,10 +149,10 @@ export function releaseDefaults(log) {
   const routes = {
     ...DEFAULT_ROUTES,
     byokMode: mode,
-    redirect: mode ? [...DEFAULT_REDIRECT] : [...BASE_REDIRECT],
+    redirect: getEffectiveRedirect(mode),
   };
   release(ROUTES_FILE_NAME, routes, log, { force: true });
-  release(PROVIDERS_FILE_NAME, DEFAULT_PROVIDERS, log);
+  release(PROVIDERS_FILE_NAME, getEffectiveProviders(), log);
   release(WEB_TOOLS_FILE_NAME, DEFAULT_WEB_TOOLS, log);
   copyAsset(MODELS_CATALOG_FILE_NAME, log, { force: true });
 

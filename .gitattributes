@@ -1,0 +1,8 @@
+# ── NextCodeCursor Relay 叠加层 ─────────────────────────
+# 保持上游同步时品牌/中转配置永不冲突：这些文件由 relay/ 目录驱动
+# 需要本地启用 merge=ours 驱动（首次执行: git config merge.ours.driver true）
+Cursor++/package.json merge=ours
+Cursor++/src/server/relay/* merge=ours
+installer/package.json merge=ours
+installer/src/relay/* merge=ours
+relay.config.json merge=ours

@@ -1,0 +1,36 @@
+{
+  "_comment": "中转站唯一配置源 — 改这里后执行 node Cursor++/scripts/sync-relay.mjs 同步到各处。改完提交即可。upstream merge 不会冲突（受 .gitattributes 保护）。",
+  "branding": {
+    "publisher": "cometix-space",
+    "name": "cursor2plus",
+    "displayName": "Cursor++",
+    "description": "Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE",
+    "hubUrl": "https://ccursor.cometix.dev",
+    "npmPackage": "@cometix/ccursor",
+    "updateCommand": "npx @cometix/ccursor update"
+  },
+  "providers": [
+    {
+      "_comment": "示例：取消注释并改成你的中转站地址；type 选 openai-chat 最通用（兼容所有 openai-compatible 网关）。模型按需增删。",
+      "_enabled": false,
+      "id": "my-relay",
+      "name": "MyRelay",
+      "type": "openai-chat",
+      "baseUrl": "https://api.example.com/v1",
+      "auth": { "kind": "apiKey", "value": "" },
+      "models": [
+        {
+          "id": "gpt-4o",
+          "apiModel": "gpt-4o",
+          "displayName": "GPT-4o",
+          "thinking": false,
+          "defaultOn": true,
+          "contextTokenLimit": 128000,
+          "maxOutputTokens": 16384,
+          "supportsImages": true
+        }
+      ]
+    }
+  ],
+  "extraRedirect": []
+}

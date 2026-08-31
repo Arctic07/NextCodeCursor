@@ -1,0 +1,15 @@
+---
+description: NextCodeCursor relay overlay — single source relay.config.json
+globs: ["relay.config.json","Cursor++/src/server/relay/**","installer/src/relay/**","Cursor++/src/server/config/providersStore.ts","Cursor++/src/server/config/routesStore.ts","installer/src/release-defaults.js","Cursor++/esbuild.js","Cursor++/*.json"]
+alwaysApply: true
+---
+
+# Relay 叠加层规范（本文件自动应用）
+
+执行任何任务前先读 `AGENTS.md` 全文。核心约束：
+
+- 唯一真源 `relay.config.json`，改后必须 `node Cursor++/scripts/sync-relay.mjs`，禁止手改 `Cursor++/src/server/relay/*` 与 `installer/src/relay/*`（文件头已标生成）。
+- 中转新能力仅允许新增 `Cursor++/src/server/relay/*.ts` / `installer/src/relay/*.js`，在 `providersStore/routesStore/release-defaults` 以最小合并接入。
+- 禁止在 `defaults.ts`/`esbuild.js` 硬编码品牌；禁止删 `.gitattributes` 的 `merge=ours`。
+- 上游为 `upstream=https://github.com/CometixSpace/CCursor.git`，本地需 `git config merge.ours.driver true`；详见 `docs/RELAY_GUIDE.md`。
+- 校验：`node Cursor++/scripts/sync-relay.mjs --check && pnpm --dir Cursor++ run check-types && pnpm --dir Cursor++ run lint`

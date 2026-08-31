@@ -1,0 +1,97 @@
+name: Sync upstream CCursor
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # daily 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config merge.ours.driver true
+          git remote add upstream https://github.com/CometixSpace/CCursor.git 2>/dev/null || true
+          git fetch upstream --prune
+
+      - name: Check divergence
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main || echo 0)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "Upstream behind count: $BEHIND"
+          git log --oneline HEAD..upstream/main --max-count=10 || true
+
+      - name: Attempt merge
+        if: steps.check.outputs.behind != '0'
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M%S)"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          git checkout -b "$BRANCH"
+          # .gitattributes merge=ours 保护 relay.config.json 等品牌文件
+          if git merge upstream/main --no-edit; then
+            echo "MERGE_OK=1" >> $GITHUB_ENV
+          else
+            echo "MERGE_OK=0" >> $GITHUB_ENV
+            echo "::warning::Merge conflicts — manual resolution required"
+            git status --short
+          fi
+
+      - name: Verify relay sync
+        if: env.MERGE_OK == '1'
+        run: |
+          node Cursor++/scripts/sync-relay.mjs --check || {
+            echo "::warning::relay.config.json out of date — auto-syncing"
+            node Cursor++/scripts/sync-relay.mjs
+            git add -A
+            git diff --cached --quiet || git commit -m "chore(relay): sync relay preset from relay.config.json [auto]"
+          }
+
+      - name: Push branch
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git push -u origin "$BRANCH" || true
+
+      - name: Create PR (auto-merge success)
+        if: env.MERGE_OK == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create --title "chore: sync upstream $(date +%Y-%m-%d)" \
+            --body "自动同步上游 CometixSpace/CCursor \`main\`。
+            - 若 CI 通过可直接合并。
+            - 若 relay.config.json 有变更已自动同步。
+            - 合并策略: .gitattributes \`merge=ours\` 保护中转配置，核心逻辑直接合入。" \
+            --base main --head "$BRANCH" || echo "PR exists or failed"
+
+      - name: Create PR (conflict — needs manual)
+        if: env.MERGE_OK == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git add -A || true
+          git commit -m "WIP: sync upstream $(date +%Y-%m-%d) — conflicts need manual resolve" || true
+          git push -u origin "$BRANCH" || true
+          gh pr create --title "WIP: sync upstream $(date +%Y-%m-%d) — conflicts" \
+            --body "上游合并出现冲突，请本地执行：
+            \`\`\`bash
+            git fetch upstream
+            git checkout $BRANCH
+            git status # 查看冲突文件（通常仅 Cursor++/src/server/data/defaults.ts 等核心）
+            # 解决后
+            git add -A && git commit && git push
+            \`\`\`
+            中转配置 (\`relay.config.json\` / \`Cursor++/src/server/relay/*\`) 已由 \`.gitattributes\` 保护，不会冲突。" \
+            --base main --head "$BRANCH" --draft || echo "draft PR failed"

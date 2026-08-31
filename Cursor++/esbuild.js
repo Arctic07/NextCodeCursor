@@ -1,12 +1,21 @@
 const esbuild = require("esbuild");
-const { cpSync, mkdirSync, readdirSync } = require("fs");
+const { cpSync, mkdirSync, readdirSync, readFileSync, existsSync } = require("fs");
 const { join } = require("path");
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
 
-// HUB_URL —— 字符串在 js-confuser 的 StringConcealing 下不可见
-const HUB_URL = "https://ccursor.cometix.dev";
+// HUB_URL —— 由 relay.config.json 驱动，同步脚本生成 branding.ts 时一并更新此注入
+// 单一真源: 根目录 relay.config.json → Cursor++/src/server/relay/branding.ts → esbuild define __HUB_URL__
+// 此处做运行时回退读取，确保直接改 relay.config.json 后不跑 sync 也能构建出正确值
+let HUB_URL = "https://ccursor.cometix.dev";
+try {
+  const cfgPath = join(__dirname, "..", "relay.config.json");
+  if (existsSync(cfgPath)) {
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    if (cfg?.branding?.hubUrl) HUB_URL = cfg.branding.hubUrl;
+  }
+} catch {}
 
 function copyRuntimeAssets() {
   mkdirSync(join(__dirname, "dist"), { recursive: true });
