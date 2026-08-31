@@ -1,0 +1,17 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景圆形 -->
+  <rect width="64" height="64" rx="12" fill="#165DFF"/>
+  
+  <!-- 左边的 < 符号 -->
+  <path d="M22 16L10 32L22 48" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- 右边的 > 符号 -->
+  <path d="M42 16L54 32L42 48" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- 中间的向右箭头 -->
+  <path d="M24 32H40M40 32L34 26M40 32L34 38" stroke="#86E7FF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- 装饰性的代码点 -->
+  <circle cx="32" cy="12" r="2.5" fill="white" opacity="0.6"/>
+  <circle cx="32" cy="52" r="2.5" fill="white" opacity="0.6"/>
+</svg>
