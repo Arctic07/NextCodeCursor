@@ -1,6 +1,7 @@
 # NextCode Cursor 中转站接入方案
 
 > 域名：`https://www.arctictest.com`（NewAPI） Logo：`logo.svg` → `Cursor++/resources/icon.png`
+> 中转站源码 `https://github.com/QuantumNous/new-api`
 
 ## 1. 目标
 - 用户自填 Key（多 Key，多分组），`GET /v1/models` 拉分组可见模型
