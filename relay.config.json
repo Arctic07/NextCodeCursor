@@ -1,13 +1,13 @@
 {
   "_comment": "中转站唯一配置源 — 改这里后执行 node Cursor++/scripts/sync-relay.mjs 同步到各处。改完提交即可。upstream merge 不会冲突（受 .gitattributes 保护）。",
   "branding": {
-    "publisher": "cometix-space",
-    "name": "cursor2plus",
-    "displayName": "Cursor++",
-    "description": "Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE",
-    "hubUrl": "https://ccursor.cometix.dev",
-    "npmPackage": "@cometix/ccursor",
-    "updateCommand": "npx @cometix/ccursor update"
+    "publisher": "nextcode",
+    "name": "nextcode-cursor",
+    "displayName": "NextCode",
+    "description": "NextCode BYOK Extension — Bring Your Own Key for Cursor IDE",
+    "hubUrl": "https://www.arctictest.com",
+    "npmPackage": "@nextcode/ccursor",
+    "updateCommand": "npx @nextcode/ccursor update"
   },
   "providers": [
     {

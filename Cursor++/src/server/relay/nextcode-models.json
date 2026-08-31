@@ -1,0 +1,442 @@
+[
+  {
+    "id": "claude-opus-4-7",
+    "displayName": "Claude Opus 4.7",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "claude-opus-4-7"
+  },
+  {
+    "id": "claude-opus-4-8",
+    "displayName": "Claude Opus 4.8",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "claude-opus-4-8"
+  },
+  {
+    "id": "claude-opus-5",
+    "displayName": "Claude Opus 5",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "claude-opus-5"
+  },
+  {
+    "id": "claude-sonnet-4-6",
+    "displayName": "Claude Sonnet 4.6",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "claude-sonnet-4-6"
+  },
+  {
+    "id": "claude-sonnet-5",
+    "displayName": "Claude Sonnet 5",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "claude-sonnet-5"
+  },
+  {
+    "id": "deepseek-v4-flash",
+    "displayName": "DeepSeek V4 Flash",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 384000,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "deepseek/deepseek-v4-flash"
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "displayName": "DeepSeek V4 Pro",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 384000,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "deepseek/deepseek-v4-pro"
+  },
+  {
+    "id": "gemini-3.7-flash",
+    "displayName": "Gemini 3.7 Flash",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 65536,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "google/gemini-3.7-flash"
+  },
+  {
+    "id": "GLM-5",
+    "displayName": "GLM-5",
+    "contextTokenLimit": 200000,
+    "maxOutputTokens": 128000,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "zai-org/GLM-5"
+  },
+  {
+    "id": "GLM-5.1",
+    "displayName": "GLM-5.1",
+    "contextTokenLimit": 200000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "zai-org/GLM-5.1"
+  },
+  {
+    "id": "GLM-5.2",
+    "displayName": "GLM-5.2",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "zai-org/GLM-5.2"
+  },
+  {
+    "id": "GLM-5.2-Fast",
+    "displayName": "GLM-5.2 Fast",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "zai-org/GLM-5.2-Fast"
+  },
+  {
+    "id": "GLM-5.3",
+    "displayName": "GLM-5.3",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "zai-org/GLM-5.3"
+  },
+  {
+    "id": "glm-5.3-flash",
+    "displayName": "GLM-5.3 Flash",
+    "contextTokenLimit": 1048576,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "z-ai/glm-5.3-flash"
+  },
+  {
+    "id": "gpt-5.6-luna",
+    "displayName": "GPT-5.6 Luna",
+    "contextTokenLimit": 1100000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "gpt-5.6-luna"
+  },
+  {
+    "id": "gpt-5.6-sol",
+    "displayName": "GPT-5.6 Sol",
+    "contextTokenLimit": 1100000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "gpt-5.6-sol"
+  },
+  {
+    "id": "gpt-5.6-terra",
+    "displayName": "GPT-5.6 Terra",
+    "contextTokenLimit": 1100000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "gpt-5.6-terra"
+  },
+  {
+    "id": "grok-4.5",
+    "displayName": "Grok 4.5",
+    "contextTokenLimit": 500000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "xai/grok-4.5"
+  },
+  {
+    "id": "grok-4.6",
+    "displayName": "Grok 4.6",
+    "contextTokenLimit": 500000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "xai/grok-4.6"
+  },
+  {
+    "id": "hy3-paid",
+    "displayName": "Tencent Hy3",
+    "contextTokenLimit": 262000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "tencent/hy3-paid"
+  },
+  {
+    "id": "inkling",
+    "displayName": "Inkling",
+    "contextTokenLimit": 256000,
+    "maxOutputTokens": 65536,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "thinkingmachines/inkling"
+  },
+  {
+    "id": "inkling-small",
+    "displayName": "Inkling Small",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 65536,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "thinkingmachines/inkling-small"
+  },
+  {
+    "id": "Kimi-K2.5",
+    "displayName": "Kimi K2.5",
+    "contextTokenLimit": 256000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "moonshotai/Kimi-K2.5"
+  },
+  {
+    "id": "Kimi-K2.6",
+    "displayName": "Kimi K2.6",
+    "contextTokenLimit": 256000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "moonshotai/Kimi-K2.6"
+  },
+  {
+    "id": "Kimi-K2.7-Code",
+    "displayName": "Kimi K2.7 Code",
+    "contextTokenLimit": 256000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "moonshotai/Kimi-K2.7-Code"
+  },
+  {
+    "id": "Kimi-K2.7-Code-Highspeed",
+    "displayName": "Kimi K2.7 Code HighSpeed",
+    "contextTokenLimit": 262000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "moonshotai/Kimi-K2.7-Code-Highspeed"
+  },
+  {
+    "id": "Kimi-K3",
+    "displayName": "Kimi K3",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "moonshotai/Kimi-K3"
+  },
+  {
+    "id": "laguna-s-2.1-free",
+    "displayName": "Laguna S 2.1 (Free)",
+    "contextTokenLimit": 256000,
+    "maxOutputTokens": 65536,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "poolside/laguna-s-2.1-free"
+  },
+  {
+    "id": "mimo-v2.5",
+    "displayName": "MiMo V2.5",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "xiaomi/mimo-v2.5"
+  },
+  {
+    "id": "mimo-v2.5-pro",
+    "displayName": "MiMo V2.5 Pro",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "xiaomi/mimo-v2.5-pro"
+  },
+  {
+    "id": "MiniMax-M2.5",
+    "displayName": "MiniMax M2.5",
+    "contextTokenLimit": 200000,
+    "maxOutputTokens": 65536,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "MiniMaxAI/MiniMax-M2.5"
+  },
+  {
+    "id": "MiniMax-M2.7",
+    "displayName": "MiniMax M2.7",
+    "contextTokenLimit": 200000,
+    "maxOutputTokens": 65536,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "MiniMaxAI/MiniMax-M2.7"
+  },
+  {
+    "id": "MiniMax-M3",
+    "displayName": "MiniMax M3",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "MiniMaxAI/MiniMax-M3"
+  },
+  {
+    "id": "muse-spark-1.2",
+    "displayName": "Muse Spark 1.2",
+    "contextTokenLimit": 1050000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "meta/muse-spark-1.2"
+  },
+  {
+    "id": "muse-spark-1.2-contributor",
+    "displayName": "Muse Spark 1.2 Contributor",
+    "contextTokenLimit": 1050000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "meta/muse-spark-1.2-contributor"
+  },
+  {
+    "id": "nemotron-3-ultra-550b-a55b",
+    "displayName": "Nemotron 3 Ultra",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 65536,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "nvidia/nemotron-3-ultra-550b-a55b"
+  },
+  {
+    "id": "Qwen3.6-Max-Preview",
+    "displayName": "Qwen 3.6 Max Preview",
+    "contextTokenLimit": 200000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "Qwen/Qwen3.6-Max-Preview"
+  },
+  {
+    "id": "Qwen3.6-Plus",
+    "displayName": "Qwen 3.6 Plus",
+    "contextTokenLimit": 200000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "Qwen/Qwen3.6-Plus"
+  },
+  {
+    "id": "Qwen3.7-Flash",
+    "displayName": "Qwen 3.7 Flash",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "Qwen/Qwen3.7-Flash"
+  },
+  {
+    "id": "Qwen3.7-Max",
+    "displayName": "Qwen 3.7 Max",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": false,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "Qwen/Qwen3.7-Max"
+  },
+  {
+    "id": "Qwen3.7-Plus",
+    "displayName": "Qwen 3.7 Plus",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "Qwen/Qwen3.7-Plus"
+  },
+  {
+    "id": "Qwen3.8-Max",
+    "displayName": "Qwen 3.8 Max",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 131072,
+    "supportsImages": true,
+    "supportsThinking": true,
+    "supportsMaxMode": true,
+    "_sourceId": "Qwen/Qwen3.8-Max"
+  },
+  {
+    "id": "Step-3.5-Flash",
+    "displayName": "Step 3.5 Flash",
+    "contextTokenLimit": 1000000,
+    "maxOutputTokens": 128000,
+    "supportsImages": false,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "stepfun/Step-3.5-Flash"
+  },
+  {
+    "id": "Step-3.7-Flash",
+    "displayName": "Step 3.7 Flash",
+    "contextTokenLimit": 256000,
+    "maxOutputTokens": 128000,
+    "supportsImages": true,
+    "supportsThinking": false,
+    "supportsMaxMode": false,
+    "_sourceId": "stepfun/Step-3.7-Flash"
+  }
+]

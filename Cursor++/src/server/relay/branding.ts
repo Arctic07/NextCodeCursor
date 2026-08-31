@@ -6,13 +6,13 @@
  */
 
 export const RELAY_BRANDING = {
-  publisher: "cometix-space",
-  name: "cursor2plus",
-  displayName: "Cursor++",
-  description: "Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE",
-  hubUrl: "https://ccursor.cometix.dev",
-  npmPackage: "@cometix/ccursor",
-  updateCommand: "npx @cometix/ccursor update",
+  publisher: "nextcode",
+  name: "nextcode-cursor",
+  displayName: "NextCode",
+  description: "NextCode BYOK Extension — Bring Your Own Key for Cursor IDE",
+  hubUrl: "https://www.arctictest.com",
+  npmPackage: "@nextcode/ccursor",
+  updateCommand: "npx @nextcode/ccursor update",
 } as const
 
 export const HUB_URL = RELAY_BRANDING.hubUrl
