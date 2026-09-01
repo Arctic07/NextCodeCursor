@@ -23,17 +23,26 @@ type Sqlite3Module = any
 
 let sqlite3Module: Sqlite3Module | null = null
 
+/** extension.ts activate 时注入的 vscode.env.appRoot (避免 server 层直接 import vscode) */
+let injectedAppRoot: string | null = null
+
+/** 激活时由 extension.ts 调用, 注入 vscode.env.appRoot */
+export function setCursorAppRoot(appRoot: string): void {
+  injectedAppRoot = appRoot
+}
+
 /**
  * 候选 Cursor resources/app 目录
  *
  * 策略 (按优先级):
  *   1. 测试用 env override: CURSOR_APP_ROOT
- *   2. 相对定位: 从扩展自身的 __dirname 往上 3 层
- *      我们装在 <cursorRoot>/resources/app/extensions/cursor2plus/dist/extension.js
- *      __dirname = .../extensions/cursor2plus/dist
- *      ../../.. = .../app  ← target
- *      这一条天然跨平台 (mac/linux/win 无关),优先级最高的自动路径
- *   3. 平台硬编码 fallback: 当 1/2 都失败时的防御性兜底
+ *   2. vscode.env.appRoot —— 官方 API, 永远指向当前 Cursor 的 resources/app,
+ *      任何安装位置 (自定义目录/便携版) 都正确; server 层不 import vscode,
+ *      由 extension.ts 激活时注入 (setCursorAppRoot)
+ *   3. 相对定位: 从扩展自身的 __dirname 往上 3 层
+ *      内置安装 (installer) 在 <cursorRoot>/resources/app/extensions/cursor2plus/dist
+ *      ../../.. = .../app ← target
+ *   4. 平台硬编码 fallback: 1/2/3 都失败时的防御性兜底
  *      包括 Windows 的常见安装路径 (per-user / system-wide / scoop)
  */
 function getCursorAppCandidates(): string[] {
@@ -42,11 +51,25 @@ function getCursorAppCandidates(): string[] {
   const envPath = process.env.CURSOR_APP_ROOT
   if (envPath && existsSync(join(envPath, 'package.json')))
     candidates.push(envPath)
+  // vscode.env.appRoot 注入值 (extension.ts activate 时 setCursorAppRoot)
+  if (injectedAppRoot && existsSync(join(injectedAppRoot, 'package.json')))
+    candidates.push(injectedAppRoot)
 
   // 相对扩展自身位置反推 —— 真正的跨平台方案
   try {
     const relFromSelf = resolve(__dirname, '..', '..', '..')
     candidates.push(relFromSelf)
+  }
+  catch {}
+
+  // 运行中的 Electron 可执行文件路径推断 (win32): <installRoot>/Cursor.exe →
+  // <installRoot>/resources/app。覆盖非标准安装盘符 (如 D:\soft\cursor)。
+  try {
+    const exe = process.execPath
+    if (exe) {
+      const appDir = resolve(dirname(exe), 'resources', 'app')
+      candidates.push(appDir)
+    }
   }
   catch {}
 

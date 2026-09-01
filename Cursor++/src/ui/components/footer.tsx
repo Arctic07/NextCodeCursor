@@ -1,9 +1,4 @@
-/** 底部操作栏 */
+/** 底部操作栏 — NextCode 专属版: 不再暴露 Edit Routes / Edit providers.json */
 export function Footer() {
-  return (
-    <div class="footer">
-      <button class="secondary" x-on:click="$store.app.post('editRoutes')">Edit Routes</button>
-      <button class="secondary" x-on:click="$store.app.post('editProvidersJson')">Edit providers.json</button>
-    </div>
-  )
+  return null
 }

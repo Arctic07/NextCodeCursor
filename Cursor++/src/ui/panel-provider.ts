@@ -19,6 +19,7 @@ import { bumpRefreshSignal } from '../server'
 import { searchCatalog } from '../server/config/catalogStore'
 import { updateProviders } from '../server/config/providersStore'
 import { resetProviderInstanceCache } from '../server/handlers/llm/providerRuntime'
+import { loadNextcodeRegistry, lookupNextcodeModel } from '../server/relay/nextcodeRegistry'
 import { renderHtml } from './components/layout'
 import { getState, onStateChange, refreshState } from './state'
 
@@ -32,6 +33,11 @@ function getWebviewJs(extensionPath: string): string {
     webviewJsCache = raw.replaceAll('</script>', '<\\/script>').replaceAll('<!--', '<\\!--')
   }
   return webviewJsCache
+}
+
+function getLogoUri(webviewView: vscode.WebviewView, extensionPath: string): string {
+  const logoPath = vscode.Uri.file(join(extensionPath, 'resources', 'logo.png'))
+  return webviewView.webview.asWebviewUri(logoPath).toString()
 }
 
 export class PanelProvider implements vscode.WebviewViewProvider {
@@ -55,7 +61,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const cursorAppPath = vscode.Uri.file(join(this.context.extensionPath, '..', '..', 'out', 'media', 'codicon.ttf'))
     const codiconUri = webviewView.webview.asWebviewUri(cursorAppPath).toString()
 
-    webviewView.webview.html = renderHtml(webviewJs, codiconUri)
+    const logoUri = getLogoUri(webviewView, this.context.extensionPath)
+
+    webviewView.webview.html = renderHtml(webviewJs, codiconUri, logoUri)
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.type) {
@@ -148,11 +156,67 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               displayName: m.displayName || '',
             })).filter((m: any) => m.id)
             models.sort((a: any, b: any) => (b.created || 0) - (a.created || 0))
-            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models })
+            const { models: whitelist, error: regErr } = await loadNextcodeRegistry()
+            if (regErr && whitelist.length === 0) {
+              this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: `白名单拉取失败: ${regErr}` })
+              break
+            }
+            const filtered = models.filter((m: { id: string }) => lookupNextcodeModel(m.id) !== null).map((m: { id: string }) => ({
+              ...m,
+              whitelist: lookupNextcodeModel(m.id),
+            }))
+            this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models: filtered, autoApply: msg.autoApply === true })
           }
           catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err)
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: errMsg })
+          }
+          break
+        }
+        case 'getBalance': {
+          const pid = msg.pid as string
+          const providers = getState().providers || []
+          const draft = msg.draft as Partial<ProviderEntry> | undefined
+          const p = draft || providers.find(x => x.id === pid)
+          if (!p?.auth?.value) {
+            this.view?.webview.postMessage({ type: 'balanceResult', pid, error: 'Auth value not set' })
+            break
+          }
+          const baseUrl = (p.baseUrl || '').trim()
+          if (!baseUrl) {
+            this.view?.webview.postMessage({ type: 'balanceResult', pid, error: 'Base URL not set' })
+            break
+          }
+          const base = baseUrl.replace(RE_TRAILING_SLASH, '')
+          try {
+            const resp = await fetch(`${base}/api/user/self`, {
+              headers: { Authorization: `Bearer ${p.auth.value}` },
+              signal: AbortSignal.timeout(10_000),
+            })
+            if (!resp.ok) {
+              const body = await resp.text().catch(() => '')
+              this.view?.webview.postMessage({ type: 'balanceResult', pid, error: `${resp.status} ${resp.statusText}: ${body.slice(0, 200)}` })
+              break
+            }
+            const json = await resp.json() as { data?: { quota?: unknown, used_quota?: unknown } }
+            const d = json.data ?? {}
+            const quota = typeof d.quota === 'number' ? d.quota : Number.NaN
+            const usedQuota = typeof d.used_quota === 'number' ? d.used_quota : Number.NaN
+            if (!Number.isFinite(quota) || !Number.isFinite(usedQuota)) {
+              this.view?.webview.postMessage({ type: 'balanceResult', pid, error: '余额字段缺失' })
+              break
+            }
+            const used = usedQuota / 500000
+            const remaining = quota / 500000
+            this.view?.webview.postMessage({
+              type: 'balanceResult',
+              pid,
+              balance: { used, remaining, total: used + remaining },
+            })
+          }
+          catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            this.view?.webview.postMessage({ type: 'balanceResult', pid, error: errMsg })
           }
           break
         }

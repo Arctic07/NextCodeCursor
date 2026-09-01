@@ -20,35 +20,35 @@
     "commands": [
       {
         "command": "cursor2plus.toggleByok",
-        "title": "Cursor++: Toggle BYOK Mode (on/off)"
+        "title": "NextCode: Toggle BYOK Mode (on/off)"
       },
       {
         "command": "cursor2plus.serverToggle",
-        "title": "Cursor++: Toggle BYOK Server"
+        "title": "NextCode: Toggle BYOK Server"
       },
       {
         "command": "cursor2plus.editRoutes",
-        "title": "Cursor++: Edit Routes Config"
+        "title": "NextCode: Edit Routes Config"
       },
       {
         "command": "cursor2plus.editProviders",
-        "title": "Cursor++: Edit Providers Config"
+        "title": "NextCode: Edit Providers Config"
       },
       {
         "command": "cursor2plus.openSettings",
-        "title": "Cursor++: Open Settings"
+        "title": "NextCode: Open Settings"
       },
       {
         "command": "cursor2plus.toggleFileLog",
-        "title": "Cursor++: Toggle File Logging (debug)"
+        "title": "NextCode: Toggle File Logging (debug)"
       },
       {
         "command": "cursor2plus.openLogFile",
-        "title": "Cursor++: Open Log File"
+        "title": "NextCode: Open Log File"
       }
     ],
     "configuration": {
-      "title": "Cursor++",
+      "title": "NextCode",
       "properties": {
         "cursor2plus.server.host": {
           "type": "string",
@@ -76,7 +76,7 @@
       "activitybar": [
         {
           "id": "cursor2plus-sidebar",
-          "title": "Cursor++",
+          "title": "NextCode",
           "icon": "resources/icon.png"
         }
       ]

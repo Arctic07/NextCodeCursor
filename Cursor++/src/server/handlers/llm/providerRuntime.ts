@@ -1,6 +1,7 @@
 import type { LLMContentBlock, LLMProvider, LLMMessage, LLMStreamRequest, LLMTool, LLMToolResultBlock } from './types';
 import type { ProviderEntry, ProviderType } from '../../data/defaults';
 import { AnthropicProvider } from './anthropic';
+import { RELAY_BRANDING } from '../../relay/branding';
 import { OpenAIChatProvider } from './openai-chat';
 import { OpenAIResponsesProvider } from './openai-responses';
 import { GeminiProvider } from './gemini';
@@ -179,7 +180,7 @@ export function resolveProviderRuntime(modelId: string): ProviderRuntime {
                     throw makeByokConnectError({
                         errorCode: ErrorDetails_Error.CUSTOM,
                         title: 'Thinking configuration incomplete',
-                        detail: 'Thinking is enabled but neither Level nor Budget is set.\n\nOpen Cursor++ panel → edit the model to set a thinking level or budget.',
+                        detail: `Thinking is enabled but neither Level nor Budget is set.\n\nOpen ${RELAY_BRANDING.displayName} panel → edit the model to set a thinking level or budget.`,
                         isRetryable: false,
                         additionalInfo: { model: resolved.apiModel },
                     });

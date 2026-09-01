@@ -12,7 +12,7 @@ import { Server } from './server'
 import { styles } from './styles'
 import { ToastContainer } from './toast'
 
-function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: string }) {
+function Layout({ webviewJs, codiconUri, logoUri }: { webviewJs: string, codiconUri?: string, logoUri?: string }) {
   const codiconCss = codiconUri
     ? `@font-face { font-family: 'codicon'; font-display: block; src: url('${codiconUri}') format('truetype'); }
        .codicon { font-family: 'codicon'; font-size: 14px; line-height: 1; display: inline-block; -webkit-font-smoothing: antialiased; }
@@ -25,9 +25,15 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
     <html>
       <head>
         <meta charset="UTF-8" />
+        <meta name="logo-uri" content={logoUri || ''} />
         <style>{codiconCss + styles}</style>
       </head>
       <body x-data>
+        <div class="brand-header">
+          <img src={logoUri || ''} alt="" width="20" height="20" class="brand-logo-img" />
+          <span>NextCode</span>
+        </div>
+
         <Banner />
 
         <h3>
@@ -44,7 +50,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
           <span>Providers</span>
           <span class="h3-actions">
             <WebToolsButton />
-            <button class="tiny" x-on:click="$store.app.addProvider()">+ Add</button>
+            <button class="search-btn" x-on:click="$store.app.onboardingOpen = true">+ 添加 Key</button>
           </span>
         </h3>
         <Providers />
@@ -62,7 +68,7 @@ function Layout({ webviewJs, codiconUri }: { webviewJs: string, codiconUri?: str
 
 /** 生成完整 HTML 字符串 (extension host 侧调用) */
 /** 生成完整 HTML 字符串 (extension host 侧调用) */
-export function renderHtml(webviewJs: string, codiconUri?: string): string {
-  const html = (<Layout webviewJs={webviewJs} codiconUri={codiconUri} />).toString()
+export function renderHtml(webviewJs: string, codiconUri?: string, logoUri?: string): string {
+  const html = (<Layout webviewJs={webviewJs} codiconUri={codiconUri} logoUri={logoUri} />).toString()
   return `<!DOCTYPE html>${html}`
 }

@@ -6,9 +6,11 @@ import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
 import { ensureRoutesFile, onRoutesChange, startRoutesWatcher, stopRoutesWatcher, toggleByokMode } from './server/config/routesStore'
+import { setCursorAppRoot } from './server/database/sqlite'
 import { isLikelyWindowsMsvcMissing, preflightSupermarkdown, setSupermarkdownNativeErrorNotifier } from './server/handlers/agent/supermarkdown'
 import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntime'
 import { initLogger } from './server/logger'
+import { RELAY_BRANDING } from './server/relay/branding'
 import { getRoutesFilePath } from './server/routes'
 import { PanelProvider } from './ui/panel-provider'
 import { getState, onStateChange, probeByokServer, refreshState, setFileLogState } from './ui/state'
@@ -111,9 +113,10 @@ function writeToChannel(entry: SseLogEntry) {
 function log(level: SseLogLevel, msg: string): void {
   writeToChannel({ level, msg })
 }
+const BRAND = RELAY_BRANDING.displayName
 
 function showPortOccupiedMessage(port: number): void {
-  const text = `Cursor++ Server cannot start because port ${port} is already used by another process. Close the process using this port, then restart Cursor.`
+  const text = `${BRAND} Server cannot start because port ${port} is already used by another process. Close the process using this port, then restart Cursor.`
   log('error', `[SRV] ${text}`)
   vscode.window.showErrorMessage(text)
 }
@@ -125,9 +128,8 @@ function setupSupermarkdownNativeTip(): void {
     if (supermarkdownTipShown || !isLikelyWindowsMsvcMissing(error))
       return
     supermarkdownTipShown = true
-    log('warn', `[WEB] supermarkdown native module failed to load: ${error.message}`)
     vscode.window.showWarningMessage(
-      'Cursor++ Web Fetch requires Microsoft Visual C++ Redistributable 2015-2022 x64. Install it, then restart Cursor.',
+      `${BRAND} Web Fetch requires Microsoft Visual C++ Redistributable 2015-2022 x64. Install it, then restart Cursor.`,
       'Download MSVC Runtime',
     ).then((choice) => {
       if (choice === 'Download MSVC Runtime')
@@ -144,8 +146,7 @@ async function toggleFileLog(context: vscode.ExtensionContext): Promise<void> {
   if (fileLogEnabled) {
     const stream = ensureLogFileStream()
     if (stream) {
-      log('info', `[SRV] file logging ENABLED → ${logFilePath}`)
-      vscode.window.showInformationMessage(`Cursor++ file logging enabled → ${logFilePath}`)
+      vscode.window.showInformationMessage(`${BRAND} file logging enabled → ${logFilePath}`)
     }
   }
   else {
@@ -159,7 +160,7 @@ async function toggleFileLog(context: vscode.ExtensionContext): Promise<void> {
 /** 在 VS Code 里打开当前实例的日志文件 */
 async function openLogFile(): Promise<void> {
   if (!logFilePath || !existsSync(logFilePath)) {
-    vscode.window.showWarningMessage('Cursor++ log file does not exist yet. Enable file logging first.')
+    vscode.window.showWarningMessage(`${BRAND} log file does not exist yet. Enable file logging first.`)
     return
   }
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(logFilePath))
@@ -345,10 +346,10 @@ function renderStatusBar() {
   // 主 tooltip 行 — 保留旧 Server 描述形态
   const src = s.server === 'local' ? 'this instance' : 'another instance'
   const serverTip = s.serverIssue === 'port_occupied'
-    ? `Cursor++ — port ${s.port} is occupied by another process`
+    ? `${BRAND} — port ${s.port} is occupied by another process`
     : s.server === 'offline'
-      ? 'Cursor++ — Server offline'
-      : `Cursor++ — Server :${s.port} (${src})`
+      ? `${BRAND} — Server offline`
+      : `${BRAND} — Server :${s.port} (${src})`
 
   // BYOK mode 后缀 + tooltip 行
   const byokGlyph = s.byokMode ? '◉' : '○'
@@ -371,8 +372,7 @@ async function toggleServer() {
 
   if (s.server === 'local') {
     await stopServer()
-    log('info', '[SRV] stopped')
-    vscode.window.showInformationMessage('Cursor++ BYOK Server stopped')
+    vscode.window.showInformationMessage(`${BRAND} BYOK Server stopped`)
   }
   else if (s.server === 'remote') {
     vscode.window.showInformationMessage('Server is running in another Cursor instance')
@@ -406,7 +406,7 @@ async function doStartServer() {
     return
   }
   if (s.server === 'remote') {
-    log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+    log('info', `[SRV] port ${cfg.port} claimed by another ${BRAND} instance, running as remote`)
     startHeartbeat()
     return
   }
@@ -428,7 +428,7 @@ async function doStartServer() {
     const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: unknown }).code) : ''
     if (code === 'EADDRINUSE' || msg.includes('EADDRINUSE')) {
       if (await waitForRemoteByokServer(cfg.host, cfg.port)) {
-        log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+        log('info', `[SRV] port ${cfg.port} claimed by another ${BRAND} instance, running as remote`)
         await refreshState()
         renderStatusBar()
         startHeartbeat()
@@ -436,7 +436,7 @@ async function doStartServer() {
       else {
         await refreshState()
         if (getState().server === 'remote') {
-          log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+          log('info', `[SRV] port ${cfg.port} claimed by another ${BRAND} instance, running as remote`)
           startHeartbeat()
           return
         }
@@ -445,7 +445,7 @@ async function doStartServer() {
     }
     else {
       log('error', `[SRV] failed to start: ${msg}`)
-      vscode.window.showErrorMessage(`Cursor++ Server failed: ${msg}`)
+      vscode.window.showErrorMessage(`${BRAND} Server failed: ${msg}`)
     }
   }
 }
@@ -453,11 +453,12 @@ async function doStartServer() {
 // ── 激活 ──
 
 export async function activate(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel('Cursor++', { log: true })
+  outputChannel = vscode.window.createOutputChannel(BRAND, { log: true })
+  setCursorAppRoot(vscode.env.appRoot)
   initLogger((level, msg) => writeToChannel({ level, msg }))
   setupSupermarkdownNativeTip()
   preflightSupermarkdown()
-  log('info', 'Cursor++ activating...')
+  log('info', `${BRAND} activating...`)
 
   // 状态栏 (BYOK Mode 切换按钮)
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
@@ -555,7 +556,7 @@ export async function activate(context: vscode.ExtensionContext) {
   if (fileLogEnabled)
     log('info', `[SRV] file logging restored from globalState → ${logFilePath}`)
 
-  log('info', 'Cursor++ activated')
+  log('info', `${BRAND} activated`)
 
   // 版本更新检查
   startUpdateCheck(context.globalState, msg => log('info', msg))

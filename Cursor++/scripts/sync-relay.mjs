@@ -80,16 +80,33 @@ export const RELAY_PROVIDERS: ProviderEntry[] = ${providersLiteral}
 export const RELAY_EXTRA_REDIRECT: readonly string[] = ${JSON.stringify(extraRedirect, null, 2)}
 `
 
-// ── 3. Cursor++/package.json (仅 publisher/name/displayName/description) ──
+// ── 3. Cursor++/package.json (publisher/name/displayName/description + 品牌标题) ──
+// 命令/配置/活动栏视图标题统一使用 branding.displayName, 防止品牌残留 (如 Cursor++)
 const extPkgPath = join(__dirname, '..', 'package.json')
 const extPkg = readJson(extPkgPath)
-const extPkgNext = {
+const displayBrand = branding.displayName ?? extPkg.displayName ?? 'Cursor++'
+const retitleContributes = (pkg) => {
+  const next = { ...pkg }
+  if (next.contributes) {
+    const c = { ...next.contributes }
+    if (Array.isArray(c.commands))
+      c.commands = c.commands.map(cmd => ({ ...cmd, ...(typeof cmd.title === 'string' ? { title: cmd.title.replace(/Cursor\+\+/g, displayBrand) } : {}) }))
+    if (c.configuration && typeof c.configuration.title === 'string')
+      c.configuration = { ...c.configuration, title: c.configuration.title.replace(/Cursor\+\+/g, displayBrand) }
+    if (c.viewsContainers) {
+      c.viewsContainers = Object.fromEntries(Object.entries(c.viewsContainers).map(([k, arr]) => [k, arr.map(v => (typeof v.title === 'string' ? { ...v, title: v.title.replace(/Cursor\+\+/g, displayBrand) } : v))]))
+    }
+    next.contributes = c
+  }
+  return next
+}
+const extPkgNext = retitleContributes({
   ...extPkg,
   publisher: branding.publisher ?? extPkg.publisher,
   name: branding.name ?? extPkg.name,
   displayName: branding.displayName ?? extPkg.displayName,
   description: branding.description ?? extPkg.description,
-}
+})
 
 // ── 4. installer/src/relay/branding.js ──
 const installerBrandingPath = join(ROOT, 'installer', 'src', 'relay', 'branding.js')

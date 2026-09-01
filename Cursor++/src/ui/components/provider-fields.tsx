@@ -17,14 +17,16 @@ export function ProviderFields() {
   return (
     <>
       <div class="field">
-        <label>Name</label>
+        <label>Key 名称</label>
         <input
           type="text"
+          placeholder="名称自定义，用于区分不同 Key（如 工作号/私人）"
           x-effect="if(document.activeElement !== $el) $el.value = $store.app.getDraft(p.id).name || ''"
           x-on:input="$store.app.updateField(p.id, 'name', $event.target.value)"
           x-bind:class="{ 'invalid': $store.app.validate(p.id).errors.name }"
         />
         <div class="err" x-show="$store.app.validate(p.id).errors.name" x-text="$store.app.validate(p.id).errors.name"></div>
+        <div class="field-hint">名称自定义；多个 Key 有相同模型时显示为 名称/模型名</div>
       </div>
       {/*
         Type + Auth Kind 行:

@@ -6,7 +6,7 @@
  */
 import * as vscode from 'vscode'
 import { version as CURRENT_VERSION } from '../package.json'
-import { NPM_PACKAGE, UPDATE_COMMAND } from './server/relay/branding'
+import { NPM_PACKAGE, RELAY_BRANDING, UPDATE_COMMAND } from './server/relay/branding'
 
 const REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE}/latest`
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
@@ -70,7 +70,7 @@ async function checkOnce(state: vscode.Memento, log?: (msg: string) => void) {
   log?.(`[UPDATE] new version available: ${latest} (current=${current})`)
 
   const action = await vscode.window.showInformationMessage(
-    `Cursor++ ${latest} is available (current: ${current}). Run in an external terminal:\n${UPDATE_COMMAND}`,
+    `${RELAY_BRANDING.displayName} ${latest} is available (current: ${current}). Run in an external terminal:\n${UPDATE_COMMAND}`,
     'Copy Command',
     'Dismiss',
   )

@@ -109,6 +109,7 @@ export const styles = /* css */ `
   .field { margin-bottom: 4px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .err { color: var(--vscode-errorForeground); font-size: 10px; margin-top: 2px; }
+  .field-hint { font-size: 10px; opacity: 0.6; margin-top: 2px; }
 
   .autocomplete { position: relative; }
   .ac-input-wrap { display: flex; align-items: stretch; }
@@ -304,5 +305,15 @@ export const styles = /* css */ `
   .toast-enter { animation: toast-in .2s ease-out; }
   .toast-leave { animation: toast-out .15s ease-in; }
   @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(8px); } }
+  /* ── NextCode 中转站专属: 品牌头部(页面最顶) + Key 引导卡 ── */
+  .brand-header { display: flex; align-items: center; gap: 6px; padding: 8px 0 10px; font-weight: 600; font-size: 13px; }
+  .key-onboard { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--vscode-inputValidation-infoBorder, transparent); border-radius: 6px; margin: 4px 0; }
+  .key-onboard .field { margin: 0; }
+  .key-onboard-actions { display: flex; gap: 6px; align-items: center; }
+  .key-onboard-error { color: var(--vscode-errorForeground); font-size: 11px; }
+  .relay-add-row { padding: 12px 0 4px; }
+  .relay-model-list { display: flex; flex-direction: column; gap: 2px; }
+  .relay-model-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px; border-radius: 4px; }
+  .relay-model-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.12)); }
+  .relay-model-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `

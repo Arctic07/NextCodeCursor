@@ -41,6 +41,7 @@ import {
   ErrorDetails_Error,
   ErrorDetailsSchema,
 } from '../gen/aiserver_v1_shared_pb'
+import { RELAY_BRANDING } from '../relay/branding'
 
 export interface MakeByokErrorOptions {
   /** aiserver.v1.ErrorDetails.Error enum — 决定客户端走哪条 gating 分支 */
@@ -213,7 +214,7 @@ export function makeModelNotFoundError(modelId: string): ConnectError {
     title: 'Model not registered',
     detail:
       `Model \`${modelId}\` was not found in \`~/.ccursor/providers.json\`.\n\n`
-      + 'Open the Cursor++ side panel → Providers, add the model, then try again.',
+      + `Open the ${RELAY_BRANDING.displayName} side panel → Providers, add the model, then try again.`,
     isRetryable: false,
     additionalInfo: { modelId },
   })

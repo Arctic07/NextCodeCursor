@@ -1,3 +1,5 @@
+import { RELAY_BRANDING } from '../../relay/branding'
+
 type ConvertFn = (html: string, options: Record<string, unknown>) => string
 
 type LoadResult =
@@ -31,7 +33,7 @@ export function supermarkdownUnavailableMessage(_error?: Error): string {
   if (process.platform === 'win32') {
     return 'Built-in Web Fetch is unavailable because supermarkdown native module failed to load. On Windows, install Microsoft Visual C++ Redistributable 2015-2022 x64 and restart Cursor.'
   }
-  return 'Built-in Web Fetch is unavailable because supermarkdown native module failed to load. Restart Cursor or reinstall Cursor++.'
+  return `Built-in Web Fetch is unavailable because supermarkdown native module failed to load. Restart Cursor or reinstall ${RELAY_BRANDING.displayName}.`
 }
 
 export function setSupermarkdownNativeErrorNotifier(fn: (error: Error) => void): void {
