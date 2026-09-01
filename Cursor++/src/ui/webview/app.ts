@@ -556,7 +556,7 @@ export function initApp(Alpine: AlpineType) {
       // 不清空 onboarding: 连接失败时错误回显需要引导卡保持打开且凭据保留, 成功时在 remoteModelsResult 里统一收起+清空
       this.onboarding = { ...this.onboarding, connecting: true, error: '' }
       // 自动获取白名单模型 → 全部添加 → 自动保存验权
-      this.fetchAndApplyModels(pid)
+      this.fetchAndApplyModels(pid, true)
     },
 
     /** 引导卡「取消」— 收起引导卡, 清空输入; 若连接失败残留了 draft 一并清理 */
@@ -888,7 +888,7 @@ export function initApp(Alpine: AlpineType) {
      * 获取模型 — 拉取白名单模型并自动全部添加 (覆盖式)。
      * 添加完成后自动保存 (走 validate 验权 → saveProviders)。
      */
-    fetchAndApplyModels(pid: string) {
+    fetchAndApplyModels(pid: string, fromOnboarding = false) {
       if (this.remoteModels[pid]?.loading)
         return
       const draft = this.getDraft(pid)
@@ -902,7 +902,8 @@ export function initApp(Alpine: AlpineType) {
       }
       this.remoteModels = { ...this.remoteModels, [pid]: { loading: true } }
       // onboardPid=true 表示由引导卡发起 → 失败时删除残留 draft 并把错误回显到引导卡; 成功时收起引导卡
-      this.onboardingPid = pid
+      if (fromOnboarding)
+        this.onboardingPid = pid
       this.post('fetchRemoteModels', { pid, draft: JSON.parse(JSON.stringify(draft)), autoApply: true })
     },
 
