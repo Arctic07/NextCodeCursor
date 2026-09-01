@@ -1,0 +1,26 @@
+NextCode Cursor 插件安装器
+==========================
+
+安装步骤 (两步):
+1. 确认电脑已安装 Cursor, 并至少启动过一次
+2. 双击 ccursor.exe
+
+双击后自动完成:
+  - 定位 Cursor 安装目录 (非标准路径也支持, 可用 CCURSOR_CURSOR_ROOT 环境变量指定)
+  - 安装 NextCode 插件到 Cursor 内置扩展目录
+  - 注入客户端补丁 (模型选择器接管)
+
+安装完成后完全重启 Cursor (退出再开), 模型选择器即出现 NextCode 模型列表。
+
+更新插件版本:
+  把新的 nextcode-cursor-x.x.x.vsix 拖到 ccursor.exe 图标上 (会覆盖安装)
+
+卸载:
+  命令行运行: ccursor.exe uninstall
+
+常见问题:
+  Q: 提示 "Cursor installation not found"
+  A: 设置环境变量 CCURSOR_CURSOR_ROOT 指向 Cursor 的 resources\app 目录后重试
+
+  Q: 模型列表没出现
+  A: 确认完全重启了 Cursor; 确认 BYOK Mode: ON

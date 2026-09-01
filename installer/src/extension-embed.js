@@ -5,14 +5,19 @@
  */
 import { unzipSync } from 'fflate';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 const __pkgRoot = join(__dirname, '..');
 
 export function installExtension(paths, log) {
   log?.('[extension] Installing to Cursor.app/extensions/cursor2plus/...');
 
-  const vsixDir = join(__pkgRoot, 'vsix');
-  const vsixFiles = existsSync(vsixDir) ? readdirSync(vsixDir).filter(f => f.endsWith('.vsix')) : [];
+  // exe 单文件模式: CCURSOR_VSIX_PATH 直接指向用户拖入的 .vsix
+  const vsixDir = process.env.CCURSOR_VSIX_PATH
+    ? dirname(process.env.CCURSOR_VSIX_PATH)
+    : join(__pkgRoot, 'vsix');
+  const vsixFiles = process.env.CCURSOR_VSIX_PATH
+    ? [basename(process.env.CCURSOR_VSIX_PATH)]
+    : existsSync(vsixDir) ? readdirSync(vsixDir).filter(f => f.endsWith('.vsix')) : [];
 
   if (vsixFiles.length === 0) {
     throw new Error('No .vsix file found in vsix/ directory. Run "npm run build" first.');

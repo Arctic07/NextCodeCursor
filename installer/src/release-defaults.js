@@ -114,9 +114,10 @@ function release(filename, content, log, { force = false } = {}) {
 // 开发模式从 src/ 直接跑时 fallback 到 src/../assets/
 function resolveAssetPath(filename) {
   const candidates = [
+    process.env.CCURSOR_ASSET_DIR && join(process.env.CCURSOR_ASSET_DIR, filename), // exe 单文件模式: exe 同目录 assets/
     join(__dirname, filename),                  // bundled: dist/<file>
     join(__dirname, '..', 'assets', filename),  // dev: src/../assets/<file>
-  ];
+  ].filter(Boolean);
   for (const p of candidates) {
     if (existsSync(p)) return p;
   }
