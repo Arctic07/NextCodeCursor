@@ -12,6 +12,7 @@
  *   - 所有表单交互由 Alpine 响应式处理, 无 innerHTML 重写
  */
 import type { ProviderEntry } from '../server/data/defaults'
+import type { NextcodeModel } from '../server/relay/nextcodeRegistry'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as vscode from 'vscode'
@@ -161,10 +162,18 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: `白名单拉取失败: ${regErr}` })
               break
             }
-            const filtered = models.filter((m: { id: string }) => lookupNextcodeModel(m.id) !== null).map((m: { id: string }) => ({
-              ...m,
-              whitelist: lookupNextcodeModel(m.id),
-            }))
+            // 白名单命中过滤 + 按白名单 id 去重:
+            // 网关可能同时暴露 裸 id 与组织前缀形式 (deepseek-v4-flash / deepseek/deepseek-v4-flash),
+            // 两者 normalizeModelId 归一化后命中同一条白名单 → 不去重会在选择器里出现重复模型。
+            const seenWhitelistIds = new Set<string>()
+            const filtered: Array<{ id: string, created: number, ownedBy: string, displayName: string, whitelist: NextcodeModel | null }> = []
+            for (const m of models as Array<{ id: string, created: number, ownedBy: string, displayName: string }>) {
+              const w = lookupNextcodeModel(m.id)
+              if (!w || seenWhitelistIds.has(w.id))
+                continue
+              seenWhitelistIds.add(w.id)
+              filtered.push({ ...m, whitelist: w })
+            }
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models: filtered, autoApply: msg.autoApply === true })
           }
           catch (err) {
