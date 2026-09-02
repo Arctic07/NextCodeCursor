@@ -15,6 +15,9 @@ export const RELAY_BRANDING = {
   updateCommand: "npx @nextcode/ccursor update",
 } as const
 
+/** VS Code 扩展完整 id (publisher.name)，供 installer allowlist 注入等消费 */
+export const EXTENSION_ID = "nextcode.nextcode-cursor"
+
 export const HUB_URL = RELAY_BRANDING.hubUrl
 export const NPM_PACKAGE = RELAY_BRANDING.npmPackage
 export const UPDATE_COMMAND = RELAY_BRANDING.updateCommand

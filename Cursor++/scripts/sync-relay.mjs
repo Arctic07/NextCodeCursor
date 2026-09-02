@@ -58,6 +58,9 @@ export const RELAY_BRANDING = {
   updateCommand: ${JSON.stringify(branding.updateCommand ?? 'npx @cometix/ccursor update')},
 } as const
 
+/** VS Code 扩展完整 id (publisher.name)，供 installer allowlist 注入等消费 */
+export const EXTENSION_ID = ${JSON.stringify((branding.publisher ?? 'cometix-space') + '.' + (branding.name ?? 'cursor2plus'))}
+
 export const HUB_URL = RELAY_BRANDING.hubUrl
 export const NPM_PACKAGE = RELAY_BRANDING.npmPackage
 export const UPDATE_COMMAND = RELAY_BRANDING.updateCommand
@@ -117,6 +120,8 @@ const installerBrandingJs = `/**
 export const HUB_URL = ${JSON.stringify(branding.hubUrl ?? 'https://ccursor.cometix.dev')};
 export const NPM_PACKAGE = ${JSON.stringify(branding.npmPackage ?? '@cometix/ccursor')};
 export const UPDATE_COMMAND = ${JSON.stringify(branding.updateCommand ?? 'npx @cometix/ccursor update')};
+/** VS Code 扩展完整 id (publisher.name)，供 installer allowlist 注入等消费 */
+export const EXTENSION_ID = ${JSON.stringify((branding.publisher ?? 'cometix-space') + '.' + (branding.name ?? 'cursor2plus'))};
 `
 
 // ── 5. installer/src/relay/preset.js ──
@@ -129,6 +134,16 @@ export const RELAY_PROVIDERS = ${JSON.stringify(enabledProviders, null, 2)};
 
 export const RELAY_EXTRA_REDIRECT = ${JSON.stringify(extraRedirect, null, 2)};
 `
+
+// ── 6. installer/package.json (@nextcode/ccursor，与 branding.npmPackage 对齐) ──
+// bin 名保持 ccursor 不变，避免破坏已发布的 npx 命令习惯。
+const installerPkgPath = join(ROOT, 'installer', 'package.json')
+const installerPkg = readJson(installerPkgPath)
+const installerPkgNext = {
+  ...installerPkg,
+  name: branding.npmPackage ?? installerPkg.name,
+  description: (branding.description ?? installerPkg.description).replace(/Cursor\+\+/g, branding.displayName ?? 'Cursor++'),
+}
 
 function writeOrCheck(path, next) {
   const prev = existsSync(path) ? readFileSync(path, 'utf-8') : null
@@ -167,6 +182,7 @@ changed = writeOrCheck(presetTsPath, presetTs) || changed
 }
 
 changed = writeOrCheck(installerBrandingPath, installerBrandingJs) || changed
+changed = writeOrCheck(installerPkgPath, JSON.stringify(installerPkgNext, null, 2) + '\n') || changed
 changed = writeOrCheck(installerPresetPath, installerPresetJs) || changed
 
 if (checkOnly) {

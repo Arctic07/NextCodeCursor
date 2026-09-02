@@ -23,6 +23,7 @@ import { patchKatex } from './patch-katex.js';
 import { patchProxy39, needsProxy39Patch, isProxy39Patched } from './patch-proxy-39.js';
 // delete-fix 已移除 — 3.2.11 原生 tombstoneDeletedComposer 已覆盖
 import { releaseDefaults } from './release-defaults.js';
+import { NPM_PACKAGE } from './relay/branding.js';
 
 const ok = msg => console.log(`\x1b[32m[OK]\x1b[0m ${msg}`);
 const info = msg => console.log(`\x1b[34m[>]\x1b[0m ${msg}`);
@@ -94,5 +95,5 @@ export async function install() {
   console.log('');
   ok('Installation complete!');
   warn('Restart Cursor for changes to take effect.');
-  info('Uninstall: npx @cometix/ccursor uninstall');
+  info(`Uninstall: npx ${NPM_PACKAGE} uninstall`);
 }

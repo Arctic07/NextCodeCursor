@@ -8,8 +8,8 @@ import * as acorn from 'acorn';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { loadRoutes } from './routes.js';
-import { BASE_REDIRECT } from './defaults.js';
 import { DEFAULT_REDIRECT } from './defaults.js';
+import { EXTENSION_ID } from './relay/branding.js';
 
 const HOOK_MARKER = '__byokWrapTransport';
 const HOOK_SOURCE_MARKER = 'CURSOR-BYOK-HOOK-START';
@@ -386,8 +386,6 @@ function patchMaxModeToggle(code, log) {
   log?.(`  [max-mode-toggle] injected guard into ${fnDecl.id.name}() via ${contextHookName}(): return null when no model supports Max Mode`);
   return result;
 }
-
-const EXTENSION_ID = 'cometix-space.cursor2plus';
 
 /**
  * KaTeX 的 \sqrt / stretchy delimiter / cancel 会生成 inline SVG。
