@@ -32,12 +32,91 @@ if (!existsSync(configPath)) {
   process.exit(1)
 }
 const cfg = readJson(configPath)
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+// Keep this in sync with src/server/relay/modelIdentity.ts without importing TypeScript.
+function normalizeRelayModelId(raw) {
+  if (typeof raw !== 'string') return ''
+  const segments = raw.trim().split('/')
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index].trim()
+    if (segment) return segment.toLowerCase()
+  }
+  return ''
+}
+
+function configError(message) {
+  throw new Error(`[sync-relay] ${message}`)
+}
+
 const branding = cfg.branding ?? {}
 const rawProviders = cfg.providers ?? []
-const enabledProviders = rawProviders
-  .filter(p => p && typeof p === 'object' && p._enabled === true)
-  .map(({ _comment, _enabled, ...rest }) => rest)
+if (!Array.isArray(rawProviders))
+  configError('providers must be an array')
+
+const providerIds = new Map()
+const modelIds = new Map()
+const apiModelIds = new Map()
+const enabledProviders = []
+
+for (const [providerIndex, provider] of rawProviders.entries()) {
+  if (provider === null || typeof provider !== 'object' || provider._enabled !== true)
+    continue
+  if (Array.isArray(provider))
+    configError(`enabled provider at providers[${providerIndex}] must be an object`)
+
+  const providerLocation = `providers[${providerIndex}]`
+  if (!isNonEmptyString(provider.id))
+    configError(`enabled provider ${providerLocation}.id must be a non-empty string`)
+
+  const previousProvider = providerIds.get(provider.id)
+  if (previousProvider) {
+    configError(`duplicate provider.id ${JSON.stringify(provider.id)} at ${providerLocation}.id; already used at ${previousProvider}.id`)
+  }
+  providerIds.set(provider.id, providerLocation)
+
+  if (!Array.isArray(provider.models))
+    configError(`enabled provider ${providerLocation}.models must be an array`)
+
+  for (const [modelIndex, model] of provider.models.entries()) {
+    const modelLocation = `${providerLocation}.models[${modelIndex}]`
+    if (model === null || typeof model !== 'object' || Array.isArray(model))
+      configError(`enabled provider ${providerLocation} model ${modelLocation} must be an object`)
+
+    for (const field of ['id', 'apiModel', 'displayName']) {
+      if (!isNonEmptyString(model[field]))
+        configError(`enabled provider ${providerLocation} model ${modelLocation}.${field} must be a non-empty string`)
+    }
+
+    const previousModel = modelIds.get(model.id)
+    if (previousModel) {
+      configError(`duplicate model.id ${JSON.stringify(model.id)} at ${modelLocation}.id (provider ${JSON.stringify(provider.id)}); already used at ${previousModel.location}.id (provider ${JSON.stringify(previousModel.providerId)})`)
+    }
+    modelIds.set(model.id, { location: modelLocation, providerId: provider.id })
+
+    const normalizedApiModel = normalizeRelayModelId(model.apiModel)
+    if (!normalizedApiModel)
+      configError(`enabled provider ${providerLocation} model ${modelLocation}.apiModel ${JSON.stringify(model.apiModel)} normalizes to an empty value`)
+    const previousApiModel = apiModelIds.get(normalizedApiModel)
+    if (previousApiModel) {
+      configError(`duplicate normalized apiModel ${JSON.stringify(normalizedApiModel)} at ${modelLocation}.apiModel (provider ${JSON.stringify(provider.id)}, value ${JSON.stringify(model.apiModel)}); already used at ${previousApiModel.location}.apiModel (provider ${JSON.stringify(previousApiModel.providerId)}, value ${JSON.stringify(previousApiModel.value)})`)
+    }
+    apiModelIds.set(normalizedApiModel, {
+      location: modelLocation,
+      providerId: provider.id,
+      value: model.apiModel,
+    })
+  }
+
+  const { _comment, _enabled, ...rest } = provider
+  enabledProviders.push(rest)
+}
 const extraRedirect = cfg.extraRedirect ?? []
+const hubUrl = branding.hubUrl ?? 'https://ccursor.cometix.dev'
+const apiBaseUrl = branding.apiBaseUrl ?? `${String(hubUrl).replace(/\/+$/, '')}/v1`
 
 // ── 1. branding.ts ──
 const brandingTsPath = join(__dirname, '..', 'src', 'server', 'relay', 'branding.ts')
@@ -53,7 +132,8 @@ export const RELAY_BRANDING = {
   name: ${JSON.stringify(branding.name ?? 'cursor2plus')},
   displayName: ${JSON.stringify(branding.displayName ?? 'Cursor++')},
   description: ${JSON.stringify(branding.description ?? 'Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE')},
-  hubUrl: ${JSON.stringify(branding.hubUrl ?? 'https://ccursor.cometix.dev')},
+  hubUrl: ${JSON.stringify(hubUrl)},
+  apiBaseUrl: ${JSON.stringify(apiBaseUrl)},
   npmPackage: ${JSON.stringify(branding.npmPackage ?? '@cometix/ccursor')},
   updateCommand: ${JSON.stringify(branding.updateCommand ?? 'npx @cometix/ccursor update')},
 } as const
@@ -117,7 +197,8 @@ const installerBrandingJs = `/**
  * Relay Branding (installer) — 由 relay.config.json + scripts/sync-relay.mjs 自动生成
  * 请勿手改，改 relay.config.json
  */
-export const HUB_URL = ${JSON.stringify(branding.hubUrl ?? 'https://ccursor.cometix.dev')};
+export const HUB_URL = ${JSON.stringify(hubUrl)};
+export const API_BASE_URL = ${JSON.stringify(apiBaseUrl)};
 export const NPM_PACKAGE = ${JSON.stringify(branding.npmPackage ?? '@cometix/ccursor')};
 export const UPDATE_COMMAND = ${JSON.stringify(branding.updateCommand ?? 'npx @cometix/ccursor update')};
 /** VS Code 扩展完整 id (publisher.name)，供 installer allowlist 注入等消费 */
@@ -147,14 +228,16 @@ const installerPkgNext = {
 
 function writeOrCheck(path, next) {
   const prev = existsSync(path) ? readFileSync(path, 'utf-8') : null
+  const normalizedPrev = prev?.replace(/\r\n/g, '\n')
+  const normalizedNext = next.replace(/\r\n/g, '\n')
   if (checkOnly) {
-    if (prev !== next) {
+    if (normalizedPrev !== normalizedNext) {
       console.error(`[sync-relay] OUT OF DATE: ${path} — run: node Cursor++/scripts/sync-relay.mjs`)
       process.exitCode = 1
     }
     return false
   }
-  if (prev === next) return false
+  if (normalizedPrev === normalizedNext) return false
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, next, 'utf-8')
   console.log(`[sync-relay] wrote ${path}`)

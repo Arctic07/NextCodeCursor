@@ -5,6 +5,8 @@
  * Alpine 响应式代理自动追踪 mutation → DOM 更新, 无需手动 render() / rebind。
  */
 import type { Alpine as AlpineType } from 'alpinejs'
+import { RELAY_BRANDING } from '../../server/relay/branding'
+import { isRelayProvider, normalizeRelayModelId } from '../../server/relay/modelIdentity'
 
 declare function acquireVsCodeApi(): { postMessage: (msg: any) => void, getState: () => any, setState: (s: any) => void }
 
@@ -14,10 +16,64 @@ const vscode = acquireVsCodeApi()
 // debounce timer for catalog search
 let acTimer: ReturnType<typeof setTimeout> | null = null
 /** NextCode 中转站 baseUrl — 判定中转 provider 的常量 */
-export const RELAY_BASE_URL = 'https://www.arctictest.com/v1'
+export const RELAY_BASE_URL = RELAY_BRANDING.apiBaseUrl
 
 function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function nextUid(prefix: string, usedIds: Set<string>): string {
+  const base = uid(prefix)
+  if (!usedIds.has(base)) {
+    usedIds.add(base)
+    return base
+  }
+  let suffix = 2
+  let candidate = `${base}-${suffix}`
+  while (usedIds.has(candidate)) {
+    suffix++
+    candidate = `${base}-${suffix}`
+  }
+  usedIds.add(candidate)
+  return candidate
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
+function collectProviderIds(state: unknown, drafts: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>()
+  const stateRecord = isRecord(state) ? state : {}
+  const providers: unknown[] = Array.isArray(stateRecord.providers) ? stateRecord.providers : []
+  for (const provider of providers) {
+    if (isRecord(provider) && typeof provider.id === 'string')
+      ids.add(provider.id)
+  }
+  for (const [draftId, draft] of Object.entries(drafts)) {
+    ids.add(draftId)
+    if (isRecord(draft) && typeof draft.id === 'string')
+      ids.add(draft.id)
+  }
+  return ids
+}
+
+function collectModelIds(state: unknown, drafts: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>()
+  const collect = (providers: unknown[]) => {
+    for (const provider of providers) {
+      if (!isRecord(provider) || !Array.isArray(provider.models))
+        continue
+      for (const model of provider.models) {
+        if (isRecord(model) && typeof model.id === 'string')
+          ids.add(model.id)
+      }
+    }
+  }
+  const stateRecord = isRecord(state) ? state : {}
+  collect(Array.isArray(stateRecord.providers) ? stateRecord.providers : [])
+  collect(Object.values(drafts))
+  return ids
 }
 
 function clone<T>(v: T): T {
@@ -183,16 +239,14 @@ export function initApp(Alpine: AlpineType) {
       const seen = new Set<string>()
       const out: any[] = []
       for (const p of base) {
-        // 中转 Key 判定: baseUrl 精确匹配 + type 必须是 openai-chat (面板专属协议)。
-        // 用户手配的其他 provider (anthropic / gemini / 无 /v1 后缀) 一律不显示。
-        if ((p.baseUrl || '').replace(/\/+$/, '') !== RELAY_BASE_URL || p.type !== 'openai-chat')
+        if (!isRelayProvider(p))
           continue
         seen.add(p.id)
         out.push(this.drafts[p.id] ?? p)
       }
       // 新建但尚未保存的中转 draft
       for (const [id, draft] of Object.entries(this.drafts) as [string, any][]) {
-        if (!seen.has(id) && (draft.baseUrl || '').replace(/\/+$/, '') === RELAY_BASE_URL && draft.type === 'openai-chat')
+        if (!seen.has(id) && isRelayProvider(draft))
           out.push(draft)
       }
       return out
@@ -228,17 +282,17 @@ export function initApp(Alpine: AlpineType) {
       const d = this.getProviderView(pid)
       return (d.models || []).find((x: any) => x.id === mid)
     },
-    /** 跨 provider 同 apiModel 出现 ≥2 次 → 返回 名称/模型名, 否则裸 displayName (模板高频调用, 纯同步) */
+    /** 跨 relay provider 同 apiModel 出现 ≥2 次 → 返回 名称/模型名, 否则裸 displayName (模板高频调用, 纯同步) */
     modelDisplayName(pid: string, mid: string): string {
       const m = this.getModel(pid, mid)
       if (!m)
         return ''
-      const apiModel = m.apiModel as string | undefined
+      const apiModel = normalizeRelayModelId(m.apiModel)
       const displayName = (m.displayName as string) || ''
       let count = 0
-      for (const p of this.providers) {
+      for (const p of this.relayProviders) {
         const list = p?.models
-        if (Array.isArray(list) && list.some((x: any) => x.apiModel === apiModel))
+        if (Array.isArray(list) && list.some((x: any) => normalizeRelayModelId(x.apiModel) === apiModel))
           count++
       }
       if (apiModel && count >= 2) {
@@ -314,17 +368,22 @@ export function initApp(Alpine: AlpineType) {
 
       // model 校验
       const modelErrors: Record<string, Record<string, string>> = {}
-      const modelIds = new Set<string>()
+      const modelIdCounts = new Map<unknown, number>()
+      for (const provider of all) {
+        for (const model of provider.models || [])
+          modelIdCounts.set(model.id, (modelIdCounts.get(model.id) || 0) + 1)
+      }
       const OPTIONAL_NUM_FIELDS = ['thinkingBudgetTokens']
       for (const m of p.models || []) {
         const me: Record<string, string> = {}
+        if (typeof m.id !== 'string' || !m.id.trim())
+          me.id = 'Model id is required'
         if (!m.apiModel?.trim())
           me.apiModel = 'API model is required'
         if (!m.displayName?.trim())
           me.displayName = 'Display name is required'
-        if (modelIds.has(m.id))
+        if ((modelIdCounts.get(m.id) || 0) > 1)
           me.id = 'Duplicate model id'
-        modelIds.add(m.id)
         // contextTokenLimit 必填 — 影响 Cursor UI 上下文进度条
         if (m.contextTokenLimit === undefined || m.contextTokenLimit === null || m.contextTokenLimit === '') {
           me.contextTokenLimit = 'Context token limit is required'
@@ -525,8 +584,9 @@ export function initApp(Alpine: AlpineType) {
 
     // ── Provider / Model 增删 ──
     addProvider() {
+      const id = nextUid('provider', collectProviderIds(this.state, this.drafts))
       const p = {
-        id: uid('provider'),
+        id,
         name: '默认',
         type: 'openai-chat',
         baseUrl: RELAY_BASE_URL,
@@ -578,7 +638,7 @@ export function initApp(Alpine: AlpineType) {
     addModel(pid: string) {
       const d = this.ensureDraft(pid)
       const m = {
-        id: uid('model'),
+        id: nextUid('model', collectModelIds(this.state, this.drafts)),
         apiModel: '',
         displayName: '',
         thinking: false,
@@ -915,13 +975,34 @@ export function initApp(Alpine: AlpineType) {
     applyAllRemoteModels(pid: string) {
       const remote = this.remoteModels[pid]?.models || []
       const d = this.ensureDraft(pid)
+      const existingIdsByApiModel = new Map<string, string>()
+      for (const model of d.models || []) {
+        const apiModel = normalizeRelayModelId(model.apiModel)
+        if (apiModel && typeof model.id === 'string' && !existingIdsByApiModel.has(apiModel))
+          existingIdsByApiModel.set(apiModel, model.id)
+      }
+      const usedModelIds = collectModelIds(this.state, this.drafts)
+      const reusedModelIds = new Set<string>()
+      const getModelId = (apiModel: unknown): string => {
+        const normalizedApiModel = normalizeRelayModelId(apiModel)
+        const existingId = normalizedApiModel ? existingIdsByApiModel.get(normalizedApiModel) : undefined
+        if (existingId && !reusedModelIds.has(existingId)) {
+          reusedModelIds.add(existingId)
+          return existingId
+        }
+        const id = nextUid('model', usedModelIds)
+        reusedModelIds.add(id)
+        return id
+      }
       d.models = remote.map((rm: any) => {
         const w = rm.whitelist
+        const apiModel = w ? w.id : rm.id
+        const id = getModelId(apiModel)
         if (w) {
           const thinking = w.supportsThinking !== false
           return {
-            id: uid('model'),
-            apiModel: w.id,
+            id,
+            apiModel,
             displayName: w.displayName,
             thinking,
             ...(thinking ? { thinkingLevel: 'medium' as const } : {}),
@@ -934,8 +1015,8 @@ export function initApp(Alpine: AlpineType) {
         }
         // 白名单外: 默认 200k ctx / 64k out / 不识图 / 思考开+medium / 可max
         return {
-          id: uid('model'),
-          apiModel: rm.id,
+          id,
+          apiModel,
           displayName: `[非白名单] ${rm.id}`,
           thinking: true,
           thinkingLevel: 'medium' as const,

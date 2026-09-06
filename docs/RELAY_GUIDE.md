@@ -41,6 +41,7 @@ git config merge.ours.driver true   # 启用 .gitattributes 的 merge=ours
        "name": "your-extension-name",
        "displayName": "Your Display Name",
        "hubUrl": "https://your-hub.example.com",
+       "apiBaseUrl": "https://api.your-relay.com/v1",
        "npmPackage": "@your-scope/your-pkg",
        "updateCommand": "npx @your-scope/your-pkg update"
      },
@@ -85,6 +86,14 @@ git config merge.ours.driver true   # 启用 .gitattributes 的 merge=ours
    git commit -m "feat(relay): configure MyRelay preset"
    git push origin main
    ```
+
+### 中转模型身份与去重约定
+
+- `ProviderModel.id` 是 Cursor 选择与路由使用的内部稳定 ID；`apiModel` 是发送给中转网关的模型 ID，`displayName` 仅用于展示，两者不要混用。
+- 白名单和模型匹配按归一化 ID 处理：`trim`，去掉路径/提供商前缀与空尾段，再转为小写；空值不参与匹配。
+- 模型选择器按归一化后的 `apiModel` 去重，同一逻辑模型只保留一条 picker。多个 API Key 暴露同一模型时也只显示一条；relay provider 优先于隐藏的旧 generic provider，同类冲突按 `providers.json` 顺序 first-wins，并记录 warning。
+- `refetch` 必须保留已有的 `ProviderModel.id`，不要因 `apiModel` 相同而生成新的选择 ID。已有会话仍可按精确 `model.id` 反向解析；客户端误传 `apiModel` 或带 provider 前缀时，再按归一化后的 `apiModel` fallback 查找。
+- UI 默认中转地址由 `relay.config.json` 的 `branding.apiBaseUrl` 驱动；provider 自身的 `baseUrl` 仍表示该 provider 的请求地址。修改 branding 后重新执行同步脚本。
 
 ## 如何同步上游核心功能
 

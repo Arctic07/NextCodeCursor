@@ -20,6 +20,7 @@ import { bumpRefreshSignal } from '../server'
 import { searchCatalog } from '../server/config/catalogStore'
 import { updateProviders } from '../server/config/providersStore'
 import { resetProviderInstanceCache } from '../server/handlers/llm/providerRuntime'
+import { normalizeRelayModelId } from '../server/relay/modelIdentity'
 import { loadNextcodeRegistry, lookupNextcodeModel } from '../server/relay/nextcodeRegistry'
 import { renderHtml } from './components/layout'
 import { getState, onStateChange, refreshState } from './state'
@@ -162,16 +163,19 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, error: `白名单拉取失败: ${regErr}` })
               break
             }
-            // 白名单命中过滤 + 按白名单 id 去重:
+            // 白名单命中过滤 + 按归一化白名单 id 去重:
             // 网关可能同时暴露 裸 id 与组织前缀形式 (deepseek-v4-flash / deepseek/deepseek-v4-flash),
-            // 两者 normalizeModelId 归一化后命中同一条白名单 → 不去重会在选择器里出现重复模型。
+            // 两者 normalizeRelayModelId 归一化后命中同一条白名单 → 不去重会在选择器里出现重复模型。
             const seenWhitelistIds = new Set<string>()
             const filtered: Array<{ id: string, created: number, ownedBy: string, displayName: string, whitelist: NextcodeModel | null }> = []
             for (const m of models as Array<{ id: string, created: number, ownedBy: string, displayName: string }>) {
               const w = lookupNextcodeModel(m.id)
-              if (!w || seenWhitelistIds.has(w.id))
+              if (!w)
                 continue
-              seenWhitelistIds.add(w.id)
+              const normalizedWhitelistId = normalizeRelayModelId(w.id)
+              if (!normalizedWhitelistId || seenWhitelistIds.has(normalizedWhitelistId))
+                continue
+              seenWhitelistIds.add(normalizedWhitelistId)
               filtered.push({ ...m, whitelist: w })
             }
             this.view?.webview.postMessage({ type: 'remoteModelsResult', pid, models: filtered, autoApply: msg.autoApply === true })

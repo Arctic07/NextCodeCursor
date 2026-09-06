@@ -11,6 +11,7 @@ export const RELAY_BRANDING = {
   displayName: "NextCode",
   description: "NextCode BYOK Extension — Bring Your Own Key for Cursor IDE",
   hubUrl: "https://www.arctictest.com",
+  apiBaseUrl: "https://www.arctictest.com/v1",
   npmPackage: "@nextcode/ccursor",
   updateCommand: "npx @nextcode/ccursor update",
 } as const

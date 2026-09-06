@@ -2,8 +2,8 @@
  * providers.json 单项原子读写 + 反向索引
  *
  * 单一真源:
- *   - 内存里维护 ProvidersConfig + Map<modelId, {provider, model}>
- *   - 加载时建立反向索引,modelId 跨 provider 重名 → first-wins + warn
+ *   - 内存里维护 ProvidersConfig + 按 exact modelId / 归一化 apiModel 的双索引
+ *   - 加载时建立反向索引,modelId 跨 provider 重名 → relay 优先,同类 first-wins + warn
  *   - 写入立即重建索引
  *
  * Relay 叠加: RELAY_PROVIDERS 仅在“种子/兜底”阶段合并，不覆盖用户已有配置。
@@ -15,6 +15,7 @@ import type { ProviderEntry, ProviderModel, ProvidersConfig } from '../data/defa
 import { existsSync, unwatchFile, watchFile } from 'node:fs'
 import { DEFAULT_PROVIDERS } from '../data/defaults'
 import { logger } from '../logger'
+import { isRelayProvider, normalizeRelayModelId } from '../relay/modelIdentity'
 import { RELAY_PROVIDERS } from '../relay/preset'
 import { readJsonOrNull, withSerial, writeJsonAtomic } from './atomic'
 import { getProvidersFilePath } from './paths'
@@ -30,6 +31,7 @@ function clone<T>(value: T): T {
 
 let cache: ProvidersConfig | null = null
 let reverseIndex: Map<string, ResolvedProviderModel> = new Map()
+let apiModelIndex: Map<string, ResolvedProviderModel> = new Map()
 
 function getEffectiveDefaults(): ProvidersConfig {
   if (RELAY_PROVIDERS.length === 0)
@@ -40,28 +42,79 @@ function getEffectiveDefaults(): ProvidersConfig {
   return { ...clone(DEFAULT_PROVIDERS), providers: [...clone(DEFAULT_PROVIDERS).providers, ...clone(extra)] }
 }
 
-function rebuildIndex(config: ProvidersConfig): Map<string, ResolvedProviderModel> {
-  const idx = new Map<string, ResolvedProviderModel>()
+interface ProviderIndexes {
+  reverse: Map<string, ResolvedProviderModel>
+  apiModel: Map<string, ResolvedProviderModel>
+}
+
+function rebuildIndexes(config: ProvidersConfig): ProviderIndexes {
+  const reverse = new Map<string, ResolvedProviderModel>()
   for (const provider of config.providers) {
     if (!Array.isArray(provider.models))
       continue
     for (const model of provider.models) {
-      const existing = idx.get(model.id)
-      if (existing) {
-        logger.warn(
-          {
-            modelId: model.id,
-            winner: existing.provider.id,
-            loser: provider.id,
-          },
-          '[CFG] duplicate model id across providers, keeping first',
-        )
+      const candidate = { provider, model }
+      const existing = reverse.get(model.id)
+      if (!existing) {
+        reverse.set(model.id, candidate)
         continue
       }
-      idx.set(model.id, { provider, model })
+
+      const candidateWins = isRelayProvider(provider) && !isRelayProvider(existing.provider)
+      const winner = candidateWins ? candidate : existing
+      const loser = candidateWins ? existing : candidate
+      logger.warn(
+        {
+          modelId: model.id,
+          winner: winner.provider.id,
+          loser: loser.provider.id,
+          winnerModel: winner.model.id,
+          loserModel: loser.model.id,
+          winnerApiModel: winner.model.apiModel,
+          loserApiModel: loser.model.apiModel,
+        },
+        candidateWins
+          ? '[CFG] duplicate model id, preferring relay provider'
+          : '[CFG] duplicate model id across providers, keeping first',
+      )
+      if (candidateWins)
+        reverse.set(model.id, candidate)
     }
   }
-  return idx
+
+  const apiModel = new Map<string, ResolvedProviderModel>()
+  for (const candidate of reverse.values()) {
+    const apiModelKey = normalizeRelayModelId(candidate.model.apiModel) || candidate.model.id
+    const existing = apiModel.get(apiModelKey)
+    if (!existing) {
+      apiModel.set(apiModelKey, candidate)
+      continue
+    }
+
+    const existingIsRelay = isRelayProvider(existing.provider)
+    const candidateIsRelay = isRelayProvider(candidate.provider)
+    const candidateWins = candidateIsRelay && !existingIsRelay
+    const winner = candidateWins ? candidate : existing
+    const loser = candidateWins ? existing : candidate
+    logger.warn(
+      {
+        apiModel: apiModelKey,
+        winnerProvider: winner.provider.id,
+        winnerModel: winner.model.id,
+        winnerApiModel: winner.model.apiModel,
+        loserProvider: loser.provider.id,
+        loserModel: loser.model.id,
+        loserApiModel: loser.model.apiModel,
+      },
+      candidateWins
+        ? '[CFG] duplicate normalized api model, preferring relay provider'
+        : '[CFG] duplicate normalized api model, keeping first',
+    )
+    if (candidateWins)
+      apiModel.set(apiModelKey, candidate)
+  }
+
+  return { reverse, apiModel }
 }
 
 function withFallback(loaded: Partial<ProvidersConfig> | null): ProvidersConfig {
@@ -82,12 +135,18 @@ function withFallback(loaded: Partial<ProvidersConfig> | null): ProvidersConfig 
   }
 }
 
+function setIndexes(config: ProvidersConfig): void {
+  const indexes = rebuildIndexes(config)
+  reverseIndex = indexes.reverse
+  apiModelIndex = indexes.apiModel
+}
+
 export function loadProviders(): ProvidersConfig {
   if (cache)
     return cache
   const loaded = readJsonOrNull<Partial<ProvidersConfig>>(getProvidersFilePath())
   cache = withFallback(loaded)
-  reverseIndex = rebuildIndex(cache)
+  setIndexes(cache)
   return cache
 }
 
@@ -104,21 +163,21 @@ export async function ensureProvidersFile(): Promise<ProvidersConfig> {
     const existing = readJsonOrNull<Partial<ProvidersConfig>>(path)
     if (existing && Array.isArray(existing.providers)) {
       cache = withFallback(existing)
-      reverseIndex = rebuildIndex(cache)
+      setIndexes(cache)
       return cache
     }
     // 文件物理存在但解析失败 → 不覆盖,用带 relay 的兜底运行 (让用户修复文件)
     if (existsSync(path)) {
       logger.warn({ path }, '[CFG] providers.json exists but failed to parse — not overwriting, using empty defaults')
       cache = getEffectiveDefaults()
-      reverseIndex = rebuildIndex(cache)
+      setIndexes(cache)
       return cache
     }
     // 文件真的不存在 → 写入种子（含 relay 预设）
     const seed = getEffectiveDefaults()
     writeJsonAtomic(path, seed)
     cache = seed
-    reverseIndex = rebuildIndex(cache)
+    setIndexes(cache)
     logger.info({ path }, '[CFG] providers.json seeded with defaults')
     return cache
   })
@@ -131,31 +190,29 @@ export async function updateProviders(updater: (draft: ProvidersConfig) => void)
     updater(current)
     writeJsonAtomic(path, current)
     cache = current
-    reverseIndex = rebuildIndex(cache)
+    setIndexes(cache)
     return cache
   })
 }
 
-/** 反向查找: modelId → {provider, model} */
+/** 反向查找: exact modelId 优先,再按归一化 apiModel 兼容客户端输入 */
 export function lookupModel(modelId: string): ResolvedProviderModel | null {
   if (!cache)
     loadProviders()
-  return reverseIndex.get(modelId) ?? null
+  const exact = reverseIndex.get(modelId)
+  if (exact)
+    return exact
+  const apiModelId = normalizeRelayModelId(modelId)
+  if (!apiModelId)
+    return null
+  return apiModelIndex.get(apiModelId) ?? null
 }
 
-/** 铺平所有 provider × model, 返回展示用的列表 */
+/** 铺平所有 provider × model, 每个 exact modelId 和归一化 apiModel 只保留一条 */
 export function flattenModels(): ResolvedProviderModel[] {
-  const config = cache ?? loadProviders()
-  const out: ResolvedProviderModel[] = []
-  for (const provider of config.providers) {
-    for (const model of provider.models) {
-      // 与 reverseIndex 一致: 跨 provider 重名只保留第一个
-      if (out.some(x => x.model.id === model.id))
-        continue
-      out.push({ provider, model })
-    }
-  }
-  return out
+  if (!cache)
+    loadProviders()
+  return [...apiModelIndex.values()]
 }
 
 export function getProvider(providerId: string): ProviderEntry | null {
@@ -167,12 +224,13 @@ export function getProvider(providerId: string): ProviderEntry | null {
 export function resetProvidersCacheForTests(): void {
   cache = null
   reverseIndex = new Map()
+  apiModelIndex = new Map()
 }
 
 /** 测试用: 直接注入 in-memory providers, 跳过磁盘读写 */
 export function setProvidersForTests(config: ProvidersConfig): void {
   cache = clone(config)
-  reverseIndex = rebuildIndex(cache)
+  setIndexes(cache)
 }
 
 // ── 文件监听: 外部变更 (其他实例 / 手动编辑) 自动重载 ──
@@ -194,7 +252,7 @@ export function onProvidersChange(fn: ProvidersChangeListener): () => void {
 function reloadFromDisk() {
   const loaded = readJsonOrNull<Partial<ProvidersConfig>>(getProvidersFilePath())
   cache = withFallback(loaded)
-  reverseIndex = rebuildIndex(cache)
+  setIndexes(cache)
 }
 
 /** 启动 providers.json 文件监听 */

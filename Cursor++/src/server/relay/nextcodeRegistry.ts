@@ -1,3 +1,5 @@
+import { normalizeRelayModelId } from './modelIdentity'
+
 /**
  * NextCode 中转站远端白名单 Registry
  *
@@ -34,7 +36,11 @@ let lookupMap: Map<string, NextcodeModel> | null = null
 let inFlight: Promise<NextcodeModel[]> | null = null
 
 function isNonEmptyString(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0
+  return typeof v === 'string' && v.trim().length > 0
+}
+
+function isPositiveFiniteInteger(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0
 }
 
 /** 并发防抖: 复用同一个 in-flight fetch promise */
@@ -53,16 +59,29 @@ async function doFetch(): Promise<NextcodeModel[]> {
   const data: unknown = await res.json()
   if (!Array.isArray(data)) throw new Error('白名单格式非法: JSON 顶层不是数组')
   const models: NextcodeModel[] = []
+  const normalizedIds = new Set<string>()
   for (const item of data) {
     if (typeof item !== 'object' || item === null) throw new Error('白名单格式非法: 条目不是对象')
     const m = item as Record<string, unknown>
     if (!isNonEmptyString(m.id)) throw new Error('白名单格式非法: 条目缺少 id')
+    const normalizedId = normalizeRelayModelId(m.id)
+    if (!normalizedId) throw new Error('白名单格式非法: 条目 id 归一化后为空')
+    if (normalizedIds.has(normalizedId)) {
+      throw new Error(`白名单格式非法: 条目 id 归一化后重复: ${normalizedId}`)
+    }
+    normalizedIds.add(normalizedId)
     if (!isNonEmptyString(m.displayName)) throw new Error('白名单格式非法: 条目缺少 displayName')
+    if (!isPositiveFiniteInteger(m.contextTokenLimit)) {
+      throw new Error('白名单格式非法: 条目缺少有效 contextTokenLimit')
+    }
+    if (!isPositiveFiniteInteger(m.maxOutputTokens)) {
+      throw new Error('白名单格式非法: 条目缺少有效 maxOutputTokens')
+    }
     models.push({
       id: m.id,
       displayName: m.displayName,
-      contextTokenLimit: typeof m.contextTokenLimit === 'number' ? m.contextTokenLimit : 0,
-      maxOutputTokens: typeof m.maxOutputTokens === 'number' ? m.maxOutputTokens : 0,
+      contextTokenLimit: m.contextTokenLimit,
+      maxOutputTokens: m.maxOutputTokens,
       supportsImages: m.supportsImages === true,
       supportsThinking: m.supportsThinking === true,
       supportsMaxMode: m.supportsMaxMode === true,
@@ -99,9 +118,7 @@ export async function loadNextcodeRegistry(opts?: { force?: boolean }): Promise<
 }
 
 /** 归一化模型 id: 取路径末段（裸 id）→ trim → 小写 */
-export function normalizeModelId(raw: string): string {
-  return raw.split('/').pop()!.trim().toLowerCase()
-}
+export const normalizeModelId = normalizeRelayModelId
 
 /** 按归一化 id 在白名单缓存中查找; 未加载时后台预加载并返回 null（调用方应先 await loadNextcodeRegistry） */
 export function lookupNextcodeModel(raw: string): NextcodeModel | null {

@@ -2,7 +2,7 @@
  * 把 providersStore 里的 BYOK 模型转换成 Cursor AvailableModelsResponse_AvailableModel proto。
  *
  * 关键约定:
- *   - name = ProviderModel.id (不加前缀,跨 provider 重名由 providersStore first-wins)
+ *   - name = ProviderModel.id (不加前缀; providersStore 按 exact model.id 与归一化 apiModel 双重去重, relay 优先)
  *   - isUserAdded = false
  *   - serverModelName = ProviderModel.id (客户端 getServerModelName 回传此值)
  *   - 有 parameters 配置时生成 parameterDefinitions + 笛卡尔积 variants (Edit 面板)
