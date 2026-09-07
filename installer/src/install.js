@@ -59,7 +59,11 @@ export async function install() {
 
   if (extInstalled && hookInjected && alPatched && agentHostPatched && proxy39Ok) {
     ok('Already fully installed');
-    info('To reinstall, run "ccursor uninstall" first');
+    info('Reinstall: overwriting existing cursor2plus extension with the latest VSIX');
+    installExtension(paths, info);
+    console.log('');
+    ok('Extension reinstalled successfully');
+    warn('Restart Cursor for changes to take effect.');
     return;
   }
 
