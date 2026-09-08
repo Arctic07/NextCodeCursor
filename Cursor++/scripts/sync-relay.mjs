@@ -5,7 +5,7 @@
  *       node scripts/sync-relay.mjs --check   (CI 校验是否同步)
  *
  * 同步目标:
- *   - Cursor++/src/server/relay/branding.ts   (HUB_URL / NPM_PACKAGE 真源)
+ *   - Cursor++/src/server/relay/branding.ts   (HUB_URL / API_BASE_URL / MODEL_REGISTRY_URL 真源)
  *   - Cursor++/src/server/relay/preset.ts     (RELAY_PROVIDERS / RELAY_EXTRA_REDIRECT)
  *   - Cursor++/package.json                   (publisher/name/displayName/description)
  *   - installer/src/relay/branding.js         (INSTALLER hub/npm)
@@ -37,6 +37,21 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+function isHttpUrl(value) {
+  if (!isNonEmptyString(value)) return false
+  try {
+    const parsed = new URL(value.trim())
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && isNonEmptyString(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
+function requireHttpUrl(value, location) {
+  if (!isHttpUrl(value))
+    configError(`${location} must be a valid http/https URL`)
+  return value.trim()
+}
 // Keep this in sync with src/server/relay/modelIdentity.ts without importing TypeScript.
 function normalizeRelayModelId(raw) {
   if (typeof raw !== 'string') return ''
@@ -52,11 +67,23 @@ function configError(message) {
   throw new Error(`[sync-relay] ${message}`)
 }
 
-const branding = cfg.branding ?? {}
-const rawProviders = cfg.providers ?? []
+if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg))
+  configError('config must be an object')
+
+const rawBranding = cfg.branding
+if (rawBranding !== undefined && (rawBranding === null || typeof rawBranding !== 'object' || Array.isArray(rawBranding)))
+  configError('branding must be an object')
+const branding = rawBranding === undefined ? {} : rawBranding
+const hubUrl = requireHttpUrl(branding.hubUrl === undefined ? 'https://ccursor.cometix.dev' : branding.hubUrl, 'branding.hubUrl')
+const apiBaseUrl = requireHttpUrl(branding.apiBaseUrl === undefined ? `${hubUrl.replace(/\/+$/, '')}/v1` : branding.apiBaseUrl, 'branding.apiBaseUrl')
+const modelRegistryUrl = requireHttpUrl(branding.modelRegistryUrl, 'branding.modelRegistryUrl')
+
+const rawProviders = cfg.providers === undefined ? [] : cfg.providers
 if (!Array.isArray(rawProviders))
   configError('providers must be an array')
 
+const providerTypes = new Set(['anthropic', 'openai-chat', 'openai-responses', 'gemini'])
+const authKinds = new Set(['apiKey', 'token'])
 const providerIds = new Map()
 const modelIds = new Map()
 const apiModelIds = new Map()
@@ -77,6 +104,18 @@ for (const [providerIndex, provider] of rawProviders.entries()) {
     configError(`duplicate provider.id ${JSON.stringify(provider.id)} at ${providerLocation}.id; already used at ${previousProvider}.id`)
   }
   providerIds.set(provider.id, providerLocation)
+
+  if (!providerTypes.has(provider.type))
+    configError(`enabled provider ${providerLocation}.type must be one of anthropic, openai-chat, openai-responses, gemini`)
+
+  const normalizedBaseUrl = requireHttpUrl(provider.baseUrl, `${providerLocation}.baseUrl`)
+
+  if (provider.auth === null || typeof provider.auth !== 'object' || Array.isArray(provider.auth))
+    configError(`enabled provider ${providerLocation}.auth must be an object`)
+  if (!authKinds.has(provider.auth.kind))
+    configError(`enabled provider ${providerLocation}.auth.kind must be apiKey or token`)
+  if (typeof provider.auth.value !== 'string')
+    configError(`enabled provider ${providerLocation}.auth.value must be a string`)
 
   if (!Array.isArray(provider.models))
     configError(`enabled provider ${providerLocation}.models must be an array`)
@@ -112,11 +151,21 @@ for (const [providerIndex, provider] of rawProviders.entries()) {
   }
 
   const { _comment, _enabled, ...rest } = provider
-  enabledProviders.push(rest)
+  enabledProviders.push({ ...rest, baseUrl: normalizedBaseUrl })
 }
-const extraRedirect = cfg.extraRedirect ?? []
-const hubUrl = branding.hubUrl ?? 'https://ccursor.cometix.dev'
-const apiBaseUrl = branding.apiBaseUrl ?? `${String(hubUrl).replace(/\/+$/, '')}/v1`
+const rawExtraRedirect = cfg.extraRedirect === undefined ? [] : cfg.extraRedirect
+if (!Array.isArray(rawExtraRedirect))
+  configError('extraRedirect must be an array')
+const extraRedirect = []
+const extraRedirectSeen = new Set()
+for (const [redirectIndex, redirect] of rawExtraRedirect.entries()) {
+  if (!isNonEmptyString(redirect))
+    configError(`extraRedirect[${redirectIndex}] must be a non-empty string`)
+  const normalizedRedirect = redirect.trim()
+  if (extraRedirectSeen.has(normalizedRedirect)) continue
+  extraRedirectSeen.add(normalizedRedirect)
+  extraRedirect.push(normalizedRedirect)
+}
 
 // ── 1. branding.ts ──
 const brandingTsPath = join(__dirname, '..', 'src', 'server', 'relay', 'branding.ts')
@@ -134,6 +183,7 @@ export const RELAY_BRANDING = {
   description: ${JSON.stringify(branding.description ?? 'Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE')},
   hubUrl: ${JSON.stringify(hubUrl)},
   apiBaseUrl: ${JSON.stringify(apiBaseUrl)},
+  modelRegistryUrl: ${JSON.stringify(modelRegistryUrl)},
   npmPackage: ${JSON.stringify(branding.npmPackage ?? '@cometix/ccursor')},
   updateCommand: ${JSON.stringify(branding.updateCommand ?? 'npx @cometix/ccursor update')},
 } as const
@@ -142,6 +192,7 @@ export const RELAY_BRANDING = {
 export const EXTENSION_ID = ${JSON.stringify((branding.publisher ?? 'cometix-space') + '.' + (branding.name ?? 'cursor2plus'))}
 
 export const HUB_URL = RELAY_BRANDING.hubUrl
+export const MODEL_REGISTRY_URL = RELAY_BRANDING.modelRegistryUrl
 export const NPM_PACKAGE = RELAY_BRANDING.npmPackage
 export const UPDATE_COMMAND = RELAY_BRANDING.updateCommand
 `
@@ -199,6 +250,7 @@ const installerBrandingJs = `/**
  */
 export const HUB_URL = ${JSON.stringify(hubUrl)};
 export const API_BASE_URL = ${JSON.stringify(apiBaseUrl)};
+export const MODEL_REGISTRY_URL = ${JSON.stringify(modelRegistryUrl)};
 export const NPM_PACKAGE = ${JSON.stringify(branding.npmPackage ?? '@cometix/ccursor')};
 export const UPDATE_COMMAND = ${JSON.stringify(branding.updateCommand ?? 'npx @cometix/ccursor update')};
 /** VS Code 扩展完整 id (publisher.name)，供 installer allowlist 注入等消费 */

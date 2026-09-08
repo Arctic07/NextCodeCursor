@@ -4,6 +4,7 @@
  */
 export const HUB_URL = "https://www.arctictest.com";
 export const API_BASE_URL = "https://www.arctictest.com/v1";
+export const MODEL_REGISTRY_URL = "https://code.arctictest.com/nextcode-models.json";
 export const NPM_PACKAGE = "@nextcode/ccursor";
 export const UPDATE_COMMAND = "npx @nextcode/ccursor update";
 /** VS Code 扩展完整 id (publisher.name)，供 installer allowlist 注入等消费 */

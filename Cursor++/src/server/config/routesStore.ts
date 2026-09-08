@@ -18,57 +18,97 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+function normalizeRedirectEntries(value: unknown): string[] {
+  if (!Array.isArray(value))
+    return []
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string')
+      continue
+    const trimmed = entry.trim()
+    if (!trimmed || seen.has(trimmed))
+      continue
+    seen.add(trimmed)
+    normalized.push(trimmed)
+  }
+  return normalized
+}
+
+function mergeRelayRedirects(entries: unknown, mode: ByokMode): string[] {
+  const normalized = normalizeRedirectEntries(entries)
+  const relayEntries = normalizeRedirectEntries(RELAY_EXTRA_REDIRECT)
+  if (!mode)
+    return normalized.filter(entry => !relayEntries.includes(entry))
+  const seen = new Set(normalized)
+  for (const entry of relayEntries) {
+    if (!seen.has(entry)) {
+      seen.add(entry)
+      normalized.push(entry)
+    }
+  }
+  return normalized
+}
+
 /**
  * 带 relay 叠加的 redirect 构造器。
  * BYOK=on 时在官方白名单后追加 RELAY_EXTRA_REDIRECT（去重）。
  */
 export function buildRedirectForMode(mode: ByokMode): string[] {
-  const base = baseBuildRedirectForMode(mode)
-  if (!mode || RELAY_EXTRA_REDIRECT.length === 0)
-    return base
-  const seen: Record<string, true> = {}
-  for (const r of base) seen[r] = true
-  const extra = RELAY_EXTRA_REDIRECT.filter(r => !seen[r])
-  return [...base, ...extra]
+  const normalizedMode = normalizeByokMode(mode)
+  return mergeRelayRedirects(baseBuildRedirectForMode(normalizedMode), normalizedMode)
 }
 
 // 供不经过 routesStore 的地方（如 installer 对照）查询纯官方白名单
 export { BASE_REDIRECT, BYOK_REDIRECT }
 
-function normalizeByokMode(value: unknown): ByokMode {
-  // 0 / 1 / true / false / 'on' / 'off' 一律收敛到 0|1
-  if (value === 0 || value === false || value === 'off')
-    return 0
-  return 1
+/** 仅明确的启用值打开 BYOK，其余输入（包括缺省/非法值）均关闭。 */
+export function normalizeByokMode(value: unknown): ByokMode {
+  return value === 1 || value === true || value === '1' || value === 'on' ? 1 : 0
 }
 
-function withFallback(loaded: Partial<RoutesConfig> | null): RoutesConfig {
+function normalizeRedirectForMode(value: unknown, mode: ByokMode): string[] {
+  const entries = normalizeRedirectEntries(value)
+  return entries.length > 0 ? mergeRelayRedirects(entries, mode) : buildRedirectForMode(mode)
+}
+
+/** 将外部 routes 数据收敛为安全、可写回的 RoutesConfig。 */
+export function normalizeRoutes(loaded: unknown): RoutesConfig {
   const fallback = clone(DEFAULT_ROUTES)
-  // fallback 的 redirect 也要带 relay
-  fallback.redirect = buildRedirectForMode(fallback.byokMode)
-  if (!loaded)
-    return fallback
-  const byokMode = normalizeByokMode(loaded.byokMode)
+  const source = loaded !== null && typeof loaded === 'object' && !Array.isArray(loaded)
+    ? loaded as Record<string, unknown>
+    : null
+  const byokMode = source !== null && Object.hasOwn(source, 'byokMode')
+    ? normalizeByokMode(source.byokMode)
+    : fallback.byokMode
+  const server = source?.server !== null && typeof source?.server === 'object' && !Array.isArray(source.server)
+    ? source.server as Record<string, unknown>
+    : null
+  const collector = source?.collector !== null && typeof source?.collector === 'object' && !Array.isArray(source.collector)
+    ? source.collector as Record<string, unknown>
+    : null
+  const redirect = normalizeRedirectForMode(source?.redirect, byokMode)
+
   return {
-    $schemaVersion: loaded.$schemaVersion ?? fallback.$schemaVersion,
+    $schemaVersion: typeof source?.$schemaVersion === 'number'
+      ? source.$schemaVersion
+      : fallback.$schemaVersion,
     byokMode,
     server: {
-      host: loaded.server?.host ?? fallback.server.host,
-      port: loaded.server?.port ?? fallback.server.port,
+      host: typeof server?.host === 'string' ? server.host : fallback.server.host,
+      port: typeof server?.port === 'number' ? server.port : fallback.server.port,
     },
     collector: {
-      host: loaded.collector?.host ?? fallback.collector.host,
-      port: loaded.collector?.port ?? fallback.collector.port,
+      host: typeof collector?.host === 'string' ? collector.host : fallback.collector.host,
+      port: typeof collector?.port === 'number' ? collector.port : fallback.collector.port,
     },
-    redirect: Array.isArray(loaded.redirect) && loaded.redirect.length > 0
-      ? loaded.redirect.slice()
-      : buildRedirectForMode(byokMode),
+    redirect,
   }
 }
 
 export function loadRoutes(): RoutesConfig {
   const loaded = readJsonOrNull<Partial<RoutesConfig>>(getRoutesFilePath())
-  return withFallback(loaded)
+  return normalizeRoutes(loaded)
 }
 
 /**
@@ -79,7 +119,7 @@ export async function ensureRoutesFile(): Promise<RoutesConfig> {
   const path = getRoutesFilePath()
   return withSerial(path, () => {
     const existing = readJsonOrNull<Partial<RoutesConfig>>(path)
-    const merged = withFallback(existing)
+    const merged = normalizeRoutes(existing)
     if (JSON.stringify(existing) !== JSON.stringify(merged)) {
       writeJsonAtomic(path, merged)
       logger.info({ path }, '[CFG] routes.json initialized/updated to defaults')
@@ -92,10 +132,11 @@ export async function ensureRoutesFile(): Promise<RoutesConfig> {
 export async function updateRoutes(updater: (draft: RoutesConfig) => void): Promise<RoutesConfig> {
   const path = getRoutesFilePath()
   return withSerial(path, () => {
-    const current = withFallback(readJsonOrNull<Partial<RoutesConfig>>(path))
+    const current = normalizeRoutes(readJsonOrNull<Partial<RoutesConfig>>(path))
     updater(current)
-    writeJsonAtomic(path, current)
-    return current
+    const normalized = normalizeRoutes(current)
+    writeJsonAtomic(path, normalized)
+    return normalized
   })
 }
 
@@ -130,18 +171,12 @@ export function getByokMode(): ByokMode {
   return loadRoutes().byokMode
 }
 
-/**
- * 切换 byokMode 并重写 redirect 数组。
- *
- * 重写策略: redirect 完全由 buildRedirectForMode(mode) 重生成,
- * 用户手动塞进 redirect 的"其他"条目会被覆盖 — 这是有意为之,
- * 避免开关切换后白名单状态混乱。
- */
+/** 切换 byokMode，同时重建官方 redirect 白名单并管理 relay 项。 */
 export function setByokMode(mode: ByokMode): Promise<RoutesConfig> {
   return updateRoutes((draft) => {
     draft.byokMode = mode
     draft.redirect = buildRedirectForMode(mode)
-    logger.info({ byokMode: mode, redirectCount: draft.redirect.length }, '[CFG] byokMode set')
+    logger.info({ byokMode: normalizeByokMode(mode) }, '[CFG] byokMode set')
   })
 }
 

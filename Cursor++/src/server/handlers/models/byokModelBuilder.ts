@@ -16,7 +16,7 @@ import type {
   ModelParameterDefinition_ModelParameterType,
 } from '../../gen/aiserver_v1_pb'
 import { create } from '@bufbuild/protobuf'
-import { flattenModels } from '../../config/providersStore'
+import { flattenModels, isConfiguredProvider } from '../../config/providersStore'
 import { RequestedModel_ModelParameterValueSchema } from '../../gen/agent_v1_pb'
 import {
   AvailableModelsResponse_AvailableModelSchema,
@@ -451,5 +451,7 @@ function buildAvailableModelFromByok(
 }
 
 export function buildByokAvailableModels(): AvailableModelsResponse_AvailableModel[] {
-  return flattenModels().map(({ provider, model }) => buildAvailableModelFromByok(provider, model))
+  return flattenModels()
+    .filter(({ provider }) => isConfiguredProvider(provider))
+    .map(({ provider, model }) => buildAvailableModelFromByok(provider, model))
 }

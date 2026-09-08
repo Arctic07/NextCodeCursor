@@ -59,6 +59,8 @@ export async function install() {
 
   if (extInstalled && hookInjected && alPatched && agentHostPatched && proxy39Ok) {
     ok('Already fully installed');
+    info('Reinstall: refreshing default configuration');
+    releaseDefaults(info);
     info('Reinstall: overwriting existing cursor2plus extension with the latest VSIX');
     installExtension(paths, info);
     console.log('');

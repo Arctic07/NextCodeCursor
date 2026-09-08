@@ -24,9 +24,164 @@ export interface ResolvedProviderModel {
   provider: ProviderEntry
   model: ProviderModel
 }
+/**
+ * 判断 provider 是否已配置可用于模型展示的凭据。
+ *
+ * providers.json 由用户编辑,运行时仍可能携带缺失或 malformed 的 auth；
+ * 只有 trim 后非空字符串才算有效 key。
+ */
+export function isConfiguredProvider(provider: Pick<ProviderEntry, 'auth'> | null | undefined): boolean {
+  const value = provider?.auth?.value
+  return typeof value === 'string' && value.trim().length > 0
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+type UnknownRecord = Record<string, unknown>
+
+function isPlainObject(value: unknown): value is UnknownRecord {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    return false
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+  }
+  catch {
+    return false
+  }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isProviderType(value: unknown): value is ProviderEntry['type'] {
+  return value === 'anthropic'
+    || value === 'openai-chat'
+    || value === 'openai-responses'
+    || value === 'gemini'
+}
+
+function normalizeAuth(value: unknown): ProviderEntry['auth'] {
+  if (!isPlainObject(value))
+    return { kind: 'apiKey', value: '' }
+
+  return {
+    ...value,
+    kind: value.kind === 'token' ? 'token' : 'apiKey',
+    value: typeof value.value === 'string' ? value.value : '',
+  } as ProviderEntry['auth']
+}
+
+function normalizeModel(value: unknown): ProviderModel | null {
+  if (!isPlainObject(value)
+    || !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.apiModel)
+    || !isNonEmptyString(value.displayName)) {
+    return null
+  }
+
+  return {
+    ...value,
+    id: value.id,
+    apiModel: value.apiModel,
+    displayName: value.displayName,
+    thinking: typeof value.thinking === 'boolean' ? value.thinking : false,
+  } as ProviderModel
+}
+
+function isIndexableModel(value: unknown): value is ProviderModel {
+  return isPlainObject(value)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.apiModel)
+    && isNonEmptyString(value.displayName)
+}
+
+function normalizeHeaders(value: unknown): Record<string, string> | undefined {
+  if (!isPlainObject(value))
+    return undefined
+
+  try {
+    const entries: Array<[string, string]> = []
+    for (const [key, headerValue] of Object.entries(value)) {
+      if (typeof headerValue === 'string')
+        entries.push([key, headerValue])
+    }
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
+function normalizeProvider(value: unknown): ProviderEntry | null {
+  if (!isPlainObject(value)
+    || !isNonEmptyString(value.id)
+    || !isProviderType(value.type)) {
+    return null
+  }
+
+  const models = Array.isArray(value.models)
+    ? value.models.map(normalizeModel).filter((model): model is ProviderModel => model !== null)
+    : []
+  const headers = normalizeHeaders(value.headers)
+  const provider: ProviderEntry = {
+    id: value.id,
+    name: typeof value.name === 'string' ? value.name : value.id,
+    type: value.type,
+    baseUrl: typeof value.baseUrl === 'string' ? value.baseUrl : '',
+    auth: normalizeAuth(value.auth),
+    models,
+  }
+
+  if (typeof value.proxyUrl === 'string' && value.proxyUrl)
+    provider.proxyUrl = value.proxyUrl
+  if (headers)
+    provider.headers = headers
+  return provider
+}
+
+function sanitizeConfiguredProvider(provider: ProviderEntry): ProviderEntry {
+  let sanitized = provider
+  if (typeof provider.name === 'string') {
+    const name = provider.name.trim()
+    if (name !== provider.name)
+      sanitized = { ...sanitized, name }
+  }
+  const authValue = provider.auth?.value
+  if (typeof authValue === 'string') {
+    const value = authValue.trim()
+    if (value !== authValue)
+      sanitized = { ...sanitized, auth: { ...sanitized.auth, value } }
+  }
+  return sanitized
+}
+
+/**
+ * 保存前清理不可用 provider,避免缺失凭据的模型残留在 providers.json。
+ * 保留 provider 的 id、models 及其它字段,仅规范化字符串 name/auth.value。
+ */
+export function sanitizeProvidersConfig(config: ProvidersConfig): ProvidersConfig {
+  if (!isPlainObject(config) || !Array.isArray(config.providers)) {
+    const schemaVersion = isPlainObject(config) && typeof config.$schemaVersion === 'number'
+      ? config.$schemaVersion
+      : DEFAULT_PROVIDERS.$schemaVersion
+    return { $schemaVersion: schemaVersion, providers: [] }
+  }
+
+  return {
+    ...config,
+    providers: config.providers.filter((provider) => {
+      try {
+        return isConfiguredProvider(provider)
+      }
+      catch {
+        return false
+      }
+    }).map(sanitizeConfiguredProvider),
+  }
 }
 
 let cache: ProvidersConfig | null = null
@@ -49,10 +204,17 @@ interface ProviderIndexes {
 
 function rebuildIndexes(config: ProvidersConfig): ProviderIndexes {
   const reverse = new Map<string, ResolvedProviderModel>()
-  for (const provider of config.providers) {
-    if (!Array.isArray(provider.models))
+  if (!config || !Array.isArray(config.providers))
+    return { reverse, apiModel: new Map() }
+
+  for (const rawProvider of config.providers) {
+    if (!isPlainObject(rawProvider) || !Array.isArray(rawProvider.models))
       continue
-    for (const model of provider.models) {
+    const provider = rawProvider as unknown as ProviderEntry
+    for (const rawModel of rawProvider.models) {
+      if (!isIndexableModel(rawModel))
+        continue
+      const model = rawModel
       const candidate = { provider, model }
       const existing = reverse.get(model.id)
       if (!existing) {
@@ -117,22 +279,56 @@ function rebuildIndexes(config: ProvidersConfig): ProviderIndexes {
   return { reverse, apiModel }
 }
 
-function withFallback(loaded: Partial<ProvidersConfig> | null): ProvidersConfig {
-  if (!loaded || !Array.isArray(loaded.providers))
+/** 将磁盘或测试输入归一化为可安全索引的 providers 配置。 */
+export function normalizeProvidersConfig(loaded: unknown): ProvidersConfig {
+  if (!isPlainObject(loaded))
     return getEffectiveDefaults()
-  return {
-    $schemaVersion: loaded.$schemaVersion ?? DEFAULT_PROVIDERS.$schemaVersion,
-    providers: loaded.providers.map(p => ({
-      id: p.id,
-      name: p.name ?? p.id,
-      type: p.type,
-      baseUrl: p.baseUrl ?? '',
-      auth: p.auth ?? { kind: 'apiKey', value: '' },
-      models: Array.isArray(p.models) ? p.models : [],
-      ...(p.proxyUrl ? { proxyUrl: p.proxyUrl } : {}),
-      ...(p.headers && typeof p.headers === 'object' && Object.keys(p.headers).length > 0 ? { headers: p.headers } : {}),
-    })),
+
+  let rawProviders: unknown
+  try {
+    rawProviders = loaded.providers
   }
+  catch {
+    return getEffectiveDefaults()
+  }
+  if (!Array.isArray(rawProviders))
+    return getEffectiveDefaults()
+
+  const providers: ProviderEntry[] = []
+  const seenIds = new Set<string>()
+  for (let index = 0; index < rawProviders.length; index += 1) {
+    let provider: ProviderEntry | null = null
+    try {
+      provider = normalizeProvider(rawProviders[index])
+    }
+    catch {
+      provider = null
+    }
+    if (!provider) {
+      logger.warn({ index }, '[CFG] skipping malformed provider')
+      continue
+    }
+    if (seenIds.has(provider.id)) {
+      logger.warn({ index, providerId: provider.id }, '[CFG] duplicate provider id, keeping first')
+      continue
+    }
+    seenIds.add(provider.id)
+    providers.push(provider)
+  }
+
+  let schemaVersion = DEFAULT_PROVIDERS.$schemaVersion
+  try {
+    if (typeof loaded.$schemaVersion === 'number' && Number.isFinite(loaded.$schemaVersion))
+      schemaVersion = loaded.$schemaVersion
+  }
+  catch {
+    // 代理对象的异常 getter 视为缺省 schema 版本。
+  }
+  return { $schemaVersion: schemaVersion, providers }
+}
+
+function withFallback(loaded: unknown): ProvidersConfig {
+  return normalizeProvidersConfig(loaded)
 }
 
 function setIndexes(config: ProvidersConfig): void {
@@ -144,7 +340,7 @@ function setIndexes(config: ProvidersConfig): void {
 export function loadProviders(): ProvidersConfig {
   if (cache)
     return cache
-  const loaded = readJsonOrNull<Partial<ProvidersConfig>>(getProvidersFilePath())
+  const loaded = readJsonOrNull<unknown>(getProvidersFilePath())
   cache = withFallback(loaded)
   setIndexes(cache)
   return cache
@@ -160,8 +356,8 @@ export function loadProviders(): ProvidersConfig {
 export async function ensureProvidersFile(): Promise<ProvidersConfig> {
   const path = getProvidersFilePath()
   return withSerial(path, () => {
-    const existing = readJsonOrNull<Partial<ProvidersConfig>>(path)
-    if (existing && Array.isArray(existing.providers)) {
+    const existing = readJsonOrNull<unknown>(path)
+    if (isPlainObject(existing) && Array.isArray(existing.providers)) {
       cache = withFallback(existing)
       setIndexes(cache)
       return cache
@@ -186,10 +382,12 @@ export async function ensureProvidersFile(): Promise<ProvidersConfig> {
 export async function updateProviders(updater: (draft: ProvidersConfig) => void): Promise<ProvidersConfig> {
   const path = getProvidersFilePath()
   return withSerial(path, () => {
-    const current = withFallback(readJsonOrNull<Partial<ProvidersConfig>>(path))
+    const current = withFallback(readJsonOrNull<unknown>(path))
     updater(current)
-    writeJsonAtomic(path, current)
-    cache = current
+    const normalized = normalizeProvidersConfig(current)
+    const sanitized = sanitizeProvidersConfig(normalized)
+    writeJsonAtomic(path, sanitized)
+    cache = sanitized
     setIndexes(cache)
     return cache
   })
@@ -229,7 +427,7 @@ export function resetProvidersCacheForTests(): void {
 
 /** 测试用: 直接注入 in-memory providers, 跳过磁盘读写 */
 export function setProvidersForTests(config: ProvidersConfig): void {
-  cache = clone(config)
+  cache = normalizeProvidersConfig(config)
   setIndexes(cache)
 }
 
@@ -250,7 +448,7 @@ export function onProvidersChange(fn: ProvidersChangeListener): () => void {
 }
 
 function reloadFromDisk() {
-  const loaded = readJsonOrNull<Partial<ProvidersConfig>>(getProvidersFilePath())
+  const loaded = readJsonOrNull<unknown>(getProvidersFilePath())
   cache = withFallback(loaded)
   setIndexes(cache)
 }

@@ -48,6 +48,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private context: vscode.ExtensionContext
   private disposeStateListener?: vscode.Disposable
+  private deletedProviderIds = new Set<string>()
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context
@@ -249,13 +250,71 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break
         }
         case 'saveProviders': {
-          const next = msg.providers as ProviderEntry[]
+          const next = Array.isArray(msg.providers) ? msg.providers as ProviderEntry[] : null
           const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined
-          const targetIds = Array.isArray(msg.targetIds) ? msg.targetIds : undefined
+          const hasTargetIds = msg.targetIds !== undefined
+          const targetIds = Array.isArray(msg.targetIds)
+            ? msg.targetIds.filter((id: unknown): id is string => typeof id === 'string')
+            : undefined
           try {
+            if (!next)
+              throw new Error('Invalid providers payload')
+            if (hasTargetIds && (!targetIds
+              || targetIds.length === 0
+              || targetIds.length !== msg.targetIds.length
+              || new Set(targetIds).size !== targetIds.length)) {
+              throw new Error('Invalid targetIds payload')
+            }
             await updateProviders((draft) => {
-              draft.providers = next
+              if (!targetIds) {
+                draft.providers = next
+                return
+              }
+
+              const targetSet = new Set(targetIds)
+              const replacements = new Map<string, ProviderEntry>()
+              for (const provider of next) {
+                if (!provider || typeof provider !== 'object' || typeof provider.id !== 'string')
+                  continue
+                if (targetSet.has(provider.id))
+                  replacements.set(provider.id, provider)
+              }
+              if (replacements.size !== targetSet.size)
+                throw new Error('Missing target provider payload')
+              const currentIds = new Set(draft.providers.map(provider => provider.id))
+              if (msg.create === true) {
+                for (const providerId of targetIds) {
+                  if (currentIds.has(providerId))
+                    this.deletedProviderIds.delete(providerId)
+                }
+              }
+              if (msg.create !== true && targetIds.some((providerId: string) => !currentIds.has(providerId)))
+                throw new Error('Target provider no longer exists')
+              if (msg.create === true && targetIds.some((providerId: string) => !currentIds.has(providerId) && this.deletedProviderIds.has(providerId)))
+                throw new Error('Target provider was deleted')
+
+              const merged = draft.providers.map(provider => replacements.get(provider.id) ?? provider)
+              if (msg.create === true) {
+                const present = new Set(merged.map(provider => provider.id))
+                for (const providerId of targetIds) {
+                  if (!present.has(providerId)) {
+                    merged.push(replacements.get(providerId)!)
+                    present.add(providerId)
+                  }
+                }
+              }
+              draft.providers = merged
             })
+            if (targetIds) {
+              for (const providerId of targetIds)
+                this.deletedProviderIds.delete(providerId)
+            }
+            else {
+              for (const provider of next) {
+                if (provider && typeof provider.id === 'string')
+                  this.deletedProviderIds.delete(provider.id)
+              }
+            }
             resetProviderInstanceCache()
             bumpRefreshSignal()
             const state = await refreshState()
@@ -286,6 +345,52 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             }
             else {
               this.view?.webview.postMessage({ type: 'toast', text: `Save failed: ${errMsg}`, level: 'error', duration: 6000 })
+            }
+          }
+          break
+        }
+        case 'deleteProvider': {
+          const providerId = typeof msg.providerId === 'string'
+            ? msg.providerId
+            : typeof msg.pid === 'string' ? msg.pid : ''
+          const requestId = typeof msg.requestId === 'string' ? msg.requestId : undefined
+          try {
+            if (!providerId)
+              throw new Error('Invalid provider id')
+            await updateProviders((draft) => {
+              draft.providers = draft.providers.filter(provider => provider.id !== providerId)
+            })
+            this.deletedProviderIds.add(providerId)
+            resetProviderInstanceCache()
+            bumpRefreshSignal()
+            const state = await refreshState()
+            this.postState()
+            if (requestId) {
+              this.view?.webview.postMessage({
+                type: 'deleteProviderResult',
+                requestId,
+                providerId,
+                ok: true,
+                state,
+              })
+            }
+            else {
+              this.view?.webview.postMessage({ type: 'toast', text: 'Provider deleted.', level: 'info' })
+            }
+          }
+          catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            if (requestId) {
+              this.view?.webview.postMessage({
+                type: 'deleteProviderResult',
+                requestId,
+                providerId,
+                ok: false,
+                error: errMsg,
+              })
+            }
+            else {
+              this.view?.webview.postMessage({ type: 'toast', text: `Delete failed: ${errMsg}`, level: 'error', duration: 6000 })
             }
           }
           break

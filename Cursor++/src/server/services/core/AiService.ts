@@ -27,11 +27,13 @@ import type { ConnectRouter } from '@connectrpc/connect'
 import { create } from '@bufbuild/protobuf'
 import {
   AiService,
+  AvailableModelsResponse_AvailableModelSchema,
   AvailableModelsResponse_FeatureModelConfigSchema,
   AvailableModelsResponse_ModelPickerDisplayConfigurationSchema,
   AvailableModelsResponse_ModelPickerDisplayConfiguration_RoutedModelViewConfigSchema,
   AvailableModelsResponseSchema,
 } from '../../gen/aiserver_v1_pb'
+import type { AvailableModelsRequest } from '../../gen/aiserver_v1_pb'
 import {
   addKnowledgeItem,
   listKnowledgeItems,
@@ -39,7 +41,7 @@ import {
   updateKnowledgeItem,
 } from '../../config/knowledgeBaseStore'
 import { buildByokAvailableModels } from '../../handlers/models/byokModelBuilder'
-import { flattenModels } from '../../config/providersStore'
+import { flattenModels, isConfiguredProvider } from '../../config/providersStore'
 import { logger } from '../../logger'
 
 /**
@@ -49,11 +51,30 @@ import { logger } from '../../logger'
  * BYOK OFF 模式下,白名单不含 AvailableModels,这个 handler 根本不会被调用 ——
  * 客户端直接拿到官方真实订阅列表。
  */
-async function handleAvailableModels() {
+async function handleAvailableModels(request: AvailableModelsRequest) {
   const byok = buildByokAvailableModels()
-  logger.info({ count: byok.length }, '[MODEL] availableModels (BYOK only)')
+  const activeIds = new Set(byok.map(model => model.name))
+  const hidden: typeof byok = []
+  const seen = new Set(activeIds)
+  const additionalModelNames = Array.isArray(request?.additionalModelNames) ? request.additionalModelNames : []
+  for (const rawName of additionalModelNames as unknown[]) {
+    if (typeof rawName !== 'string')
+      continue
+    const name = rawName.trim()
+    if (!name || seen.has(name))
+      continue
+    seen.add(name)
+    hidden.push(create(AvailableModelsResponse_AvailableModelSchema, {
+      name,
+      defaultOn: false,
+      isUserAdded: false,
+      isHidden: true,
+    }))
+  }
+  const models = [...byok, ...hidden]
+  logger.info({ count: byok.length, hiddenCount: hidden.length }, '[MODEL] availableModels (BYOK only)')
   return create(AvailableModelsResponseSchema, {
-    models: byok,
+    models,
     modelNames: byok.map(m => m.name),
     // feature config 给空 stub,Cursor 客户端遇到空 config 会用内置默认行为
     composerModelConfig: create(AvailableModelsResponse_FeatureModelConfigSchema, {}),
@@ -91,7 +112,7 @@ export default (router: ConnectRouter) => {
     // 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
     // 返回空 {} = 不推送(客户端保留上次选择)
     getDefaultModel: async () => {
-      const all = flattenModels().filter(x => x.model.defaultOn !== false)
+      const all = flattenModels().filter(x => isConfiguredProvider(x.provider) && x.model.defaultOn !== false)
       const first = all[0]
       if (!first) return {}
       const thinkingModel = all.find(x => x.model.thinking)

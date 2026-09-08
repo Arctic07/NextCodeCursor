@@ -42,6 +42,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object'
 }
 
+function hasConfiguredKey(provider: unknown): boolean {
+  if (!isRecord(provider))
+    return false
+  const auth = provider.auth
+  if (!isRecord(auth))
+    return false
+  return typeof auth.value === 'string' && auth.value.trim().length > 0
+}
+
 function collectProviderIds(state: unknown, drafts: Record<string, unknown>): Set<string> {
   const ids = new Set<string>()
   const stateRecord = isRecord(state) ? state : {}
@@ -139,6 +148,10 @@ export function initApp(Alpine: AlpineType) {
     balance: {} as Record<string, { loading: boolean, used?: number, remaining?: number, total?: number, error?: string }>,
     saveSnapshots: {} as Record<string, { targetIds: string[], snapshots: Record<string, any> }>,
     savingProviders: {} as Record<string, boolean>,
+    deleteRequests: {} as Record<string, { pid: string }>,
+    deletingProviders: {} as Record<string, boolean>,
+    newProviderIds: {} as Record<string, boolean>,
+
     // ── Key 引导卡 ──
     onboarding: { keyName: '', apiKey: '', connecting: false, error: '' },
     onboardingOpen: false,
@@ -239,10 +252,11 @@ export function initApp(Alpine: AlpineType) {
       const seen = new Set<string>()
       const out: any[] = []
       for (const p of base) {
-        if (!isRelayProvider(p))
+        const view = this.drafts[p.id] ?? p
+        if (!isRelayProvider(view))
           continue
         seen.add(p.id)
-        out.push(this.drafts[p.id] ?? p)
+        out.push(view)
       }
       // 新建但尚未保存的中转 draft
       for (const [id, draft] of Object.entries(this.drafts) as [string, any][]) {
@@ -350,7 +364,7 @@ export function initApp(Alpine: AlpineType) {
           errors.baseUrl = 'Invalid URL'
         }
       }
-      if (!p.auth?.value?.trim())
+      if (!hasConfiguredKey(p))
         errors.authValue = 'Auth value is required'
       // Anthropic 允许 apiKey / token 两种; 其他 provider 只允许 apiKey
       if (p.type === 'anthropic') {
@@ -362,7 +376,7 @@ export function initApp(Alpine: AlpineType) {
       }
 
       // name 唯一
-      const dupName = all.filter((x: any) => (x.name || '').trim().toLowerCase() === (p.name || '').trim().toLowerCase()).length > 1
+      const dupName = hasConfiguredKey(p) && all.filter((x: any) => hasConfiguredKey(x) && (x.name || '').trim().toLowerCase() === (p.name || '').trim().toLowerCase()).length > 1
       if (dupName)
         errors.name = 'Duplicate provider name'
 
@@ -370,6 +384,8 @@ export function initApp(Alpine: AlpineType) {
       const modelErrors: Record<string, Record<string, string>> = {}
       const modelIdCounts = new Map<unknown, number>()
       for (const provider of all) {
+        if (!hasConfiguredKey(provider))
+          continue
         for (const model of provider.models || [])
           modelIdCounts.set(model.id, (modelIdCounts.get(model.id) || 0) + 1)
       }
@@ -583,16 +599,33 @@ export function initApp(Alpine: AlpineType) {
     },
 
     // ── Provider / Model 增删 ──
+    nextProviderName(): string {
+      const used = new Set<string>()
+      for (const provider of this.providers) {
+        const name = typeof provider?.name === 'string' ? provider.name.trim().toLocaleLowerCase() : ''
+        if (name)
+          used.add(name)
+      }
+      const base = '默认'
+      if (!used.has(base.toLocaleLowerCase()))
+        return base
+      let suffix = 2
+      while (used.has(`${base} ${suffix}`.toLocaleLowerCase()))
+        suffix++
+      return `${base} ${suffix}`
+    },
+
     addProvider() {
       const id = nextUid('provider', collectProviderIds(this.state, this.drafts))
       const p = {
         id,
-        name: '默认',
+        name: this.nextProviderName(),
         type: 'openai-chat',
         baseUrl: RELAY_BASE_URL,
         auth: { kind: 'apiKey', value: '' },
         models: [],
       }
+      this.newProviderIds[p.id] = true
       this.drafts[p.id] = p
       this.expanded[p.id] = true
     },
@@ -610,7 +643,7 @@ export function initApp(Alpine: AlpineType) {
       this.addProvider()
       const pid = Object.keys(this.drafts).pop()! // addProvider 会写入 drafts
       const d = this.drafts[pid]
-      d.name = keyName || '默认'
+      d.name = keyName || d.name
       d.auth = { kind: 'apiKey', value: apiKey }
       this.expanded[pid] = true
       // 不清空 onboarding: 连接失败时错误回显需要引导卡保持打开且凭据保留, 成功时在 remoteModelsResult 里统一收起+清空
@@ -627,6 +660,7 @@ export function initApp(Alpine: AlpineType) {
         const saved = (this.state?.providers || []).some((p: any) => p.id === pid)
         if (draft && !saved) {
           delete this.drafts[pid]
+          delete this.newProviderIds[pid]
           delete this.expanded[pid]
         }
       }
@@ -757,6 +791,7 @@ export function initApp(Alpine: AlpineType) {
     },
 
     resetProvider(pid: string) {
+      delete this.newProviderIds[pid]
       delete this.drafts[pid]
       const base = (this.state?.providers || []).find((p: any) => p.id === pid)
       if (!base) {
@@ -781,12 +816,20 @@ export function initApp(Alpine: AlpineType) {
     },
 
     deleteProvider(pid: string) {
-      const remaining = (this.state?.providers || []).filter((p: any) => p.id !== pid)
-      const merged = remaining.map((p: any) => this.drafts[p.id] ?? p)
-      delete this.drafts[pid]
-      delete this.expanded[pid]
-      delete this.modelExpanded[pid]
-      this.post('saveProviders', { providers: JSON.parse(JSON.stringify(merged)) })
+      const saved = (this.state?.providers || []).some((p: any) => p.id === pid)
+      if (!saved) {
+        delete this.drafts[pid]
+        delete this.newProviderIds[pid]
+        delete this.expanded[pid]
+        delete this.modelExpanded[pid]
+        return
+      }
+      if (this.deletingProviders[pid])
+        return
+      const requestId = uid('delete')
+      this.deleteRequests[requestId] = { pid }
+      this.deletingProviders[pid] = true
+      this.post('deleteProvider', { requestId, providerId: pid })
     },
 
     saveProvider(pid: string) {
@@ -822,6 +865,7 @@ export function initApp(Alpine: AlpineType) {
         this.post('saveProviders', {
           requestId,
           targetIds: [pid],
+          create: this.newProviderIds[pid] === true,
           providers: JSON.parse(JSON.stringify(nextProviders)),
         })
       }
@@ -1095,8 +1139,22 @@ export function initApp(Alpine: AlpineType) {
         s.webTools = clone(msg.state.webTools)
       for (const pid of Object.keys(s.drafts)) {
         const base = (s.state?.providers || []).find((p: any) => p.id === pid)
-        if (base && providersEqual(base, s.drafts[pid]))
+        let deletionPending = s.deletingProviders[pid] === true
+        if (!deletionPending) {
+          for (const request of Object.values(s.deleteRequests || {}) as Array<{ pid?: string }>) {
+            if (request?.pid === pid) {
+              deletionPending = true
+              break
+            }
+          }
+        }
+        if (base && providersEqual(base, s.drafts[pid])) {
           delete s.drafts[pid]
+          delete s.newProviderIds[pid]
+        }
+        else if (!base && deletionPending) {
+          delete s.newProviderIds[pid]
+        }
       }
     }
     else if (msg?.type === 'saveProvidersResult') {
@@ -1118,6 +1176,7 @@ export function initApp(Alpine: AlpineType) {
           const saved = (s.state?.providers || []).some((p: any) => p.id === pid)
           if (draft && !saved) {
             delete s.drafts[pid]
+            delete s.newProviderIds[pid]
             delete s.expanded[pid]
           }
           s.onboarding = { ...s.onboarding, connecting: false, error: `保存失败: ${msg.error || 'unknown error'}` }
@@ -1131,6 +1190,8 @@ export function initApp(Alpine: AlpineType) {
           const sent = pending?.snapshots?.[pid]
           const current = s.drafts[pid]
           const base = (s.state?.providers || []).find((p: any) => p.id === pid)
+          if (base)
+            delete s.newProviderIds[pid]
           if (sent && current && providersEqual(current, sent))
             delete s.drafts[pid]
           else if (sent && !current && base && providersEqual(base, sent))
@@ -1142,6 +1203,38 @@ export function initApp(Alpine: AlpineType) {
       }
       if (requestId)
         delete s.saveSnapshots[requestId]
+    }
+    else if (msg?.type === 'deleteProviderResult') {
+      const requestId = msg.requestId as string
+      const pending = requestId ? s.deleteRequests[requestId] : null
+      const pid = pending?.pid || (typeof msg.providerId === 'string' ? msg.providerId : '')
+      if (pid)
+        delete s.deletingProviders[pid]
+      if (msg.state) {
+        s.state = msg.state
+        if (msg.state?.webTools)
+          s.webTools = clone(msg.state.webTools)
+      }
+      if (!msg.ok) {
+        s.toast(`Delete failed: ${msg.error || 'unknown error'}`, 'error', 6000)
+      }
+      else if (pid) {
+        delete s.drafts[pid]
+        delete s.newProviderIds[pid]
+        delete s.expanded[pid]
+        delete s.modelExpanded[pid]
+        delete s.headersInvalid[pid]
+        delete s.remoteModels[pid]
+        delete s.balance[pid]
+        if (s.onboardingPid === pid) {
+          s.onboardingPid = null
+          s.onboardingOpen = false
+          s.onboarding = { keyName: '', apiKey: '', connecting: false, error: '' }
+        }
+        s.toast('Provider deleted.', 'info')
+      }
+      if (requestId)
+        delete s.deleteRequests[requestId]
     }
     else if (msg?.type === 'remoteModelsResult') {
       const pid = msg.pid as string
@@ -1155,6 +1248,7 @@ export function initApp(Alpine: AlpineType) {
           const saved = (s.state?.providers || []).some((p: any) => p.id === pid)
           if (draft && !saved) {
             delete s.drafts[pid]
+            delete s.newProviderIds[pid]
             delete s.expanded[pid]
           }
           s.onboardingPid = null

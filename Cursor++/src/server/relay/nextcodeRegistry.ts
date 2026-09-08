@@ -1,9 +1,9 @@
 import { normalizeRelayModelId } from './modelIdentity'
-
+import { RELAY_BRANDING } from './branding'
 /**
  * NextCode 中转站远端白名单 Registry
  *
- * 白名单来源: NEXTCODE_MODELS_URL（https://code.arctictest.com/nextcode-models.json）
+ * 白名单来源: RELAY_BRANDING.modelRegistryUrl（relay.config.json → branding.ts）。
  * 缓存策略: 模块级缓存, TTL 10 分钟（NEXTCODE_CACHE_TTL_MS）; TTL 内直接返回缓存,
  * 过期或 force=true 时重新拉取。多个调用同时过期时复用同一个 in-flight promise, 只发一次请求。
  *
@@ -23,7 +23,7 @@ export interface NextcodeModel {
 }
 
 /** 远端白名单 JSON 地址 */
-export const NEXTCODE_MODELS_URL = 'https://code.arctictest.com/nextcode-models.json'
+export const NEXTCODE_MODELS_URL = RELAY_BRANDING.modelRegistryUrl
 /** 白名单缓存有效期: 10 分钟 */
 export const NEXTCODE_CACHE_TTL_MS = 10 * 60 * 1000
 
@@ -41,6 +41,11 @@ function isNonEmptyString(v: unknown): v is string {
 
 function isPositiveFiniteInteger(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0
+}
+
+/** 返回与模块内部缓存隔离的模型副本（模型结构为扁平对象）。 */
+function cloneModels(models: readonly NextcodeModel[]): NextcodeModel[] {
+  return models.map(model => ({ ...model }))
 }
 
 /** 并发防抖: 复用同一个 in-flight fetch promise */
@@ -99,19 +104,19 @@ export async function loadNextcodeRegistry(opts?: { force?: boolean }): Promise<
 }> {
   const now = Date.now()
   if (!opts?.force && cachedModels !== null && now - cachedAt < NEXTCODE_CACHE_TTL_MS) {
-    return { models: cachedModels, cached: true, fetchedAt: cachedAt, error: null }
+    return { models: cloneModels(cachedModels), cached: true, fetchedAt: cachedAt, error: null }
   }
   try {
     const models = await fetchModels()
-    cachedModels = models
+    cachedModels = cloneModels(models)
     lookupMap = null
     cachedAt = Date.now()
-    return { models, cached: false, fetchedAt: cachedAt, error: null }
+    return { models: cloneModels(cachedModels), cached: false, fetchedAt: cachedAt, error: null }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (cachedModels !== null) {
       // 拉取失败但有旧缓存: 回退旧缓存, 附带 error 供调用方提示
-      return { models: cachedModels, cached: true, fetchedAt: cachedAt, error: message }
+      return { models: cloneModels(cachedModels), cached: true, fetchedAt: cachedAt, error: message }
     }
     return { models: [], cached: false, fetchedAt: null, error: message }
   }
@@ -127,5 +132,6 @@ export function lookupNextcodeModel(raw: string): NextcodeModel | null {
     return null
   }
   lookupMap ??= new Map(cachedModels.map(m => [normalizeModelId(m.id), m]))
-  return lookupMap.get(normalizeModelId(raw)) ?? null
+  const model = lookupMap.get(normalizeModelId(raw))
+  return model === undefined ? null : { ...model }
 }
