@@ -210,6 +210,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   //   - [POST]  /auth/logout → 200 (1ms)
   //
   // 判定顺序 (顺序很重要):
+  //   0. OPTIONS (CORS 预检) → trace, 不按 RPC 统计 (否则日志里出现大量误导性的 "→ 204")
   //   1. TRACE_PATHS 优先 — 高频轮询端点会被 RE_CONNECT_RPC_PATH 错误匹配
   //      (e.g. /auth/full_stripe_profile → 捕获 auth/full_stripe_profile), 必须先拦截。
   //   2. ConnectRPC 服务名匹配 — service 段必须含点 (aiserver.v1.AiService),
@@ -219,6 +220,13 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     const url = req.url
     const status = reply.statusCode
     const rt = reply.elapsedTime?.toFixed(0) ?? '?'
+
+    // CORS 预检 (renderer 层直发本地的 Connect 请求会触发) —— 不是 RPC, 不计入 [GRPC]
+    if (req.method === 'OPTIONS') {
+      logger.trace(`[OPTIONS] ${url} → ${status} (${rt}ms)`)
+      done()
+      return
+    }
 
     if (TRACE_PATHS.has(url)) {
       logger.trace(`[${req.method}] ${url} → ${status} (${rt}ms)`)
@@ -240,7 +248,8 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     done()
   })
 
-  await server.register(cors, { origin: true })
+  // maxAge: 预检结果缓存 10 分钟 (缺省时 Chromium 只缓存 5s, glass 窗口的本地 Connect 请求会频繁多一次 OPTIONS 往返)
+  await server.register(cors, { origin: true, maxAge: 600 })
   await server.register(fastifyConnectPlugin, { routes })
 
   // ── SSE 日志流 + 窗口注册 ──
