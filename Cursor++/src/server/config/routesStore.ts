@@ -128,6 +128,38 @@ export function toggleByokMode(): Promise<RoutesConfig> {
   return setByokMode(current ? 0 : 1)
 }
 
+/**
+ * BYOK 开关请求的统一入口 (UI / 命令 / REST 都走这里)。
+ *
+ * 为什么不直接用 toggleByokMode:
+ *   翻转语义「读当前 → 取反」不幂等。实测一次点击被处理两次 (9ms 内 OFF→ON),
+ *   结果是开关「点了没反应」。重复触发的具体环节无法静态确定, 因此从语义上消除危害:
+ *   - target 为 0/1: 设为目标值; 已是目标值则不写盘 (UI 按「当前显示状态」算出目标, 重复触发无害)
+ *   - target 为 'toggle': 兼容旧入口 (cursor2plus.toggleByok / POST /byok/toggle), 500ms 内重复翻转被丢弃
+ * source 记入日志, 用于定位今后出现的重复触发来自哪个入口。
+ */
+const TOGGLE_DEBOUNCE_MS = 500
+let lastToggleAt = 0
+
+export async function requestByokMode(target: ByokMode | 'toggle', source: string): Promise<{ routes: RoutesConfig, changed: boolean }> {
+  const current = getByokMode()
+  if (target === 'toggle') {
+    const now = Date.now()
+    if (now - lastToggleAt < TOGGLE_DEBOUNCE_MS) {
+      logger.info({ source, byokMode: current, sinceLastMs: now - lastToggleAt }, '[CFG] byokMode toggle ignored (debounce)')
+      return { routes: loadRoutes(), changed: false }
+    }
+    lastToggleAt = now
+    target = current ? 0 : 1
+  }
+  if (target === current) {
+    logger.info({ source, byokMode: current }, '[CFG] byokMode unchanged (already in target mode)')
+    return { routes: loadRoutes(), changed: false }
+  }
+  logger.info({ source, from: current, to: target }, '[CFG] byokMode change requested')
+  return { routes: await setByokMode(target), changed: true }
+}
+
 // ── 文件监听: 外部变更 (其他实例 / 手动编辑) 自动重载 ──
 
 type RoutesChangeListener = () => void
