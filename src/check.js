@@ -6,7 +6,7 @@ import { findCursorPathsDetailed, formatDiagnostic } from './detect.js';
 import { checkAlwaysLocalPatch } from './patch-always-local.js';
 import { checkAgentHostPatch } from './patch-agent-host.js';
 import { checkProxy39Patch, needsProxy39Patch } from './patch-proxy-39.js';
-import { isInjectPatched } from './patch-inject.js';
+import { isInjectCurrent, isInjectPatched } from './patch-inject.js';
 
 const ok = s => `\x1b[32m✓ ${s}\x1b[0m`;
 const fail = s => `\x1b[31m✗ ${s}\x1b[0m`;
@@ -36,8 +36,13 @@ export async function check() {
     // 与 patch-inject.js 的 ANCHORS 保持一致 —— 3.17.8 起模块注册键从
     // "out-build/external/bufbuild/connect/callback-client.js" 缩短为
     // "callback-client.js",只取文件名可同时命中新旧两种形态。
-    if (isInjectPatched(wb)) {
+    if (isInjectCurrent(wb)) {
       console.log(ok(`Renderer hook (${label}): payload + active transport call site`));
+      continue;
+    }
+    if (isInjectPatched(wb)) {
+      console.log(fail(`Renderer hook (${label}) is outdated (installed by an older ccursor) — run "ccursor update"`));
+      allOk = false;
       continue;
     }
     if (wb.includes('__byokWrapTransport') || wb.includes('CURSOR-BYOK-HOOK-START')) {
