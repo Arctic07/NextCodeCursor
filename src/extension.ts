@@ -5,7 +5,7 @@ import { bumpRefreshSignal, pushRoutesUpdate, startServer, stopServer } from './
 import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
-import { ensureRoutesFile, onRoutesChange, startRoutesWatcher, stopRoutesWatcher, toggleByokMode } from './server/config/routesStore'
+import { ensureRoutesFile, loadRoutes, onRoutesChange, startRoutesWatcher, stopRoutesWatcher, toggleByokMode } from './server/config/routesStore'
 import { isLikelyWindowsMsvcMissing, preflightSupermarkdown, setSupermarkdownNativeErrorNotifier } from './server/handlers/agent/supermarkdown'
 import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntime'
 import { initLogger } from './server/logger'
@@ -480,13 +480,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('cursor2plus.toggleByok', async () => {
       const next = await toggleByokMode()
       await refreshState()
-      // 1. 推送 REST redirect 列表变更到 renderer — inject-patch 的 fetch wrapper
+      // 1. 推送 redirect 列表变更到 renderer — inject-patch 的 fetch wrapper
       //    安装时写死了 _restPaths, 切 OFF 后 /auth/poll 仍被拦截导致登录中断,
-      //    必须通过 SSE 推送新列表让 renderer 热更新。
-      const restPaths = next.redirect
-        .filter((r: string) => r.startsWith('REST:'))
-        .map((r: string) => r.slice(5))
-      pushRoutesUpdate(restPaths)
+      //    必须通过 SSE 推送新列表让 renderer 热更新 (REST + ConnectRPC 规则)。
+      pushRoutesUpdate(next.redirect)
       // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用)
       bumpRefreshSignal()
       const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
@@ -515,6 +512,9 @@ export async function activate(context: vscode.ExtensionContext) {
   const disposeRoutesWatch = onRoutesChange(async () => {
     await refreshState()
     renderStatusBar()
+    // 其他实例 toggle / 外部编辑 routes.json 时, 由 server 所在进程把新列表推给 renderer;
+    // 本进程不是 server owner 时 SSE 连接集合为空, 推送为空操作
+    pushRoutesUpdate(loadRoutes().redirect)
     bumpRefreshSignal()
   })
   const disposeProvidersWatch = onProvidersChange(async () => {

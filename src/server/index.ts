@@ -126,27 +126,49 @@ export function bumpRefreshSignal(): void {
 }
 
 /**
- * 向所有 renderer SSE 推送 REST redirect 列表变更。
+ * 向所有 renderer SSE 推送 redirect 列表变更。
  *
  * inject-patch 的 globalThis.fetch wrapper 里 _restPaths / _restSet 是安装时写死的,
  * 不随 routes.json 运行时变化。toggle BYOK 后需要通过 SSE 推送新列表让 renderer
  * 热更新,否则 OFF 模式下 /auth/poll 仍被拦截到本地,阻断真实登录流程。
  *
- * inject-patch 端监听 `event: routes`, 收到后替换 _restPaths + _restSet。
+ * 两个事件:
+ *   - `event: routes`     REST 路径 (不含 "REST:" 前缀) —— inject-patch 替换 _restPaths + _restSet
+ *   - `event: rpc-routes` ConnectRPC 规则 (service 或 service/method) —— hook rev2 起 glass 窗口
+ *     据此在 renderer 层直接把命中的 RPC 发往本地 (Agent Window 整窗绕过扩展宿主路由, Issue #34)。
+ *     旧版 hook 忽略未知事件, 新旧互相兼容。BYOK OFF 时规则为空 → renderer 不做任何路由。
  */
-export function pushRoutesUpdate(restPaths: string[]): void {
+export function splitRedirect(redirect: string[]): { restPaths: string[], rpcRules: string[] } {
+  const restPaths: string[] = []
+  const rpcRules: string[] = []
+  for (const r of redirect) {
+    if (r.startsWith('REST:'))
+      restPaths.push(r.slice(5))
+    else
+      rpcRules.push(r)
+  }
+  return { restPaths, rpcRules }
+}
+
+function writeRoutesEvents(reply: any, redirect: string[]): void {
+  const { restPaths, rpcRules } = splitRedirect(redirect)
+  reply.raw.write(`event: routes\ndata: ${JSON.stringify(restPaths)}\n\n`)
+  reply.raw.write(`event: rpc-routes\ndata: ${JSON.stringify(rpcRules)}\n\n`)
+}
+
+export function pushRoutesUpdate(redirect: string[]): void {
   let sent = 0
-  const data = JSON.stringify(restPaths)
   for (const reply of refreshEventStreams) {
     try {
-      reply.raw.write(`event: routes\ndata: ${data}\n\n`)
+      writeRoutesEvents(reply, redirect)
       sent++
     }
     catch {
       refreshEventStreams.delete(reply)
     }
   }
-  logger.info({ connections: sent, restPaths: restPaths.length }, '[SRV] routes update pushed')
+  const { restPaths, rpcRules } = splitRedirect(redirect)
+  logger.info({ connections: sent, restPaths: restPaths.length, rpcRules: rpcRules.length }, '[SRV] routes update pushed')
 }
 
 export interface StartServerOptions extends RuntimeConfigInit {}
@@ -270,10 +292,9 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     refreshEventStreams.add(reply)
     reply.raw.writeHead(200, sseHeaders)
     reply.raw.write(`: connected\n\n`)
-    // 立即推送当前 REST redirect 列表 — inject-patch 初始只含 BASE,
+    // 立即推送当前 redirect 列表 (REST + ConnectRPC) — inject-patch 初始只含 BASE,
     // 需要 server 就绪后推送完整列表才能拦截 BYOK 路径
-    const currentRestPaths = loadRoutes().redirect.filter((r: string) => r.startsWith('REST:')).map((r: string) => r.slice(5))
-    reply.raw.write(`event: routes\ndata: ${JSON.stringify(currentRestPaths)}\n\n`)
+    writeRoutesEvents(reply, loadRoutes().redirect)
     reply.hijack()
 
     req.raw.on('close', () => {
@@ -284,10 +305,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   // BYOK toggle — renderer (glass sidebar) 通过 fetch 调用
   server.post('/byok/toggle', async () => {
     const next = await toggleByokMode()
-    const restPaths = next.redirect
-      .filter((r: string) => r.startsWith('REST:'))
-      .map((r: string) => r.slice(5))
-    pushRoutesUpdate(restPaths)
+    pushRoutesUpdate(next.redirect)
     bumpRefreshSignal()
     logger.info({ byokMode: next.byokMode }, '[SRV] BYOK toggled via REST')
     return { byokMode: next.byokMode }
