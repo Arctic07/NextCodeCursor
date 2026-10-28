@@ -9,7 +9,7 @@ import cors from '@fastify/cors'
  */
 import Fastify from 'fastify'
 import { ensureProvidersFile } from './config/providersStore'
-import { ensureRoutesFile, loadRoutes, toggleByokMode } from './config/routesStore'
+import { ensureRoutesFile, loadRoutes, requestByokMode } from './config/routesStore'
 import { closeAgentDatabase, initDatabase } from './database/sqlite'
 import { enterWindowContext, logger, setLogBroadcast, setLogPush, setLogSubscriberCheck } from './logger'
 import { initRuntimeConfig } from './runtime-config'
@@ -302,14 +302,27 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     })
   })
 
-  // BYOK toggle — renderer (glass sidebar) 通过 fetch 调用
-  server.post('/byok/toggle', async () => {
-    const next = await toggleByokMode()
-    pushRoutesUpdate(next.redirect)
-    bumpRefreshSignal()
-    logger.info({ byokMode: next.byokMode }, '[SRV] BYOK toggled via REST')
-    return { byokMode: next.byokMode }
+  // BYOK 开关 — renderer (glass sidebar) 通过 fetch 调用
+  // POST /byok/mode {byokMode: 0|1, source?}: 幂等设为目标值 (hook rev2 起的 glass 按钮)
+  // POST /byok/toggle: 旧版 hook 的翻转入口, 500ms 防抖 (见 routesStore.requestByokMode)
+  const applyRestByokRequest = async (target: 0 | 1 | 'toggle', source: string) => {
+    const { routes: next, changed } = await requestByokMode(target, source)
+    if (changed) {
+      pushRoutesUpdate(next.redirect)
+      bumpRefreshSignal()
+    }
+    logger.info({ byokMode: next.byokMode, changed, source }, '[SRV] BYOK mode request via REST')
+    return { byokMode: next.byokMode, changed }
+  }
+  server.post('/byok/mode', async (req, reply) => {
+    const body = (req.body ?? {}) as { byokMode?: unknown, source?: unknown }
+    if (body.byokMode !== 0 && body.byokMode !== 1) {
+      reply.code(400)
+      return { error: 'byokMode must be 0 or 1' }
+    }
+    return applyRestByokRequest(body.byokMode, `rest:${typeof body.source === 'string' ? body.source : 'mode'}`)
   })
+  server.post('/byok/toggle', async () => applyRestByokRequest('toggle', 'rest:toggle'))
 
   // Fake auth endpoints
   server.get('/health', async () => ({ ok: true, mode: 'byok' }))

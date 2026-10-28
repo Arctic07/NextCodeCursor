@@ -9,7 +9,7 @@ export function Banner() {
       <button
         x-bind:class="$store.app.state?.byokMode ? 'on' : 'off'"
         x-text="$store.app.state?.byokMode ? 'Switch to Official' : 'Enable BYOK'"
-        x-on:click="$store.app.post('toggleByok')"
+        x-on:click="$store.app.post('setByokMode', { mode: $store.app.state?.byokMode ? 0 : 1 })"
       >
       </button>
     </div>

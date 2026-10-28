@@ -1,3 +1,4 @@
+import type { ByokMode } from './server/data/defaults'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import * as http from 'node:http'
 import * as vscode from 'vscode'
@@ -5,7 +6,7 @@ import { bumpRefreshSignal, pushRoutesUpdate, startServer, stopServer } from './
 import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
-import { ensureRoutesFile, loadRoutes, onRoutesChange, startRoutesWatcher, stopRoutesWatcher, toggleByokMode } from './server/config/routesStore'
+import { ensureRoutesFile, loadRoutes, onRoutesChange, requestByokMode, startRoutesWatcher, stopRoutesWatcher } from './server/config/routesStore'
 import { isLikelyWindowsMsvcMissing, preflightSupermarkdown, setSupermarkdownNativeErrorNotifier } from './server/handlers/agent/supermarkdown'
 import { resetProviderInstanceCache } from './server/handlers/llm/providerRuntime'
 import { initLogger } from './server/logger'
@@ -361,7 +362,32 @@ function renderStatusBar() {
   statusBarItem.backgroundColor = s.byokMode
     ? undefined
     : new vscode.ThemeColor('statusBarItem.warningBackground')
-  statusBarItem.command = 'cursor2plus.toggleByok'
+  // 携带目标值 (按当前显示状态取反) 而非翻转: 同一次点击被重复处理时结果不变
+  statusBarItem.command = {
+    title: 'Toggle BYOK Mode',
+    command: 'cursor2plus.setByokMode',
+    arguments: [s.byokMode ? 0 : 1, 'statusbar'],
+  }
+}
+
+/**
+ * BYOK 开关的统一执行入口 (状态栏 / 侧边栏 / 命令面板)。
+ * 只有状态实际变化时才推送路由、刷新模型列表、弹出提示; 重复请求为空操作。
+ */
+async function applyByokRequest(target: ByokMode | 'toggle', source: string): Promise<void> {
+  const { routes: next, changed } = await requestByokMode(target, source)
+  await refreshState()
+  renderStatusBar()
+  if (!changed)
+    return
+  // 1. 推送 redirect 列表变更到 renderer — inject-patch 的 fetch wrapper
+  //    安装时写死了 _restPaths, 切 OFF 后 /auth/poll 仍被拦截导致登录中断,
+  //    必须通过 SSE 推送新列表让 renderer 热更新 (REST + ConnectRPC 规则)。
+  pushRoutesUpdate(next.redirect)
+  // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用)
+  bumpRefreshSignal()
+  const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
+  vscode.window.showInformationMessage(`${label}. Model list will refresh automatically.`)
 }
 
 // ── Server 操作 ──
@@ -477,17 +503,13 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── 正常命令注册 ──
   context.subscriptions.push(
     vscode.commands.registerCommand('cursor2plus.serverToggle', () => toggleServer()),
-    vscode.commands.registerCommand('cursor2plus.toggleByok', async () => {
-      const next = await toggleByokMode()
-      await refreshState()
-      // 1. 推送 redirect 列表变更到 renderer — inject-patch 的 fetch wrapper
-      //    安装时写死了 _restPaths, 切 OFF 后 /auth/poll 仍被拦截导致登录中断,
-      //    必须通过 SSE 推送新列表让 renderer 热更新 (REST + ConnectRPC 规则)。
-      pushRoutesUpdate(next.redirect)
-      // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用)
-      bumpRefreshSignal()
-      const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
-      vscode.window.showInformationMessage(`${label}. Model list will refresh automatically.`)
+    // 旧入口 (命令面板 / 快捷键): 翻转语义, 500ms 防抖
+    vscode.commands.registerCommand('cursor2plus.toggleByok', () => applyByokRequest('toggle', 'command:toggle')),
+    // 幂等入口: 设为目标值 (状态栏 / 侧边栏按当前显示状态计算 target)
+    vscode.commands.registerCommand('cursor2plus.setByokMode', (mode: unknown, source?: unknown) => {
+      if (mode !== 0 && mode !== 1)
+        return applyByokRequest('toggle', `command:set(invalid ${String(mode)})`)
+      return applyByokRequest(mode, typeof source === 'string' ? source : 'command:set')
     }),
     vscode.commands.registerCommand('cursor2plus.editRoutes', () => {
       vscode.window.showTextDocument(vscode.Uri.file(getRoutesFilePath()))
