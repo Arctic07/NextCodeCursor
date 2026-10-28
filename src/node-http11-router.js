@@ -13,8 +13,12 @@ import {
   ROUTES_FILE_NAME,
 } from './defaults.js';
 
-export const HTTP11_ROUTER_VERSION_MARKER = '__byokHttp11RouterV2';
-export const HTTP11_ROUTER_SOURCE_MARKER = 'BYOK-HTTP11-ROUTER-V2';
+// V3: 新增 globalThis.__byokRpcRouted(path) 供同进程内的 turn 路由守卫判定 BYOK 是否接管 (见 agent-turn-route-guard.js)
+export const HTTP11_ROUTER_VERSION_MARKER = '__byokHttp11RouterV3';
+export const HTTP11_ROUTER_SOURCE_MARKER = 'BYOK-HTTP11-ROUTER-V3';
+
+// 任意版本的路由块 (含当前版本): /* BYOK-HTTP11-ROUTER-Vn */ ... /* BYOK-HTTP11-ROUTER-Vn-END */
+const ROUTER_BLOCK_RE = /\/\* (BYOK-HTTP11-ROUTER-V\d+) \*\/[\s\S]*?\/\* \1-END \*\/\n?/g;
 
 /**
  * @param {{ guardMarker: string, processLabel: string }} options
@@ -63,6 +67,8 @@ export function buildNodeHttp11RouterPayload({ guardMarker, processLabel }) {
   function normalizeHost(host){return String(host||"").trim().replace(/^\\[|\\]$/g,"").toLowerCase();}
   function isCursorApiHost(host){host=normalizeHost(host);return/(^|\\.)api[234]\\.cursor\\.sh$|(^|\\.)api5\\.cursor\\.sh$|(^|\\.)gcpp\\.cursor\\.sh$|^api\\.playground\\.cursor\\.sh$/.test(host);}
   function pathOnly(pathname){pathname=String(pathname||"");var hash=pathname.indexOf("#");if(hash!==-1)pathname=pathname.slice(0,hash);var query=pathname.indexOf("?");return query===-1?pathname:pathname.slice(0,query);}
+  // 同进程判定接口: 路由表是否接管某个 ConnectRPC 路径 (随 routes.json 热更新)
+  globalThis.__byokRpcRouted=function(pathname){try{return shouldRedirect(pathname);}catch(e){return false;}};
   function shouldRedirect(pathname){pathname=pathOnly(pathname);if(!pathname||pathname.length<2)return false;if(state.restSet.has(pathname))return true;var path=pathname.charAt(0)==="/"?pathname.slice(1):pathname;var slash=path.indexOf("/");if(slash===-1)return false;if(state.methodSet.has(path))return true;return state.svcSet.has(path.slice(0,slash));}
   function parseRequest(input){try{
     if(typeof input==="string"){var s=new URL(input);return{hostname:s.hostname,port:s.port,protocol:s.protocol,path:s.pathname+s.search,raw:input,kind:"string"};}
@@ -98,4 +104,13 @@ export function isNodeHttp11RouterPatched(source, guardMarker) {
     && head.includes('_http.request=interceptRequest(false)')
     && head.includes('_https.request=interceptRequest(true)')
     && head.includes('_module.syncBuiltinESMExports');
+}
+
+/**
+ * 剥离旧版本的路由块, 只保留当前版本。
+ * 直接 install (而非 update) 时入口文件里可能残留旧版 payload; 若不剥离, 新版会叠加在旧版之上,
+ * 同一进程出现两层 http.request 包装。
+ */
+export function stripLegacyRouterPayload(source) {
+  return source.replace(ROUTER_BLOCK_RE, (block, marker) => (marker === HTTP11_ROUTER_SOURCE_MARKER ? block : ''));
 }

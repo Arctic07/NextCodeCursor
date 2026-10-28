@@ -13,7 +13,7 @@ import * as acorn from 'acorn';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { hasActivateWait, injectActivateWait } from './patch-always-local.js';
-import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched } from './node-http11-router.js';
+import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched, stripLegacyRouterPayload } from './node-http11-router.js';
 import {
   AGENT_WS_GATE_MARKER,
   AGENT_WS_ORIGINS_MARKER,
@@ -118,7 +118,8 @@ function prepareAgentHostPatch(paths, log) {
   }
   const patchedByFile = new Map(originalByFile);
 
-  let entry = patchedByFile.get(paths.agentHostMain);
+  // 先剥离旧版本路由块, 避免新旧 payload 叠加 (见 node-http11-router.js stripLegacyRouterPayload)
+  let entry = stripLegacyRouterPayload(patchedByFile.get(paths.agentHostMain));
   if (!isNodeHttp11RouterPatched(entry, AGENT_HOST_ROUTER_MARKER)) {
     entry = buildAgentHostRouter() + entry;
     log?.('  Agent Host HTTP/1.1 whitelist router injected');
