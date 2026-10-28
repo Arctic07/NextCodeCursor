@@ -410,16 +410,24 @@ async function toggleServer() {
   await refreshState()
 }
 
-async function waitForRemoteByokServer(host: string, port: number, attempts = 8): Promise<boolean> {
+/**
+ * listen 报 EADDRINUSE 之后, 等待端口持有者被识别为 Cursor++。
+ *
+ * EADDRINUSE 已证明端口被绑定: 此时探测为 'offline' 的含义是「对方尚未就绪」
+ * (另一窗口的 server 正在启动, 扩展宿主事件循环繁忙, /health 500ms 内未响应),
+ * 不能据此放弃 —— 否则会把另一个 Cursor++ 实例误报为「被其他进程占用」(多窗口同时启动时实测出现)。
+ * 约 5s 窗口内持续探测; 返回观察到的探测结果供诊断。
+ */
+async function waitForRemoteByokServer(host: string, port: number, attempts = 20): Promise<{ byok: boolean, observed: string[] }> {
+  const observed: string[] = []
   for (let i = 0; i < attempts; i++) {
     const probe = await probeByokServer(host, port)
+    observed.push(probe.kind)
     if (probe.kind === 'byok')
-      return true
-    if (probe.kind === 'offline')
-      return false
+      return { byok: true, observed }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
-  return false
+  return { byok: false, observed }
 }
 
 async function doStartServer() {
@@ -453,8 +461,10 @@ async function doStartServer() {
     const msg = err instanceof Error ? err.message : String(err)
     const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: unknown }).code) : ''
     if (code === 'EADDRINUSE' || msg.includes('EADDRINUSE')) {
-      if (await waitForRemoteByokServer(cfg.host, cfg.port)) {
-        log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote`)
+      const waited = await waitForRemoteByokServer(cfg.host, cfg.port)
+      const probeTrail = [...new Set(waited.observed)].map(k => `${k}×${waited.observed.filter(x => x === k).length}`).join(', ')
+      if (waited.byok) {
+        log('info', `[SRV] port ${cfg.port} claimed by another Cursor++ instance, running as remote (probes: ${probeTrail})`)
         await refreshState()
         renderStatusBar()
         startHeartbeat()
@@ -466,6 +476,7 @@ async function doStartServer() {
           startHeartbeat()
           return
         }
+        log('warn', `[SRV] port ${cfg.port} owner never identified as Cursor++ (probes: ${probeTrail})`)
         showPortOccupiedMessage(cfg.port)
       }
     }
