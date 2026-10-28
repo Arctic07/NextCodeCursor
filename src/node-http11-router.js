@@ -47,8 +47,10 @@ export function buildNodeHttp11RouterPayload({ guardMarker, processLabel }) {
   var _title=String(process.env.VSCODE_PROCESS_TITLE||""),_widMatch=_title.match(/\\[(\\d+)-\\d+\\]/),WINDOW_ID=_widMatch?_widMatch[1]:null;
   var state={host:FALLBACK_HOST,port:FALLBACK_PORT,base:"http://"+FALLBACK_HOST+":"+FALLBACK_PORT,svcSet:new Set(),methodSet:new Set(),restSet:new Set(),ruleCount:0,restCount:0};
   function baseUrl(host,port){var h=String(host);if(h.indexOf(":")!==-1&&h.charAt(0)!=="[")h="["+h+"]";return"http://"+h+":"+port;}
-  function emptyState(){return{host:FALLBACK_HOST,port:FALLBACK_PORT,base:baseUrl(FALLBACK_HOST,FALLBACK_PORT),svcSet:new Set(),methodSet:new Set(),restSet:new Set(),ruleCount:0,restCount:0};}
+  function emptyState(){return{host:FALLBACK_HOST,port:FALLBACK_PORT,base:baseUrl(FALLBACK_HOST,FALLBACK_PORT),svcSet:new Set(),methodSet:new Set(),restSet:new Set(),ruleCount:0,restCount:0,stamp:""};}
+  function fileStamp(){var st=_fs.statSync(ROUTES_PATH);return st.mtimeMs+":"+st.size;}
   function loadConfig(){try{
+    var stamp=fileStamp();
     var cfg=JSON.parse(_fs.readFileSync(ROUTES_PATH,"utf-8"));
     var host=cfg&&cfg.server&&typeof cfg.server.host==="string"&&cfg.server.host.trim()?cfg.server.host.trim():FALLBACK_HOST;
     var rawPort=cfg&&cfg.server&&cfg.server.port;
@@ -59,17 +61,21 @@ export function buildNodeHttp11RouterPayload({ guardMarker, processLabel }) {
       if(rule.indexOf("REST:")===0){restSet.add(rule.slice(5));restCount++;}
       else if(rule.indexOf("/")!==-1){methodSet.add(rule);ruleCount++;}
       else{svcSet.add(rule);ruleCount++;}}
-    return{host:host,port:port,base:baseUrl(host,port),svcSet:svcSet,methodSet:methodSet,restSet:restSet,ruleCount:ruleCount,restCount:restCount};
+    return{host:host,port:port,base:baseUrl(host,port),svcSet:svcSet,methodSet:methodSet,restSet:restSet,ruleCount:ruleCount,restCount:restCount,stamp:stamp};
   }catch(e){return emptyState();}}
   function applyState(event){state=loadConfig();console.log("[BYOK] "+PROCESS_LABEL+" "+event+" -> "+state.base+" (ConnectRPC="+state.ruleCount+", REST="+state.restCount+")");}
   applyState("routes loaded");
+  // 按需刷新: 每次路由判定前比对 routes.json 的 mtime+size, 变化即重载。
+  // watchFile 轮询间隔 2s, 而 BYOK 切换后 0.5s 就推送刷新信号 —— 仅靠轮询会让切换后的首批请求用旧规则
+  // (IDE 窗口切换后短暂拿到错误模型列表)。routesStore 以 tmp+rename 原子写入, 不会读到半截文件。
+  function ensureFresh(){try{if(fileStamp()!==state.stamp)applyState("routes reloaded (on request)");}catch(e){}}
   try{_fs.watchFile(ROUTES_PATH,{interval:2000,persistent:false},function(){applyState("routes reloaded");});}catch(e){console.warn("[BYOK] "+PROCESS_LABEL+" watchFile failed: "+e.message);}
   function normalizeHost(host){return String(host||"").trim().replace(/^\\[|\\]$/g,"").toLowerCase();}
   function isCursorApiHost(host){host=normalizeHost(host);return/(^|\\.)api[234]\\.cursor\\.sh$|(^|\\.)api5\\.cursor\\.sh$|(^|\\.)gcpp\\.cursor\\.sh$|^api\\.playground\\.cursor\\.sh$/.test(host);}
   function pathOnly(pathname){pathname=String(pathname||"");var hash=pathname.indexOf("#");if(hash!==-1)pathname=pathname.slice(0,hash);var query=pathname.indexOf("?");return query===-1?pathname:pathname.slice(0,query);}
   // 同进程判定接口: 路由表是否接管某个 ConnectRPC 路径 (随 routes.json 热更新)
   globalThis.__byokRpcRouted=function(pathname){try{return shouldRedirect(pathname);}catch(e){return false;}};
-  function shouldRedirect(pathname){pathname=pathOnly(pathname);if(!pathname||pathname.length<2)return false;if(state.restSet.has(pathname))return true;var path=pathname.charAt(0)==="/"?pathname.slice(1):pathname;var slash=path.indexOf("/");if(slash===-1)return false;if(state.methodSet.has(path))return true;return state.svcSet.has(path.slice(0,slash));}
+  function shouldRedirect(pathname){ensureFresh();pathname=pathOnly(pathname);if(!pathname||pathname.length<2)return false;if(state.restSet.has(pathname))return true;var path=pathname.charAt(0)==="/"?pathname.slice(1):pathname;var slash=path.indexOf("/");if(slash===-1)return false;if(state.methodSet.has(path))return true;return state.svcSet.has(path.slice(0,slash));}
   function parseRequest(input){try{
     if(typeof input==="string"){var s=new URL(input);return{hostname:s.hostname,port:s.port,protocol:s.protocol,path:s.pathname+s.search,raw:input,kind:"string"};}
     if(input instanceof URL)return{hostname:input.hostname,port:input.port,protocol:input.protocol,path:input.pathname+input.search,raw:input,kind:"url"};
