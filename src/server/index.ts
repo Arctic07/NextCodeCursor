@@ -126,6 +126,29 @@ export function bumpRefreshSignal(): void {
 }
 
 /**
+ * BYOK 开关 / 路由变化后的模型列表刷新: 立即 (经 500ms 防抖) 一次 + 稳定后补发一次。
+ *
+ * 为什么补发: Cursor 的 aiService._availableModelsFetch 按 coalesceKey 合并「进行中」的请求,
+ * 而 key (authId / teamId / 订阅 / 请求体) 不含 BYOK 状态。切换前已发往官方、尚未返回的请求
+ * (官方响应实测 0.7–1s) 会被切换后的刷新合并复用, 拿到旧列表 —— 实测 Agent Window 约 1s 错位,
+ * 两条完成日志共用同一 catalogRequestId。补发的刷新在旧请求返回后才发起, 保证最终一致。
+ *
+ * 连续调用会顺延补发时刻 (REST / 命令 / onRoutesChange 可能先后触发), 每轮变化至多推送两次。
+ */
+const SETTLE_REFRESH_MS = 1500
+let settleRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+export function bumpRefreshSignalForModeChange(): void {
+  bumpRefreshSignal()
+  if (settleRefreshTimer)
+    clearTimeout(settleRefreshTimer)
+  settleRefreshTimer = setTimeout(() => {
+    settleRefreshTimer = null
+    bumpRefreshSignal()
+  }, SETTLE_REFRESH_MS)
+}
+
+/**
  * 向所有 renderer SSE 推送 redirect 列表变更。
  *
  * inject-patch 的 globalThis.fetch wrapper 里 _restPaths / _restSet 是安装时写死的,
@@ -318,7 +341,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     const { routes: next, changed } = await requestByokMode(target, source)
     if (changed) {
       pushRoutesUpdate(next.redirect)
-      bumpRefreshSignal()
+      bumpRefreshSignalForModeChange()
     }
     logger.info({ byokMode: next.byokMode, changed, source }, '[SRV] BYOK mode request via REST')
     return { byokMode: next.byokMode, changed }
@@ -413,6 +436,10 @@ export async function stopServer(): Promise<void> {
     return
   const server = app
   app = null
+  if (settleRefreshTimer) {
+    clearTimeout(settleRefreshTimer)
+    settleRefreshTimer = null
+  }
   broadcastShutdown()
   try {
     await server.close()

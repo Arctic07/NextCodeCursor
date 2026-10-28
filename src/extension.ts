@@ -2,7 +2,7 @@ import type { ByokMode } from './server/data/defaults'
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import * as http from 'node:http'
 import * as vscode from 'vscode'
-import { bumpRefreshSignal, pushRoutesUpdate, startServer, stopServer } from './server'
+import { bumpRefreshSignal, bumpRefreshSignalForModeChange, pushRoutesUpdate, startServer, stopServer } from './server'
 import { getServerConfig } from './server/config'
 import { getLogsDir, getProvidersFilePath, getSessionLogFilePath } from './server/config/paths'
 import { ensureProvidersFile, onProvidersChange, startProvidersWatcher, stopProvidersWatcher } from './server/config/providersStore'
@@ -384,8 +384,9 @@ async function applyByokRequest(target: ByokMode | 'toggle', source: string): Pr
   //    安装时写死了 _restPaths, 切 OFF 后 /auth/poll 仍被拦截导致登录中断,
   //    必须通过 SSE 推送新列表让 renderer 热更新 (REST + ConnectRPC 规则)。
   pushRoutesUpdate(next.redirect)
-  // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用)
-  bumpRefreshSignal()
+  // 2. 触发 renderer hook 主动刷新模型列表 (借助捕获的 aiService 引用), 并在稳定后补发一次
+  //    (覆盖被合并进「切换前已发出的官方请求」的刷新, 见 bumpRefreshSignalForModeChange)
+  bumpRefreshSignalForModeChange()
   const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
   vscode.window.showInformationMessage(`${label}. Model list will refresh automatically.`)
 }
@@ -548,7 +549,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 其他实例 toggle / 外部编辑 routes.json 时, 由 server 所在进程把新列表推给 renderer;
     // 本进程不是 server owner 时 SSE 连接集合为空, 推送为空操作
     pushRoutesUpdate(loadRoutes().redirect)
-    bumpRefreshSignal()
+    bumpRefreshSignalForModeChange()
   })
   const disposeProvidersWatch = onProvidersChange(async () => {
     resetProviderInstanceCache() // 清除缓存的 SDK client, 下次请求用新 baseUrl/apiKey
