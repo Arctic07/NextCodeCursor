@@ -14,6 +14,7 @@ import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { hasActivateWait, injectActivateWait } from './patch-always-local.js';
 import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched, stripLegacyRouterPayload } from './node-http11-router.js';
+import { assertTurnRouteShape, guardTurnRoute, isTurnRouteGuarded, mayContainTurnRoute } from './agent-turn-route-guard.js';
 import {
   AGENT_WS_GATE_MARKER,
   AGENT_WS_ORIGINS_MARKER,
@@ -140,11 +141,27 @@ function prepareAgentHostPatch(paths, log) {
     log?.(`  Agent WebSocket disabled in content-matched chunk: ${basename(file)}`);
   }
 
+  // Turn 路由守卫 (3.16.29+): BYOK 接管 RunSSE 时把 managed-local eligible 改走 connect。
+  // 3.16.29–3.18.25 在懒加载 chunk, 3.19.19+ 在 main.js —— 按内容扫描全部 dist 文件。
+  const distFiles = listDistJavaScript(paths).map(file => ({ file, source: patchedByFile.get(file) ?? readFileSync(file, 'utf-8') }));
+  const { required: turnRouteRequired } = assertTurnRouteShape(distFiles);
+  let turnRouteTargets = 0;
+  for (const { file, source } of distFiles) {
+    if (!mayContainTurnRoute(source)) continue;
+    if (!originalByFile.has(file)) originalByFile.set(file, readFileSync(file, 'utf-8'));
+    const guarded = guardTurnRoute(source, basename(file));
+    if (guarded.changed || guarded.guarded) turnRouteTargets++;
+    if (guarded.changed) {
+      patchedByFile.set(file, guarded.source);
+      log?.(`  Agent Host turn route guarded (BYOK → connect): ${basename(file)}`);
+    }
+  }
+
   for (const [file, source] of patchedByFile) {
     if (source !== originalByFile.get(file)) parseBundle(source, basename(file));
   }
 
-  return { originalByFile, patchedByFile, networkTargets, websocketTargets };
+  return { originalByFile, patchedByFile, networkTargets, websocketTargets, turnRouteRequired, turnRouteTargets };
 }
 
 export function patchAgentHost(paths, log) {
@@ -183,6 +200,8 @@ export function inspectAgentHostPatch(paths) {
       entryValid: true,
       router: true,
       wait: true,
+      turnRoute: true,
+      turnRouteRequired: false,
       networkTargets: [],
       websocketTargets: [],
       websocketDisabled: true,
@@ -201,6 +220,22 @@ export function inspectAgentHostPatch(paths) {
   if (!entryValid) errors.push('entry fingerprint mismatch');
   const router = Boolean(entry) && isNodeHttp11RouterPatched(entry, AGENT_HOST_ROUTER_MARKER);
   const wait = Boolean(entry) && hasActivateWait(entry);
+
+  // Turn 路由守卫: 存在 eligible 分支的文件必须全部已守卫
+  let turnRouteRequired = false;
+  let turnRoute = true;
+  try {
+    const distFiles = listDistJavaScript(paths).map(file => ({ file, source: readFileSync(file, 'utf-8') }));
+    turnRouteRequired = assertTurnRouteShape(distFiles).required;
+    for (const { file, source } of distFiles) {
+      if (mayContainTurnRoute(source) && !isTurnRouteGuarded(source, basename(file))) turnRoute = false;
+    }
+  }
+  catch (error) {
+    turnRoute = false;
+    errors.push(error.message);
+  }
+  if (turnRouteRequired && !turnRoute) errors.push('turn route not guarded (managed-local eligible reachable under BYOK)');
 
   let networkTargets = [];
   try { networkTargets = findAgentHostNetworkTargets(paths); }
@@ -222,7 +257,7 @@ export function inspectAgentHostPatch(paths) {
     }
   }
 
-  const fullyPatched = packageValid && entryValid && router && wait
+  const fullyPatched = packageValid && entryValid && router && wait && turnRoute
     && networkTargets.length > 0 && websocketDisabled && errors.length === 0;
   return {
     present: true,
@@ -231,6 +266,8 @@ export function inspectAgentHostPatch(paths) {
     entryValid,
     router,
     wait,
+    turnRoute,
+    turnRouteRequired,
     networkTargets,
     websocketTargets,
     websocketDisabled,
@@ -259,6 +296,9 @@ export function checkAgentHostPatch(paths, log) {
     log?.(`  [OK] Agent Host entry/router/activate target found`);
     log?.(`  [OK] ${prepared.networkTargets.length} network chunk(s) found by semantic fingerprints`);
     log?.(`  [OK] ${prepared.websocketTargets} WebSocket chunk(s) can be disabled`);
+    log?.(prepared.turnRouteRequired
+      ? `  [OK] turn route guard target found in ${prepared.turnRouteTargets} file(s)`
+      : '  [OK] turn router not present (pre-3.16.29, not required)');
     return true;
   }
   catch (error) {
