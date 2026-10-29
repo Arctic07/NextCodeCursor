@@ -389,6 +389,61 @@ async function applyByokRequest(target: ByokMode | 'toggle', source: string): Pr
   bumpRefreshSignalForModeChange()
   const label = next.byokMode ? 'BYOK enabled' : 'BYOK disabled (using official Cursor)'
   vscode.window.showInformationMessage(`${label}. Model list will refresh automatically.`)
+  promptRemoteReloadIfNeeded(next.byokMode)
+}
+
+/**
+ * 本窗口实际的 agent 拓扑: true = extension-host (cursor-agent-host 扩展), false = legacy。
+ *
+ * 来源 vscode.cursor.cursorAgentHostEnabled (Cursor 3.13+), 值取自 renderer 的
+ * CursorAgentHostEnablementService —— 即 installer 拓扑守卫 (agent-host-topology.js) 改写后的最终决定。
+ *
+ * 两道 proposal 门 (extensionHostProcess.js, 3.27.22 实测):
+ *   - 外层: vscode.cursor 上每个成员都被包成 CA("cursor", …) → 需要 proposal "cursor"
+ *   - 内层: getter 自身 X(P, "cursorAgentHost") → 需要 proposal "cursorAgentHost"
+ *   cursor 系列 proposal 额外要求 isBuiltin; installer 把 Cursor++ 释放为内置扩展
+ *   (Cursor.app/extensions/cursor2plus), 满足条件。
+ * 读不到时带回错误首行 (如 "CANNOT use API proposal: cursor"), 供日志诊断。
+ */
+function readAgentHostTopology(): { enabled?: boolean, error?: string } {
+  try {
+    const value = (vscode as unknown as { cursor?: { cursorAgentHostEnabled?: unknown } }).cursor?.cursorAgentHostEnabled
+    return typeof value === 'boolean' ? { enabled: value } : { error: `vscode.cursor.cursorAgentHostEnabled is ${typeof value}` }
+  }
+  catch (error) {
+    return { error: (error instanceof Error ? error.message : String(error)).split('\n')[0] }
+  }
+}
+
+/**
+ * 远端窗口 (Remote-SSH / WSL / Dev Container) + BYOK 开 + 拓扑为 extension-host 时, cursor-agent-host 跑在远端,
+ * 够不到本机 BYOK server, BYOK 模型名被直发官方 (ERROR_BAD_MODEL_NAME, PR #33)。拓扑只在窗口启动时决定,
+ * 需要 Reload Window 让 installer 拓扑守卫重新决策 (届时 BYOK 开 → legacy)。
+ *
+ * 检查时机: 激活时 (覆盖启动即错配, 如 Cursor 关闭期间改了 routes.json) + 每次 BYOK 模式变化。
+ * 拓扑为 legacy (守卫或 Cursor 自身决定) 时 BYOK 开关两个方向都可用, 不提示。
+ */
+let remoteReloadPrompted = false
+
+function promptRemoteReloadIfNeeded(mode: ByokMode): void {
+  if (!vscode.env.remoteName)
+    return
+  if (!mode) {
+    remoteReloadPrompted = false
+    return
+  }
+  // 同一窗口里 applyByokRequest 与 onRoutesChange 会先后触发, 只提示一次
+  if (remoteReloadPrompted || readAgentHostTopology().enabled !== true)
+    return
+  remoteReloadPrompted = true
+  log('warn', `[TOPOLOGY] remote window (${vscode.env.remoteName}) runs the remote agent host while BYOK is on — reload required`)
+  void vscode.window.showWarningMessage(
+    `BYOK is on, but this remote window (${vscode.env.remoteName}) started with Cursor's remote agent host, which cannot reach the local BYOK server. Reload the window to route Agent requests through BYOK.`,
+    'Reload Window',
+  ).then((choice) => {
+    if (choice)
+      void vscode.commands.executeCommand('workbench.action.reloadWindow')
+  })
 }
 
 // ── Server 操作 ──
@@ -539,6 +594,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // 确保配置文件存在 —— 即使 server 未启动,面板也能读写
   await ensureRoutesFile()
   await ensureProvidersFile()
+  // 每个窗口都记录实际拓扑: 本地窗口即可验证 proposal 已放行 (unknown = getter 不可用)
+  const topology = readAgentHostTopology()
+  log('info', `[TOPOLOGY] ${vscode.env.remoteName ? `remote window (${vscode.env.remoteName})` : 'local window'}, agent host topology: ${topology.enabled === undefined ? `unknown (${topology.error})` : topology.enabled ? 'extension-host' : 'legacy'}`)
+  promptRemoteReloadIfNeeded(loadRoutes().byokMode)
 
   // 文件监听: 其他实例修改配置时自动同步状态 + UI
   startRoutesWatcher()
@@ -548,8 +607,10 @@ export async function activate(context: vscode.ExtensionContext) {
     renderStatusBar()
     // 其他实例 toggle / 外部编辑 routes.json 时, 由 server 所在进程把新列表推给 renderer;
     // 本进程不是 server owner 时 SSE 连接集合为空, 推送为空操作
-    pushRoutesUpdate(loadRoutes().redirect)
+    const routes = loadRoutes()
+    pushRoutesUpdate(routes.redirect)
     bumpRefreshSignalForModeChange()
+    promptRemoteReloadIfNeeded(routes.byokMode)
   })
   const disposeProvidersWatch = onProvidersChange(async () => {
     resetProviderInstanceCache() // 清除缓存的 SDK client, 下次请求用新 baseUrl/apiKey

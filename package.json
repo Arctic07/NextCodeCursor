@@ -9,6 +9,10 @@
   "extensionKind": [
     "ui"
   ],
+  "enabledApiProposals": [
+    "cursor",
+    "cursorAgentHost"
+  ],
   "extensionDependencies": [],
   "engines": {
     "vscode": "^1.100.0"
