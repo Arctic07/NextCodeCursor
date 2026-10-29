@@ -2,12 +2,16 @@
   "publisher": "cometix-space",
   "name": "cursor2plus",
   "displayName": "Cursor++",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Cursor++ BYOK Extension — Bring Your Own Key for Cursor IDE",
   "icon": "resources/icon.png",
   "main": "./dist/extension.js",
   "extensionKind": [
     "ui"
+  ],
+  "enabledApiProposals": [
+    "cursor",
+    "cursorAgentHost"
   ],
   "extensionDependencies": [],
   "engines": {
