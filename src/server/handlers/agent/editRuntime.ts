@@ -161,6 +161,36 @@ function extractWriteError(execClientFrame: Record<string, unknown> | null): str
     return str(oneof.value.error, str(oneof.value.message, str(oneof.value.reason, `write ${oneof.caseName}`)));
 }
 
+/**
+ * 经客户端 write 执行器 (exec writeArgs) 在工作区所在机器上写文件, 不伴随 editToolCall 渲染。
+ *
+ * 供服务端需要「像 agent-exec 那样落盘」的场景复用 (GetDynamicTools 大结果溢写): BYOK server 只运行在本机,
+ * 远端窗口里本机路径对 agent-exec 不存在。返回客户端回报的实际写入路径, 失败返回原因。
+ */
+export async function* writeFileViaClient(params: {
+    session: AgentSession | null;
+    allocateExecMessageId: () => number;
+    path: string;
+    fileText: string;
+    toolCallId: string;
+    /** exec 流标识后缀: `${toolCallId}-${execLabel}` */
+    execLabel: string;
+}): AsyncGenerator<AgentServerMessage, { path: string } | { error: string }, void> {
+    if (!params.session) return { error: 'no session to deliver writeArgs' };
+    const execId = params.allocateExecMessageId();
+    yield execMessage(execId, `${params.toolCallId}-${params.execLabel}`, 'writeArgs', {
+        path: params.path,
+        fileText: params.fileText,
+        toolCallId: params.toolCallId,
+    });
+    const frame = yield* waitForExecClientMessageWithHeartbeat(params.session, execId, null);
+    yield* waitForExecStreamCloseWithHeartbeat(params.session, execId, null);
+    const error = extractWriteError(frame);
+    if (error) return { error };
+    const success = resultOneof(obj(obj(frame?.execClientMessage).writeResult))?.value ?? {};
+    return { path: str(success.path, params.path) };
+}
+
 function applyEditPlan(plan: EditPlan, read: ClientReadOutcome): { beforeContent: string; fileText: string; streamContent: string; message: string } {
     if (plan.kind === 'write') {
         if (read.case !== 'success' && read.case !== 'fileNotFound') throw new Error(read.message);
