@@ -964,3 +964,32 @@ it('read injects matching Cursor Rules and suggests matching Skills only once', 
   expect(second.resultText).not.toContain('Use strict TypeScript.')
   expect(second.resultText).not.toContain('The following skills may be relevant')
 })
+
+it('runToolCall passes the schema-declared working_directory through to shell args untouched', async () => {
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-shell-workdir',
+      name: 'Shell',
+      input: { command: 'npm install', working_directory: 'frontend' },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    round: 0,
+    session: createEphemeralSession('shell-workdir'),
+    roundContext: createTestRoundContext(anthropicStateStrategy),
+    messages: [],
+    allocateExecMessageId: () => 41,
+    allocateInteractionId: () => 1,
+  })
+
+  const started = await iterator.next()
+  if (started.done || started.value.message.case !== 'interactionUpdate' || started.value.message.value.message.case !== 'toolCallStarted')
+    throw new Error('expected toolCallStarted')
+  expect((started.value.message.value.message.value.toolCall as any)?.tool?.value?.args?.workingDirectory).toBe('frontend')
+
+  const exec = await iterator.next()
+  if (exec.done || exec.value.message.case !== 'execServerMessage')
+    throw new Error('expected execServerMessage')
+  expect((exec.value.message.value.message.value as Record<string, unknown>).workingDirectory).toBe('frontend')
+})
