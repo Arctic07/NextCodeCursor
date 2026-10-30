@@ -1273,7 +1273,10 @@ export async function* handleConversationRun(
           mcpMetaTool: parsed.mcpMetaTool,
           supportsMcpAuth: parsed.supportsMcpAuth,
           cursorDynamicTools: parsed.cursorDynamicTools,
-          projectDir: parsed.env.projectFolder ?? parsed.env.workspacePaths?.[0],
+          // 官方 agent-exec 的 projectDir 即 env.projectFolder (~/.cursor/projects/<slug>);缺失时不溢写,
+          // 不回退到 workspacePaths[0] (会在用户仓库里建出 agent-tools/)
+          projectDir: parsed.env.projectFolder,
+          osVersion: parsed.env.osVersion,
         })
         for await (const frame of toolFrames) {
           const completedToolCall = extractCompletedToolCall(frame)

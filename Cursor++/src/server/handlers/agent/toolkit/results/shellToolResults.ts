@@ -1,3 +1,4 @@
+import { shellWorkingDirectoryArg } from '../pathUtils';
 import { envelope, num, obj, str, truncate, type ToolResultEnvelope } from './shared';
 
 /**
@@ -57,7 +58,7 @@ export function buildShellToolResult(
     }
     if (state.backgrounded) {
         const command = str(input.command);
-        const workingDirectory = str(state.cwd ?? input.workingDirectory ?? input.cwd);
+        const workingDirectory = str(state.cwd, shellWorkingDirectoryArg(input));
         const combined = `${state.stdout}${state.stderr}`;
         // ShellSuccess 携带 shell_id(9) / pid(13) / ms_to_wait(15?) / background_reason(14)。
         // 这里按 success case 落盘,文本侧(buildShellToolResultText)依 shellId 识别后台态并复刻
@@ -88,7 +89,7 @@ export function buildShellToolResult(
                 case: 'permissionDenied',
                 value: {
                     command: state.permissionDenied.command ?? str(input.command),
-                    workingDirectory: state.permissionDenied.workingDirectory ?? str(input.workingDirectory ?? input.cwd),
+                    workingDirectory: state.permissionDenied.workingDirectory ?? shellWorkingDirectoryArg(input),
                     error: state.permissionDenied.error ?? 'permission denied',
                 },
             },
@@ -96,7 +97,7 @@ export function buildShellToolResult(
     }
 
     const command = str(input.command);
-    const workingDirectory = str(state.cwd ?? input.workingDirectory ?? input.cwd);
+    const workingDirectory = str(state.cwd, shellWorkingDirectoryArg(input));
     const combined = `${state.stdout}${state.stderr}`;
 
     // 超阈值时 output(interleaved) 置空、改填 head/tail/elided,与官方 co 累加器一致。
@@ -145,7 +146,7 @@ export function normalizeShellToolResult(
     if (resultCaseName === 'success' || resultCaseName === 'failure') {
         return envelope(resultCaseName, {
             command: str(value.command, str(input.command)),
-            workingDirectory: str(value.workingDirectory, str(input.workingDirectory ?? input.cwd)),
+            workingDirectory: str(value.workingDirectory, shellWorkingDirectoryArg(input)),
             output: str(value.output),
             ...(typeof value.stdout === 'string' ? { stdout: value.stdout } : {}),
             ...(typeof value.stderr === 'string' ? { stderr: value.stderr } : {}),
@@ -167,7 +168,7 @@ export function normalizeShellToolResult(
     if (resultCaseName === 'permissionDenied' || resultCaseName === 'spawnError') {
         return envelope(resultCaseName, {
             command: str(value.command, str(input.command)),
-            workingDirectory: str(value.workingDirectory, str(input.workingDirectory ?? input.cwd)),
+            workingDirectory: str(value.workingDirectory, shellWorkingDirectoryArg(input)),
             error: str(value.error, resultCaseName),
         });
     }
