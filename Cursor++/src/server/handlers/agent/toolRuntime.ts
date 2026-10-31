@@ -5,13 +5,14 @@ import type { LLMContentBlock, LLMMessage } from '../llm/types';
 import {
     parseDynamicToolsQuery,
     renderDynamicToolsResult,
+    renderSpilledDynamicToolsResult,
     serializeDynamicToolsResult,
     toCursorDynamicNamespace,
     toDynamicNamespace,
     validateDynamicToolsQuery,
     type CursorDynamicToolDefinition,
 } from './dynamicTools';
-import { finalizeEditToolCall } from './editRuntime';
+import { finalizeEditToolCall, writeFileViaClient } from './editRuntime';
 import { finalizeExecTool } from './execRuntime';
 import { fetchMcpState, mergeMcpStateIntoRoutingTable, type McpRoutingEntry, type McpStateServerInfo } from './mcpState';
 import { finalizeInteractionTool } from './interactionRuntime';
@@ -83,6 +84,8 @@ export async function* runToolCall(params: {
     cursorDynamicTools?: CursorDynamicToolDefinition[];
     /** Cursor agent projectDir;大 discovery 结果写入其 agent-tools 子目录。 */
     projectDir?: string;
+    /** requestContext env.osVersion (`${platform} ${release}`, 工作区所在机器);决定溢写路径风格。 */
+    osVersion?: string;
 }): AsyncGenerator<AgentServerMessage, void, void> {
     yield* runToolCallInner(params);
 }
@@ -472,17 +475,33 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
                     '[DYNAMIC-TOOLS] MCP discovery failed — returning available cursor namespace');
             }
             const rendered = renderDynamicToolsResult(query, namespaces);
-            let serialized;
-            try {
-                serialized = await serializeDynamicToolsResult(rendered, { projectDir: params.projectDir });
-            }
-            catch (error) {
-                logger.warn({
-                    callId: tc.callId,
-                    projectDir: params.projectDir,
-                    error: error instanceof Error ? error.message : String(error),
-                }, '[DYNAMIC-TOOLS] result spill failed — falling back to inline content');
-                serialized = await serializeDynamicToolsResult(rendered);
+            const serialized = serializeDynamicToolsResult(rendered, {
+                projectDir: params.projectDir,
+                osVersion: params.osVersion,
+            });
+            // 大结果由客户端 agent-exec 写入工作区所在机器 (官方同一 write 执行器);失败按官方行为降级为内联
+            let content = serialized.content;
+            let outputFilePath: string | undefined;
+            if (serialized.spill) {
+                const written = yield* writeFileViaClient({
+                    session: params.session,
+                    allocateExecMessageId: params.allocateExecMessageId,
+                    path: serialized.spill.path,
+                    fileText: serialized.spill.fileText,
+                    toolCallId: tc.callId,
+                    execLabel: 'spill',
+                });
+                if ('path' in written) {
+                    outputFilePath = written.path;
+                    content = renderSpilledDynamicToolsResult({ ...serialized, spill: serialized.spill }, written.path);
+                }
+                else {
+                    logger.warn({
+                        callId: tc.callId,
+                        path: serialized.spill.path,
+                        error: written.error,
+                    }, '[DYNAMIC-TOOLS] client spill write failed — falling back to inline content');
+                }
             }
             logger.info({
                 callId: tc.callId,
@@ -497,17 +516,17 @@ async function* runToolCallInner(params: Parameters<typeof runToolCall>[0]): Asy
                 })),
                 matches: Array.isArray(rendered.matches) ? rendered.matches.length : undefined,
                 payloadBytes: serialized.payloadBytes,
-                contentBytes: Buffer.byteLength(serialized.content, 'utf8'),
-                wroteToFile: serialized.wroteToFile,
-                outputFilePath: serialized.outputFilePath,
+                contentBytes: Buffer.byteLength(content, 'utf8'),
+                wroteToFile: outputFilePath !== undefined,
+                outputFilePath,
                 ...(rendered.error ? { error: rendered.error } : {}),
             }, '[DYNAMIC-TOOLS] GetDynamicTools result');
             rawToolResult = {
                 result: {
                     case: 'success',
                     value: {
-                        content: serialized.content,
-                        ...(serialized.outputFilePath ? { outputFilePath: serialized.outputFilePath } : {}),
+                        content,
+                        ...(outputFilePath ? { outputFilePath } : {}),
                     },
                 },
             };
