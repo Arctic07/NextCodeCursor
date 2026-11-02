@@ -1,4 +1,5 @@
 import { SHELL_DEFAULT_TIMEOUT_MS, SHELL_FILE_OUTPUT_THRESHOLD_BYTES, SHELL_HARD_TIMEOUT_MS, SHELL_TIMEOUT_BEHAVIOR_BACKGROUND } from '../../constants';
+import { shellWorkingDirectoryArg } from '../pathUtils';
 import { num, str } from '../shared';
 import type { ToolRegistryEntry } from '../types';
 
@@ -7,7 +8,7 @@ function buildShellStartedArgs(input: Record<string, unknown>, callId: string): 
     const parts = command.trim().split(/\s+/).filter(Boolean);
     return {
         command,
-        workingDirectory: str(input.workingDirectory ?? input.cwd),
+        workingDirectory: shellWorkingDirectoryArg(input),
         timeout: num(input.timeout, SHELL_DEFAULT_TIMEOUT_MS),
         toolCallId: callId,
         simpleCommands: parts.length > 0 ? [parts[0]] : [],
@@ -36,7 +37,7 @@ function buildShellExecArgs(input: Record<string, unknown>, callId: string): Rec
     const cmdArgs = parts.slice(1).map(a => ({ type: 'word', value: a }));
     return {
         command,
-        workingDirectory: str(input.workingDirectory ?? input.cwd),
+        workingDirectory: shellWorkingDirectoryArg(input),
         timeout: (input.timeout as number) || SHELL_DEFAULT_TIMEOUT_MS,
         toolCallId: callId,
         description: (input.description as string) || '',
