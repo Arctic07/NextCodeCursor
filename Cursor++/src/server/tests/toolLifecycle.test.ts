@@ -964,3 +964,95 @@ it('read injects matching Cursor Rules and suggests matching Skills only once', 
   expect(second.resultText).not.toContain('Use strict TypeScript.')
   expect(second.resultText).not.toContain('The following skills may be relevant')
 })
+
+// ── GetDynamicTools 大结果溢写: 由客户端 agent-exec 写入工作区所在机器 (远端窗口 / WSL) ──
+
+function largeCursorDynamicTools() {
+  return [{
+    tool: 'Big',
+    description: 'A tool with a large schema.',
+    inputSchema: { type: 'object', properties: { x: { type: 'string', description: 'y'.repeat(13_000) } } },
+  }]
+}
+
+async function runLargeDiscovery(writeResult: Record<string, unknown>) {
+  const session = createEphemeralSession('dynamic-tools-spill')
+  pushSessionMessage(session, { execClientMessage: { id: 1, writeResult } })
+  pushSessionMessage(session, { execClientControlMessage: { streamClose: { id: 1 } } })
+  const roundContext = createTestRoundContext(anthropicStateStrategy)
+  let execId = 0
+  const frames: AgentServerMessage[] = []
+  for await (const frame of runToolCall({
+    toolCall: { callId: 'call-spill', name: 'GetDynamicTools', input: { namespace: 'cursor', toolName: 'Big' } },
+    availableMcpTools: [],
+    cursorDynamicTools: largeCursorDynamicTools(),
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    round: 0,
+    session,
+    roundContext,
+    messages: [],
+    allocateExecMessageId: () => ++execId,
+    allocateInteractionId: () => 1,
+    projectDir: '/home/u/.cursor/projects/repo',
+    osVersion: 'linux 5.15.167.4-microsoft-standard-WSL2',
+  }))
+    frames.push(frame)
+  const writeFrame = frames.find(f => f.message.case === 'execServerMessage')
+  return { frames, roundContext, writeFrame }
+}
+
+it('runToolCall spills large GetDynamicTools results through client writeArgs instead of the local disk', async () => {
+  const clientPath = '/home/u/.cursor/projects/repo/agent-tools/written-by-client.txt'
+  const { roundContext, writeFrame } = await runLargeDiscovery({ success: { path: clientPath, linesCreated: 10, fileSize: 13_500 } })
+
+  if (!writeFrame || writeFrame.message.case !== 'execServerMessage')
+    throw new Error('expected writeArgs exec frame')
+  expect(writeFrame.message.value.message.case).toBe('writeArgs')
+  const args = writeFrame.message.value.message.value as Record<string, unknown>
+  expect(args.path).toMatch(/^\/home\/u\/\.cursor\/projects\/repo\/agent-tools\/[0-9a-f-]{36}\.txt$/)
+  expect(args.toolCallId).toBe('call-spill')
+  expect(JSON.parse(String(args.fileText)).tool.tool).toBe('Big')
+
+  expect(roundContext.pendingToolResults).toHaveLength(1)
+  const content = JSON.parse(roundContext.pendingToolResults[0].content)
+  expect(content.filePath).toBe(clientPath)
+  expect(content.note).toContain(`Large output has been written to: ${clientPath}`)
+})
+
+it('runToolCall keeps GetDynamicTools results inline when the client write fails', async () => {
+  const { roundContext, writeFrame } = await runLargeDiscovery({ error: { path: '/x', error: 'disk full' } })
+  expect(writeFrame).toBeDefined()
+  const content = JSON.parse(roundContext.pendingToolResults[0].content)
+  expect(content.filePath).toBeUndefined()
+  expect(content).toMatchObject({ mode: 'single_tool', namespace: 'cursor', tool: { tool: 'Big' } })
+})
+
+it('runToolCall passes the schema-declared working_directory through to shell args untouched', async () => {
+  const iterator = runToolCall({
+    toolCall: {
+      callId: 'call-shell-workdir',
+      name: 'Shell',
+      input: { command: 'npm install', working_directory: 'frontend' },
+    },
+    availableMcpTools: [],
+    conversationId: 'conv-runtime',
+    currentModelId: 'claude-sonnet-4',
+    round: 0,
+    session: createEphemeralSession('shell-workdir'),
+    roundContext: createTestRoundContext(anthropicStateStrategy),
+    messages: [],
+    allocateExecMessageId: () => 41,
+    allocateInteractionId: () => 1,
+  })
+
+  const started = await iterator.next()
+  if (started.done || started.value.message.case !== 'interactionUpdate' || started.value.message.value.message.case !== 'toolCallStarted')
+    throw new Error('expected toolCallStarted')
+  expect((started.value.message.value.message.value.toolCall as any)?.tool?.value?.args?.workingDirectory).toBe('frontend')
+
+  const exec = await iterator.next()
+  if (exec.done || exec.value.message.case !== 'execServerMessage')
+    throw new Error('expected execServerMessage')
+  expect((exec.value.message.value.message.value as Record<string, unknown>).workingDirectory).toBe('frontend')
+})
