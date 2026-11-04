@@ -18,6 +18,18 @@ export function resolveToolPath(rawPath: unknown, _workspacePath?: string): stri
 }
 
 /**
+ * Shell 工作目录参数 —— 与 resolveToolPath 同一原则: 原样透传, 由客户端 agent-exec 解析。
+ *
+ * 三个 provider 的 Shell schema 声明的都是 snake_case `working_directory`;官方 agent-exec (3.27.22)
+ * 同样读取 `"working_directory" in args ? args.working_directory : undefined` 原样作为 workingDirectory。
+ * camelCase `workingDirectory` / `cwd` 兼容历史输入。
+ */
+export function shellWorkingDirectoryArg(input: Record<string, unknown>): string {
+  const value = input.working_directory ?? input.workingDirectory ?? input.cwd;
+  return typeof value === 'string' ? value : '';
+}
+
+/**
  * Server-side preflight reads must not touch UNC paths. On Windows, stat/read on
  * an attacker-controlled UNC host may trigger SMB/NTLM authentication. Tools
  * that need server-side content computation should fail closed.

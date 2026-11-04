@@ -17,8 +17,7 @@
  *     slice(0,185) + "... [truncated]",总长恰好 200。
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { posix, win32 } from 'node:path';
 import type { McpStateServerInfo, McpStateToolDefinition } from './mcpState';
 import type { LLMTool } from '../llm/types';
 import { findToolByAlias } from './toolRegistry';
@@ -420,43 +419,75 @@ export function renderDynamicToolsResult(
     };
 }
 
+/** 溢写计划: 由客户端 agent-exec 执行 writeArgs 写入工作区所在机器 */
+export interface DynamicToolsSpill {
+    path: string;
+    fileText: string;
+    lineCount: number;
+}
+
 export interface SerializedDynamicToolsResult {
+    /** 内联结果 (未溢写, 或溢写失败时的降级内容) */
     content: string;
-    outputFilePath?: string;
     payloadBytes: number;
-    wroteToFile: boolean;
+    spill?: DynamicToolsSpill;
 }
 
 /**
  * 序列化 discovery 结果,并对齐 3.17.8 的大结果溢写行为。
  *
- * projectDir 缺失时保持内联;写盘失败由调用方记录并降级为内联结果。
+ * 官方 (agent-exec 3.27.22 qQ → bI): 超过 12000 字节且有 projectDir 时,在 agent-exec 进程内调用 write 执行器
+ * 写入 {projectDir}/agent-tools/{uuid}.txt, 路径用 agent-exec 自身 process.platform 选 win32/posix join;
+ * 写失败 (permissionDenied / noSpace / error / rejected) 降级为内联。
+ *
+ * BYOK server 只运行在本机, 不能自己写盘 —— 远端窗口 (Remote-SSH / WSL) 里本机写出的路径对模型和
+ * agent-exec 都不存在 (WSL 下还会被拼成 Windows 路径, Issue #5 同症状)。这里只给出写盘计划,
+ * 由 toolRuntime 经 exec writeArgs 交给客户端 (与官方同一个底层 write 执行器) 执行,
+ * 成功后用 renderSpilledDynamicToolsResult 生成指向文件的结果; 失败保持内联 content。
+ *
+ * projectDir 缺失时保持内联 (官方同样只在有 projectDir 时溢写)。
+ * 路径风格取工作区所在机器: requestContext env.osVersion 由 agent-exec 生成为
+ * `${os.platform()} ${os.release()}`, 首段即官方用到的 process.platform; 缺失时按 projectDir 形态推断。
  */
-export async function serializeDynamicToolsResult(
+export function serializeDynamicToolsResult(
     result: Record<string, unknown>,
-    options: { projectDir?: string; spillThresholdBytes?: number } = {},
-): Promise<SerializedDynamicToolsResult> {
+    options: { projectDir?: string; osVersion?: string; spillThresholdBytes?: number } = {},
+): SerializedDynamicToolsResult {
     const payload = JSON.stringify(result, null, 2);
     const payloadBytes = Buffer.byteLength(payload, 'utf8');
     const threshold = options.spillThresholdBytes ?? DYNAMIC_TOOLS_SPILL_THRESHOLD_BYTES;
     const projectDir = options.projectDir?.trim();
     if (!projectDir || payloadBytes <= threshold) {
-        return { content: payload, payloadBytes, wroteToFile: false };
+        return { content: payload, payloadBytes };
     }
 
-    const outputDir = join(projectDir, 'agent-tools');
-    await mkdir(outputDir, { recursive: true, mode: 0o700 });
-    const outputFilePath = join(outputDir, `${randomUUID()}.txt`);
-    await writeFile(outputFilePath, payload, { encoding: 'utf8', mode: 0o600 });
-    const lineCount = payload.split('\n').length;
+    const platform = options.osVersion?.trim().split(/\s+/)[0]
+        || (/^[A-Za-z]:[\\/]|\\/.test(projectDir) ? 'win32' : 'posix');
+    const join = platform === 'win32' ? win32.join : posix.join;
+    return {
+        content: payload,
+        payloadBytes,
+        spill: {
+            path: join(projectDir, 'agent-tools', `${randomUUID()}.txt`),
+            fileText: payload,
+            lineCount: payload.split('\n').length,
+        },
+    };
+}
+
+/** 溢写成功后的结果内容 —— filePath 用客户端回报的实际写入路径 */
+export function renderSpilledDynamicToolsResult(
+    serialized: Pick<SerializedDynamicToolsResult, 'payloadBytes'> & { spill: DynamicToolsSpill },
+    filePath: string,
+): string {
+    const { payloadBytes, spill } = serialized;
     const size = payloadBytes >= 1024
         ? `${(payloadBytes / 1024).toFixed(1)} KB`
         : `${payloadBytes} bytes`;
-    const content = JSON.stringify({
-        note: `Large output has been written to: ${outputFilePath} (${size}, ${lineCount} lines)`,
-        filePath: outputFilePath,
+    return JSON.stringify({
+        note: `Large output has been written to: ${filePath} (${size}, ${spill.lineCount} lines)`,
+        filePath,
     }, null, 2);
-    return { content, outputFilePath, payloadBytes, wroteToFile: true };
 }
 
 /**

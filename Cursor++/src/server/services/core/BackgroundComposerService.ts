@@ -33,6 +33,5 @@ export default (router: ConnectRouter) => {
         listTeamEnvironments: async () => ({ environments: [] }),
         listPersonalEnvironments: async () => ({ environments: [] }),
         listPendingFollowups: async () => ({ pendingFollowups: [] }),
-        listGrindModeComposers: async () => ({ composers: [] }),
     });
 };

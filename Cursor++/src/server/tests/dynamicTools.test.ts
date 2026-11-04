@@ -1,7 +1,4 @@
 import type { DynamicNamespace } from '../handlers/agent/dynamicTools'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { getCursorAgentTools } from '../handlers/agent/cursorTools'
 import {
@@ -11,6 +8,7 @@ import {
   parseDynamicToolsQuery,
   partitionCursorBuiltinTools,
   renderDynamicToolsResult,
+  renderSpilledDynamicToolsResult,
   serializeDynamicToolsResult,
   shortenDescription,
   shouldEnableBuiltinDynamicProfile,
@@ -282,29 +280,62 @@ describe('3.17 参数兼容与大结果溢写', () => {
     expect(validateDynamicToolsQuery({ pattern: 'x'.repeat(257) })).toContain('256')
   })
 
-  it('超过阈值时写入 projectDir/agent-tools 并返回 outputFilePath', async () => {
-    const projectDir = await mkdtemp(join(tmpdir(), 'ccursor-dynamic-tools-'))
-    try {
-      const result = { mode: 'namespace', tools: [{ tool: 'large', description: 'x'.repeat(512) }] }
-      const serialized = await serializeDynamicToolsResult(result, {
-        projectDir,
-        spillThresholdBytes: 64,
-      })
-      expect(serialized.wroteToFile).toBe(true)
-      expect(serialized.outputFilePath).toContain(join(projectDir, 'agent-tools'))
-      expect(JSON.parse(await readFile(serialized.outputFilePath!, 'utf8'))).toEqual(result)
-      expect(JSON.parse(serialized.content).filePath).toBe(serialized.outputFilePath)
-    }
-    finally {
-      await rm(projectDir, { recursive: true, force: true })
-    }
+  // 溢写只给出计划, 写盘由客户端 agent-exec 在工作区所在机器执行 (toolRuntime → writeFileViaClient);
+  // 服务端不得在本机落盘 —— 远端窗口里本机路径对 agent-exec 不存在 (Issue #5 同症状)
+  const large = { mode: 'namespace', tools: [{ tool: 'large', description: 'x'.repeat(512) }] }
+
+  it('超过阈值时给出 {projectDir}/agent-tools/{uuid}.txt 写盘计划, 内联内容保留作降级', () => {
+    const serialized = serializeDynamicToolsResult(large, {
+      projectDir: '/home/u/.cursor/projects/repo',
+      osVersion: 'linux 5.15.0-91-generic',
+      spillThresholdBytes: 64,
+    })
+    expect(serialized.spill?.path).toMatch(/^\/home\/u\/\.cursor\/projects\/repo\/agent-tools\/[0-9a-f-]{36}\.txt$/)
+    expect(JSON.parse(serialized.spill!.fileText)).toEqual(large)
+    expect(serialized.spill!.lineCount).toBe(serialized.spill!.fileText.split('\n').length)
+    expect(JSON.parse(serialized.content)).toEqual(large)
   })
 
-  it('小结果保持内联且使用可读 JSON', async () => {
+  it('路径风格取工作区所在机器的 osVersion, 而非服务端平台', () => {
+    const windows = serializeDynamicToolsResult(large, {
+      projectDir: 'C:\\Users\\u\\.cursor\\projects\\repo',
+      osVersion: 'win32 10.0.22631',
+      spillThresholdBytes: 64,
+    })
+    expect(windows.spill?.path).toMatch(/^C:\\Users\\u\\\.cursor\\projects\\repo\\agent-tools\\[0-9a-f-]{36}\.txt$/)
+    // 本机 Windows + WSL 工作区: osVersion 来自 WSL 里的 agent-exec, 必须用 posix 拼接
+    const wsl = serializeDynamicToolsResult(large, {
+      projectDir: '/home/u/.cursor/projects/repo',
+      osVersion: 'linux 5.15.167.4-microsoft-standard-WSL2',
+      spillThresholdBytes: 64,
+    })
+    expect(wsl.spill?.path).not.toContain('\\')
+  })
+
+  it('osVersion 缺失时按 projectDir 形态推断路径风格', () => {
+    const windows = serializeDynamicToolsResult(large, { projectDir: 'D:\\p', spillThresholdBytes: 64 })
+    expect(windows.spill?.path.startsWith('D:\\p\\agent-tools\\')).toBe(true)
+    const posixDir = serializeDynamicToolsResult(large, { projectDir: '/p', spillThresholdBytes: 64 })
+    expect(posixDir.spill?.path.startsWith('/p/agent-tools/')).toBe(true)
+  })
+
+  it('projectDir 缺失时保持内联, 不给写盘计划', () => {
+    const serialized = serializeDynamicToolsResult(large, { spillThresholdBytes: 64 })
+    expect(serialized.spill).toBeUndefined()
+    expect(JSON.parse(serialized.content)).toEqual(large)
+  })
+
+  it('溢写成功后的结果指向客户端回报的实际路径', () => {
+    const serialized = serializeDynamicToolsResult(large, { projectDir: '/p', osVersion: 'darwin 24.6.0', spillThresholdBytes: 64 })
+    const content = JSON.parse(renderSpilledDynamicToolsResult({ ...serialized, spill: serialized.spill! }, '/p/agent-tools/actual.txt'))
+    expect(content.filePath).toBe('/p/agent-tools/actual.txt')
+    expect(content.note).toBe(`Large output has been written to: /p/agent-tools/actual.txt (${serialized.payloadBytes} bytes, ${serialized.spill!.lineCount} lines)`)
+  })
+
+  it('小结果保持内联且使用可读 JSON', () => {
     const result = { mode: 'catalog', namespaces: [] }
-    const serialized = await serializeDynamicToolsResult(result, { spillThresholdBytes: 10_000 })
-    expect(serialized.wroteToFile).toBe(false)
-    expect(serialized.outputFilePath).toBeUndefined()
+    const serialized = serializeDynamicToolsResult(result, { projectDir: '/p', spillThresholdBytes: 10_000 })
+    expect(serialized.spill).toBeUndefined()
     expect(JSON.parse(serialized.content)).toEqual(result)
   })
 })
