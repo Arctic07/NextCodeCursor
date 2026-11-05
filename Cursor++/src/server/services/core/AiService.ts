@@ -41,7 +41,11 @@ import {
   updateKnowledgeItem,
 } from '../../config/knowledgeBaseStore'
 import { buildByokAvailableModels } from '../../handlers/models/byokModelBuilder'
+<<<<<<< HEAD
 import { flattenModels, isConfiguredProvider } from '../../config/providersStore'
+=======
+import { enabledModelEntries } from '../../handlers/models/requestedModelId'
+>>>>>>> upstream/main
 import { logger } from '../../logger'
 
 /**
@@ -99,6 +103,30 @@ async function handleAvailableModels(request: AvailableModelsRequest) {
   })
 }
 
+/**
+ * GetDefaultModel — 从 providers.json 推送 BYOK 默认模型到 Composer + Cmd+K。
+ *
+ * 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
+ * 返回空 {} = 不推送(客户端保留上次选择)。
+ *
+ * 候选集必须与 AvailableModels 下发的启用集一致 —— 都走 isModelDefaultOn,
+ * 否则会把选择器里根本没启用的模型推成默认模型。
+ */
+export async function handleGetDefaultModel() {
+  // 与 "default" 占位名映射共用同一选择函数 (requestedModelId.ts), 两处永远指向同一个模型
+  const all = enabledModelEntries()
+  const first = all[0]
+  if (!first)
+    return {}
+  const thinkingModel = all.find(x => x.model.thinking)
+  return {
+    model: first.model.id,
+    thinkingModel: thinkingModel?.model.id ?? '',
+    maxMode: false,
+    nextDefaultSetDate: String(Date.now()),
+  }
+}
+
 export default (router: ConnectRouter) => {
   router.service(AiService, {
     serverTime: async () => ({
@@ -108,6 +136,7 @@ export default (router: ConnectRouter) => {
 
     availableModels: handleAvailableModels,
 
+<<<<<<< HEAD
     // GetDefaultModel — 从 providers.json 推送 BYOK 默认模型到 Composer + Cmd+K
     // 客户端逻辑: nextDefaultSetDate > lastDefaultModelSetDate → setDefaultModel(model)
     // 返回空 {} = 不推送(客户端保留上次选择)
@@ -123,6 +152,9 @@ export default (router: ConnectRouter) => {
         nextDefaultSetDate: String(Date.now()),
       }
     },
+=======
+    getDefaultModel: handleGetDefaultModel,
+>>>>>>> upstream/main
     getDefaultModelNudgeData: async () => ({ nudgeDate: '0' }),
     cppConfig: async () => ({
       isOn: true,

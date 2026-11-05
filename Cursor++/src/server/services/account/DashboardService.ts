@@ -24,9 +24,10 @@ import {
     DashboardService,
     GetPlanInfoResponse_PlanInfoSchema,
     GetCurrentPeriodUsageResponse_PlanUsageSchema,
-    PrivacyMode,
     GetUsageLimitStatusAndActiveGrantsResponse_UsageLimitPolicyStatusSchema,
 } from '../../gen/aiserver_v1_pb';
+// PrivacyMode 同时被 agent_v1 引用, 3.27.22 起由 emitter 拆入 aiserver_v1_shared
+import { PrivacyMode } from '../../gen/aiserver_v1_shared_pb';
 import { exportCanvasHtml, getCanvasesDir, lookupCanvasByKey, storeCanvas } from '../../handlers/canvas/canvasStore';
 import { fetchManagedSkills } from '../../config/managedSkillsStore';
 import { writeFileSync } from 'node:fs';

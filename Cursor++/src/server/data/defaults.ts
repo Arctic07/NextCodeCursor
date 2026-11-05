@@ -172,6 +172,10 @@ export interface ProviderModel {
    */
   noMaxTokens?: boolean
   supportsSandboxing?: boolean
+  /**
+   * 模型在 Cursor 选择器里是否默认启用。缺省 (undefined) 视为**关闭** —
+   * 判定统一走 isModelDefaultOn(), 不要在调用点自己写 ?? / !== false。
+   */
   defaultOn?: boolean
   /** Fast 模式 — OpenAI: service_tier=priority / Anthropic: fast-mode beta */
   fastMode?: boolean
@@ -213,6 +217,18 @@ export interface ProviderModel {
       tooltip?: string
     }>
   }
+}
+
+/**
+ * 模型是否在 Cursor 选择器里默认启用。
+ *
+ * 唯一判定口径: 只有显式 true 才算启用,缺省字段视为关闭 —— 与
+ * byokModelBuilder 下发给客户端的 AvailableModel.defaultOn 保持一致。
+ * 曾经 AvailableModels 用 `?? false`、GetDefaultModel 用 `!== false`,
+ * 导致没写 defaultOn 的模型在选择器里是关的、却被推成默认模型。
+ */
+export function isModelDefaultOn(model: ProviderModel): boolean {
+  return model.defaultOn === true
 }
 
 export interface ProviderEntry {
