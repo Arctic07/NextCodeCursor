@@ -9,7 +9,7 @@ import cors from '@fastify/cors'
  */
 import Fastify from 'fastify'
 import { ensureProvidersFile } from './config/providersStore'
-import { ensureRoutesFile, loadRoutes, toggleByokMode } from './config/routesStore'
+import { ensureRoutesFile, loadRoutes, requestByokMode } from './config/routesStore'
 import { closeAgentDatabase, initDatabase } from './database/sqlite'
 import { enterWindowContext, logger, setLogBroadcast, setLogPush, setLogSubscriberCheck } from './logger'
 import { initRuntimeConfig } from './runtime-config'
@@ -126,27 +126,72 @@ export function bumpRefreshSignal(): void {
 }
 
 /**
- * 向所有 renderer SSE 推送 REST redirect 列表变更。
+ * BYOK 开关 / 路由变化后的模型列表刷新: 立即 (经 500ms 防抖) 一次 + 稳定后补发一次。
+ *
+ * 为什么补发: Cursor 的 aiService._availableModelsFetch 按 coalesceKey 合并「进行中」的请求,
+ * 而 key (authId / teamId / 订阅 / 请求体) 不含 BYOK 状态。切换前已发往官方、尚未返回的请求
+ * (官方响应实测 0.7–1s) 会被切换后的刷新合并复用, 拿到旧列表 —— 实测 Agent Window 约 1s 错位,
+ * 两条完成日志共用同一 catalogRequestId。补发的刷新在旧请求返回后才发起, 保证最终一致。
+ *
+ * 连续调用会顺延补发时刻 (REST / 命令 / onRoutesChange 可能先后触发), 每轮变化至多推送两次。
+ */
+const SETTLE_REFRESH_MS = 1500
+let settleRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+export function bumpRefreshSignalForModeChange(): void {
+  bumpRefreshSignal()
+  if (settleRefreshTimer)
+    clearTimeout(settleRefreshTimer)
+  settleRefreshTimer = setTimeout(() => {
+    settleRefreshTimer = null
+    bumpRefreshSignal()
+  }, SETTLE_REFRESH_MS)
+}
+
+/**
+ * 向所有 renderer SSE 推送 redirect 列表变更。
  *
  * inject-patch 的 globalThis.fetch wrapper 里 _restPaths / _restSet 是安装时写死的,
  * 不随 routes.json 运行时变化。toggle BYOK 后需要通过 SSE 推送新列表让 renderer
  * 热更新,否则 OFF 模式下 /auth/poll 仍被拦截到本地,阻断真实登录流程。
  *
- * inject-patch 端监听 `event: routes`, 收到后替换 _restPaths + _restSet。
+ * 两个事件:
+ *   - `event: routes`     REST 路径 (不含 "REST:" 前缀) —— inject-patch 替换 _restPaths + _restSet
+ *   - `event: rpc-routes` ConnectRPC 规则 (service 或 service/method) —— hook rev2 起 glass 窗口
+ *     据此在 renderer 层直接把命中的 RPC 发往本地 (Agent Window 整窗绕过扩展宿主路由, Issue #34)。
+ *     旧版 hook 忽略未知事件, 新旧互相兼容。BYOK OFF 时规则为空 → renderer 不做任何路由。
  */
-export function pushRoutesUpdate(restPaths: string[]): void {
+export function splitRedirect(redirect: string[]): { restPaths: string[], rpcRules: string[] } {
+  const restPaths: string[] = []
+  const rpcRules: string[] = []
+  for (const r of redirect) {
+    if (r.startsWith('REST:'))
+      restPaths.push(r.slice(5))
+    else
+      rpcRules.push(r)
+  }
+  return { restPaths, rpcRules }
+}
+
+function writeRoutesEvents(reply: any, redirect: string[]): void {
+  const { restPaths, rpcRules } = splitRedirect(redirect)
+  reply.raw.write(`event: routes\ndata: ${JSON.stringify(restPaths)}\n\n`)
+  reply.raw.write(`event: rpc-routes\ndata: ${JSON.stringify(rpcRules)}\n\n`)
+}
+
+export function pushRoutesUpdate(redirect: string[]): void {
   let sent = 0
-  const data = JSON.stringify(restPaths)
   for (const reply of refreshEventStreams) {
     try {
-      reply.raw.write(`event: routes\ndata: ${data}\n\n`)
+      writeRoutesEvents(reply, redirect)
       sent++
     }
     catch {
       refreshEventStreams.delete(reply)
     }
   }
-  logger.info({ connections: sent, restPaths: restPaths.length }, '[SRV] routes update pushed')
+  const { restPaths, rpcRules } = splitRedirect(redirect)
+  logger.info({ connections: sent, restPaths: restPaths.length, rpcRules: rpcRules.length }, '[SRV] routes update pushed')
 }
 
 export interface StartServerOptions extends RuntimeConfigInit {}
@@ -188,6 +233,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
   //   - [POST]  /auth/logout → 200 (1ms)
   //
   // 判定顺序 (顺序很重要):
+  //   0. OPTIONS (CORS 预检) → trace, 不按 RPC 统计 (否则日志里出现大量误导性的 "→ 204")
   //   1. TRACE_PATHS 优先 — 高频轮询端点会被 RE_CONNECT_RPC_PATH 错误匹配
   //      (e.g. /auth/full_stripe_profile → 捕获 auth/full_stripe_profile), 必须先拦截。
   //   2. ConnectRPC 服务名匹配 — service 段必须含点 (aiserver.v1.AiService),
@@ -197,6 +243,13 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     const url = req.url
     const status = reply.statusCode
     const rt = reply.elapsedTime?.toFixed(0) ?? '?'
+
+    // CORS 预检 (renderer 层直发本地的 Connect 请求会触发) —— 不是 RPC, 不计入 [GRPC]
+    if (req.method === 'OPTIONS') {
+      logger.trace(`[OPTIONS] ${url} → ${status} (${rt}ms)`)
+      done()
+      return
+    }
 
     if (TRACE_PATHS.has(url)) {
       logger.trace(`[${req.method}] ${url} → ${status} (${rt}ms)`)
@@ -218,7 +271,8 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     done()
   })
 
-  await server.register(cors, { origin: true })
+  // maxAge: 预检结果缓存 10 分钟 (缺省时 Chromium 只缓存 5s, glass 窗口的本地 Connect 请求会频繁多一次 OPTIONS 往返)
+  await server.register(cors, { origin: true, maxAge: 600 })
   await server.register(fastifyConnectPlugin, { routes })
 
   // ── SSE 日志流 + 窗口注册 ──
@@ -270,10 +324,9 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     refreshEventStreams.add(reply)
     reply.raw.writeHead(200, sseHeaders)
     reply.raw.write(`: connected\n\n`)
-    // 立即推送当前 REST redirect 列表 — inject-patch 初始只含 BASE,
+    // 立即推送当前 redirect 列表 (REST + ConnectRPC) — inject-patch 初始只含 BASE,
     // 需要 server 就绪后推送完整列表才能拦截 BYOK 路径
-    const currentRestPaths = loadRoutes().redirect.filter((r: string) => r.startsWith('REST:')).map((r: string) => r.slice(5))
-    reply.raw.write(`event: routes\ndata: ${JSON.stringify(currentRestPaths)}\n\n`)
+    writeRoutesEvents(reply, loadRoutes().redirect)
     reply.hijack()
 
     req.raw.on('close', () => {
@@ -281,17 +334,27 @@ export async function startServer(opts: StartServerOptions): Promise<{ host: str
     })
   })
 
-  // BYOK toggle — renderer (glass sidebar) 通过 fetch 调用
-  server.post('/byok/toggle', async () => {
-    const next = await toggleByokMode()
-    const restPaths = next.redirect
-      .filter((r: string) => r.startsWith('REST:'))
-      .map((r: string) => r.slice(5))
-    pushRoutesUpdate(restPaths)
-    bumpRefreshSignal()
-    logger.info({ byokMode: next.byokMode }, '[SRV] BYOK toggled via REST')
-    return { byokMode: next.byokMode }
+  // BYOK 开关 — renderer (glass sidebar) 通过 fetch 调用
+  // POST /byok/mode {byokMode: 0|1, source?}: 幂等设为目标值 (hook rev2 起的 glass 按钮)
+  // POST /byok/toggle: 旧版 hook 的翻转入口, 500ms 防抖 (见 routesStore.requestByokMode)
+  const applyRestByokRequest = async (target: 0 | 1 | 'toggle', source: string) => {
+    const { routes: next, changed } = await requestByokMode(target, source)
+    if (changed) {
+      pushRoutesUpdate(next.redirect)
+      bumpRefreshSignalForModeChange()
+    }
+    logger.info({ byokMode: next.byokMode, changed, source }, '[SRV] BYOK mode request via REST')
+    return { byokMode: next.byokMode, changed }
+  }
+  server.post('/byok/mode', async (req, reply) => {
+    const body = (req.body ?? {}) as { byokMode?: unknown, source?: unknown }
+    if (body.byokMode !== 0 && body.byokMode !== 1) {
+      reply.code(400)
+      return { error: 'byokMode must be 0 or 1' }
+    }
+    return applyRestByokRequest(body.byokMode, `rest:${typeof body.source === 'string' ? body.source : 'mode'}`)
   })
+  server.post('/byok/toggle', async () => applyRestByokRequest('toggle', 'rest:toggle'))
 
   // Fake auth endpoints
   server.get('/health', async () => ({ ok: true, mode: 'byok' }))
@@ -373,6 +436,10 @@ export async function stopServer(): Promise<void> {
     return
   const server = app
   app = null
+  if (settleRefreshTimer) {
+    clearTimeout(settleRefreshTimer)
+    settleRefreshTimer = null
+  }
   broadcastShutdown()
   try {
     await server.close()
