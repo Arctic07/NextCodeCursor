@@ -74,6 +74,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           await refreshState()
           this.postState()
           break
+        // 幂等: 按钮按当前显示状态给出目标值, 重复触发结果不变
+        case 'setByokMode':
+          await vscode.commands.executeCommand('cursor2plus.setByokMode', msg.mode === 1 ? 1 : 0, 'panel')
+          break
+        // 兼容旧 webview 消息 (翻转语义, 有防抖)
         case 'toggleByok':
           await vscode.commands.executeCommand('cursor2plus.toggleByok')
           break

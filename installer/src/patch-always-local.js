@@ -6,7 +6,7 @@ import * as acorn from 'acorn';
 import { createBackup } from './backup.js';
 import { updateChecksums } from './checksum.js';
 import { CCURSOR_DIR_NAME, ROUTES_FILE_NAME, DEFAULT_HOST, DEFAULT_PORT } from './defaults.js';
-import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched } from './node-http11-router.js';
+import { buildNodeHttp11RouterPayload, isNodeHttp11RouterPatched, stripLegacyRouterPayload } from './node-http11-router.js';
 import { disableAgentWebSocket, hasAgentWebSocketStack, isAgentWebSocketDisabled } from './agent-websocket-guard.js';
 
 export const ALWAYS_LOCAL_ROUTER_MARKER = '__byokUrlRewrite';
@@ -29,10 +29,11 @@ export function patchAlwaysLocal(paths, log) {
 
   const modified = [];
   const original = readFileSync(paths.alwaysLocalMain, 'utf-8');
-  let patched = original;
+  // 先剥离旧版本路由块 (直接 install 时可能残留), 否则新版会叠加在旧版之上 ——
+  // 各版本守卫标记互不相同, 叠加后两层都会包装 http.request
+  let patched = stripLegacyRouterPayload(original);
 
-  // 1. Shared process-local router. Prepending V2 also safely upgrades older
-  //    installations: it sets the historical guard before the old payload runs.
+  // 1. Shared process-local router.
   if (!isNodeHttp11RouterPatched(patched, ALWAYS_LOCAL_ROUTER_MARKER)) {
     patched = buildPayload() + patched;
     log?.('  HTTP/1.1 whitelist router injected');
@@ -106,7 +107,7 @@ export function checkAlwaysLocalPatch(paths, log) {
   }
 
   try {
-    let candidate = readFileSync(paths.alwaysLocalMain, 'utf-8');
+    let candidate = stripLegacyRouterPayload(readFileSync(paths.alwaysLocalMain, 'utf-8'));
     if (!isNodeHttp11RouterPatched(candidate, ALWAYS_LOCAL_ROUTER_MARKER)) candidate = buildPayload() + candidate;
     candidate = disableAgentWebSocket(candidate, 'cursor-always-local main.js').source;
     const waited = injectActivateWait(candidate, 'always-local', log);
